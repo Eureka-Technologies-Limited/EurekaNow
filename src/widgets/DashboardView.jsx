@@ -2,7 +2,7 @@
 // DASHBOARD: Customiser modal + DashboardView layout
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { Card, Btn, Modal } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
@@ -83,13 +83,91 @@ export function DashCustomiser({ layout, onSave, onClose }) {
 // ── DashboardView ─────────────────────────────────────────────────────────────
 // The main dashboard page. Renders the widget grid from the user's layout.
 
-export function DashboardView({ tickets, articles, users, currentUser, layout, onCustomise, onOpenTicket, onNewTicket }) {
+export function DashboardView({ tickets, articles, users, currentUser, layout, sizeOverrides = {}, onLayoutChange, onSizeChange, onCustomise, onOpenTicket, onNewTicket }) {
   const t = useTokens();
   const { isMobile, isTablet } = useBreakpoint();
+  const [arrangeMode, setArrangeMode] = useState(false);
+  const [dragId, setDragId] = useState(null);
+  const [overId, setOverId] = useState(null);
+  const [resizing, setResizing] = useState(null);
+  const gridRef = useRef(null);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const cols = isMobile ? 1 : isTablet ? 2 : 4;
+  const gridGap = 12;
+  const baseRowHeight = 116;
+
+  const moveWidget = (fromId, toId) => {
+    if (!fromId || !toId || fromId === toId) return;
+    const fromIndex = layout.indexOf(fromId);
+    const toIndex = layout.indexOf(toId);
+    if (fromIndex < 0 || toIndex < 0) return;
+
+    const next = [...layout];
+    const [moved] = next.splice(fromIndex, 1);
+    next.splice(toIndex, 0, moved);
+    onLayoutChange?.(next);
+  };
+
+  const clamp = (value, min, max) => Math.max(min, Math.min(max, value));
+
+  const getDefaultSizing = (size) => {
+    if (size === "sm") return { colSpan: 1, rowSpan: 1 };
+    if (size === "md") return { colSpan: 2, rowSpan: 2 };
+    if (size === "lg") return { colSpan: 3, rowSpan: 2 };
+    if (size === "xl") return { colSpan: 4, rowSpan: 3 };
+    return { colSpan: 2, rowSpan: 2 };
+  };
+
+  const getWidgetSizing = (widgetId, baseSize) => {
+    const defaults = getDefaultSizing(baseSize);
+    const override = sizeOverrides[widgetId];
+
+    // Backward compatibility for old size string overrides.
+    if (typeof override === "string") {
+      const fromString = getDefaultSizing(override);
+      return {
+        colSpan: clamp(isMobile ? 1 : fromString.colSpan, 1, cols),
+        rowSpan: clamp(fromString.rowSpan, 1, 4),
+      };
+    }
+
+    const next = {
+      colSpan: clamp(Number(override?.colSpan || defaults.colSpan), 1, cols),
+      rowSpan: clamp(Number(override?.rowSpan || defaults.rowSpan), 1, 4),
+    };
+
+    if (isMobile) next.colSpan = 1;
+    return next;
+  };
+
+  useEffect(() => {
+    if (!resizing) return undefined;
+
+    const onMouseMove = (event) => {
+      const gridWidth = gridRef.current?.clientWidth || 1;
+      const colWidth = (gridWidth - (gridGap * (cols - 1))) / cols;
+      const colUnit = colWidth + gridGap;
+      const rowUnit = baseRowHeight + gridGap;
+
+      const dx = event.clientX - resizing.startX;
+      const dy = event.clientY - resizing.startY;
+      const nextColSpan = clamp(resizing.startColSpan + Math.round(dx / colUnit), 1, cols);
+      const nextRowSpan = clamp(resizing.startRowSpan + Math.round(dy / rowUnit), 1, 4);
+
+      onSizeChange?.(resizing.widgetId, { colSpan: isMobile ? 1 : nextColSpan, rowSpan: nextRowSpan });
+    };
+
+    const onMouseUp = () => setResizing(null);
+
+    window.addEventListener("mousemove", onMouseMove);
+    window.addEventListener("mouseup", onMouseUp);
+    return () => {
+      window.removeEventListener("mousemove", onMouseMove);
+      window.removeEventListener("mouseup", onMouseUp);
+    };
+  }, [baseRowHeight, cols, gridGap, isMobile, onSizeChange, resizing]);
 
   return (
     <div>
@@ -108,6 +186,9 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, o
           </p>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
+          <Btn variant="secondary" size="sm" onClick={() => setArrangeMode((v) => !v)}>
+            <I name="grid" size={12} /> {arrangeMode ? "Done" : "Arrange"}
+          </Btn>
           <Btn variant="secondary" size="sm" onClick={onCustomise}>
             <I name="settings" size={12} /> Customise
           </Btn>
@@ -118,13 +199,64 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, o
       </div>
 
       {/* Widget grid */}
-      <div style={{ display: "grid", gridTemplateColumns: `repeat(${cols}, 1fr)`, gap: 12 }}>
+      <div
+        ref={gridRef}
+        style={{
+          display: "grid",
+          gridTemplateColumns: `repeat(${cols}, 1fr)`,
+          gridAutoFlow: "row dense",
+          gridAutoRows: `${baseRowHeight}px`,
+          gap: 12,
+          border: `1px solid ${t.border}`,
+          borderRadius: 12,
+          padding: 12,
+          background: t.surface2,
+        }}
+      >
         {layout.map((id) => {
           const w = ALL_WIDGETS.find((ww) => ww.id === id);
           if (!w) return null;
-          const span = isMobile ? 1 : w.size === "sm" ? 1 : Math.min(2, cols);
+          const sizing = getWidgetSizing(id, w.size);
+          const canResize = !isMobile && w.size !== "sm";
+          const isDragTarget = arrangeMode && overId === id && dragId && dragId !== id;
+
           return (
-            <Card key={id} style={{ gridColumn: `span ${span}`, minHeight: w.size === "sm" ? 100 : 240 }}>
+            <div
+              key={id}
+              draggable={arrangeMode && !resizing}
+              onDragStart={() => setDragId(id)}
+              onDragEnd={() => { setDragId(null); setOverId(null); }}
+              onDragOver={(e) => {
+                if (!arrangeMode || !dragId || dragId === id) return;
+                e.preventDefault();
+                setOverId(id);
+              }}
+              onDrop={(e) => {
+                if (!arrangeMode) return;
+                e.preventDefault();
+                moveWidget(dragId, id);
+                setDragId(null);
+                setOverId(null);
+              }}
+              style={{
+                position: "relative",
+                display: "flex",
+                flexDirection: "column",
+                gridColumn: `span ${sizing.colSpan}`,
+                gridRow: `span ${sizing.rowSpan}`,
+                opacity: arrangeMode && dragId === id ? 0.55 : 1,
+                transform: isDragTarget ? "scale(1.01)" : "scale(1)",
+                transition: "opacity 0.12s ease, transform 0.12s ease",
+                cursor: arrangeMode ? "grab" : "default",
+              }}
+            >
+              <Card style={{
+                height: "100%",
+                flex: 1,
+                minHeight: 0,
+                border: arrangeMode ? `1px dashed ${isDragTarget ? t.accent : t.border2}` : undefined,
+                boxShadow: arrangeMode && isDragTarget ? `0 0 0 1px ${t.accent}` : undefined,
+              }}>
               <DashWidget
                 id={id}
                 tickets={tickets}
@@ -133,7 +265,56 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, o
                 currentUser={currentUser}
                 onOpenTicket={onOpenTicket}
               />
-            </Card>
+              </Card>
+              {arrangeMode && (
+                <div style={{
+                  position: "absolute",
+                  top: 8,
+                  right: 8,
+                  width: 18,
+                  height: 18,
+                  borderRadius: 999,
+                  border: `1px solid ${t.border}`,
+                  background: t.surface,
+                  display: "grid",
+                  placeItems: "center",
+                  color: t.text3,
+                  zIndex: 3,
+                  pointerEvents: "none",
+                }}>
+                  <I name="menu" size={10} />
+                </div>
+              )}
+              {arrangeMode && canResize && (
+                <div
+                  onMouseDown={(event) => {
+                    event.preventDefault();
+                    event.stopPropagation();
+                    setResizing({
+                      widgetId: id,
+                      startX: event.clientX,
+                      startY: event.clientY,
+                      startColSpan: sizing.colSpan,
+                      startRowSpan: sizing.rowSpan,
+                    });
+                  }}
+                  title="Drag to resize"
+                  style={{
+                    position: "absolute",
+                    right: 8,
+                    bottom: 8,
+                    width: 14,
+                    height: 14,
+                    borderRight: `2px solid ${t.text3}`,
+                    borderBottom: `2px solid ${t.text3}`,
+                    borderRadius: 2,
+                    cursor: "nwse-resize",
+                    opacity: 0.9,
+                    zIndex: 3,
+                  }}
+                />
+              )}
+            </div>
           );
         })}
       </div>

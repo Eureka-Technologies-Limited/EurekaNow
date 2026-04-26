@@ -312,6 +312,7 @@ export function AppShell({ currentUser, onLogout }) {
   const [modal,        setModal]        = useState(null);   // "detail" | "new" | "customise"
   const [activeTicket, setActiveTicket] = useState(null);
   const [dashLayout,   setDashLayout]   = useState(DEFAULT_LAYOUT);
+  const [dashSizes,    setDashSizes]    = useState({});
   const [defaultType,  setDefaultType]  = useState(null);
 
   useEffect(() => {
@@ -519,6 +520,9 @@ export function AppShell({ currentUser, onLogout }) {
               tickets={tickets} articles={articles}
               users={users} currentUser={effectiveUser}
               layout={dashLayout}
+              sizeOverrides={dashSizes}
+              onLayoutChange={setDashLayout}
+              onSizeChange={(widgetId, size) => setDashSizes((prev) => ({ ...prev, [widgetId]: size }))}
               onCustomise={() => setModal("customise")}
               onOpenTicket={openTicket} onNewTicket={() => handleNew()}
             />
