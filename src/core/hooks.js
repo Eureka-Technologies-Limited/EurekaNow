@@ -45,31 +45,55 @@ export const useTheme = () => useContext(ThemeCtx);
 
 export function useTokens() {
   const { dark } = useTheme();
+
+  // Core palette adapted from the main website theme.
+  const palette = {
+    darkBlue: "#0b1a30",
+    lightBlue: "#1D3557",
+    accent: "#F57A55",
+    primaryText: "#FFFFFF",
+    secondaryText: "#B0BEC5",
+    border: "#37474F",
+    lighterBlue: "#2C4A74",
+    paleBlue: "#3E5C89",
+    skyBlue: "#5B7BA8",
+    frostBlue: "#A8C0D9",
+    deepRed: "#D33B41",
+    paleOrange: "#FFCCBC",
+    softYellow: "#FFD166",
+    successGreen: "#4CAF50",
+    softGreen: "#C8E6C9",
+    infoBlue: "#2196F3",
+    mutedBlue: "#90A4AE",
+    darkGray: "#263238",
+    lightGray: "#ECEFF1",
+  };
+
   return {
     dark,
     // Surfaces
-    bg:         dark ? "#0f0f0e" : "#f5f4f0",
-    surface:    dark ? "#1a1917" : "#ffffff",
-    surface2:   dark ? "#222120" : "#f8f7f4",
-    surface3:   dark ? "#2a2927" : "#f0ede6",
-    border:     dark ? "#2e2c2a" : "#e4e1d8",
-    border2:    dark ? "#3a3835" : "#d4d0c8",
+    bg:         dark ? palette.darkBlue : palette.lightGray,
+    surface:    dark ? palette.lightBlue : "#ffffff",
+    surface2:   dark ? palette.lighterBlue : "#f6f9fc",
+    surface3:   dark ? palette.paleBlue : "#e7eef6",
+    border:     dark ? palette.border : "#c9d6e3",
+    border2:    dark ? palette.mutedBlue : palette.frostBlue,
     // Text
-    text:       dark ? "#f0ede6" : "#1a1917",
-    text2:      dark ? "#a09890" : "#6b6560",
-    text3:      dark ? "#666260" : "#9a9590",
-    // Brand accent — amber/gold
-    accent:     "#e8a020",
-    accentBg:   dark ? "#2a1f08" : "#fef9ec",
-    accentText: dark ? "#f0b840" : "#92400e",
+    text:       dark ? palette.primaryText : palette.darkBlue,
+    text2:      dark ? palette.secondaryText : "#34495e",
+    text3:      dark ? palette.mutedBlue : "#607d8b",
+    // Brand accent
+    accent:     palette.accent,
+    accentBg:   dark ? "rgba(245,122,85,0.18)" : "#ffe8e0",
+    accentText: dark ? palette.paleOrange : "#8a2f15",
     // Semantic colours (each has base, bg, text variants)
-    red:        "#e53e3e", redBg:    dark ? "#2d1515" : "#fef2f2", redText:    dark ? "#fc8181" : "#991b1b",
-    orange:     "#dd6b20", orangeBg: dark ? "#2d1a0e" : "#fff7ed", orangeText: dark ? "#fb923c" : "#9a3412",
-    green:      "#38a169", greenBg:  dark ? "#0f2318" : "#f0fdf4", greenText:  dark ? "#6ee7b7" : "#15803d",
-    blue:       "#3182ce", blueBg:   dark ? "#0f1f35" : "#eff6ff", blueText:   dark ? "#93c5fd" : "#1d4ed8",
-    purple:     "#805ad5", purpleBg: dark ? "#1e1235" : "#faf5ff", purpleText: dark ? "#c4b5fd" : "#6d28d9",
-    yellow:     "#d69e2e", yellowBg: dark ? "#271f08" : "#fffbeb", yellowText: dark ? "#fcd34d" : "#b45309",
-    gray:       "#718096", grayBg:   dark ? "#1e1e1e" : "#f9fafb", grayText:   dark ? "#9ca3af" : "#4b5563",
+    red:        palette.deepRed,      redBg:    dark ? "#3a1b20" : "#fce8ea", redText:    dark ? "#ff9aa0" : "#9f1f29",
+    orange:     palette.accent,       orangeBg: dark ? "#41261f" : "#fff0ea", orangeText: dark ? palette.paleOrange : "#9d3e24",
+    green:      palette.successGreen, greenBg:  dark ? "#16321b" : palette.softGreen, greenText: dark ? "#90e49a" : "#1f6a2d",
+    blue:       palette.infoBlue,     blueBg:   dark ? "#112a42" : "#e9f4ff", blueText:   dark ? "#8bc9ff" : "#0d63b6",
+    purple:     palette.skyBlue,      purpleBg: dark ? "#1f3553" : "#edf3fb", purpleText: dark ? palette.frostBlue : "#3f5f89",
+    yellow:     palette.softYellow,   yellowBg: dark ? "#3a3117" : "#fff7db", yellowText: dark ? "#ffe39a" : "#8d6500",
+    gray:       palette.mutedBlue,    grayBg:   dark ? palette.darkGray : "#f4f7fa", grayText:   dark ? palette.frostBlue : "#526773",
     // Typography
     font: "'Sora', system-ui, sans-serif",
     mono: "'JetBrains Mono', monospace",
