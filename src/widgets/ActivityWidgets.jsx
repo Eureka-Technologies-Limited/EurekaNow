@@ -4,9 +4,8 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useTokens } from "../core/hooks.js";
-import { PRIORITIES } from "../core/constants.js";
 import { slaPct, slaForPriority } from "../core/utils.js";
-import { Avatar, PriorityBadge, StatusBadge, SLABar } from "../ui/primitives.jsx";
+import { PriorityBadge, StatusBadge, SLABar } from "../ui/primitives.jsx";
 
 // ── CriticalList ──────────────────────────────────────────────────────────────
 // Shows all currently open Critical tickets with a live SLA bar.
