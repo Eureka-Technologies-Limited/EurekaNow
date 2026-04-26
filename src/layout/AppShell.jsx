@@ -124,7 +124,7 @@ export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tic
           <I name={dark ? "sun" : "moon"} size={13} />
           {open && <span style={{ fontSize: 12 }}>{dark ? "Light mode" : "Dark mode"}</span>}
         </button>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: open ? "7px 10px" : "7px 4px", borderRadius: 8 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, padding: open ? "7px 10px" : "7px 0", borderRadius: 8, width: "100%", justifyContent: open ? "flex-start" : "center" }}>
           <Avatar name={currentUser.name} size={22} fs={8} />
           {open && (
             <div style={{ flex: 1, minWidth: 0 }}>

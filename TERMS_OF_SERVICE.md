@@ -8,7 +8,7 @@ By accessing or using the Service, you agree to these Terms.
 
 ## 1. Parties and Scope
 
-- "Provider," "we," "us," or "our" means the operator of EurekaNow.
+- "Provider," "we," "us," or "our" means the operator of EurekaNow, Eureka Technologies Ltd, a company registered in Scotland.
 - "Customer" means the organization that registers for or uses the Service.
 - "User" means an individual authorized by Customer to use the Service.
 
@@ -114,15 +114,16 @@ We may update these Terms from time to time. Material changes will be communicat
 
 ## 18. Governing Law
 
-These Terms are governed by the laws of the jurisdiction where the Provider is established, unless otherwise required by applicable law.
+These Terms and any non-contractual disputes arising out of or in connection with them are governed by the laws of Scotland.
+
+The courts of Scotland will have exclusive jurisdiction, except where mandatory consumer law in your country of residence provides otherwise.
 
 ## 19. Contact
 
 For legal notices or questions about these Terms, contact:
 
-- Legal Contact: legal@eurekanow.example
+- Legal Contact: cameron.donovan@eureka-technologies.co.uk
 - Company: EurekaNow / Eureka Technologies Ltd
 
 ---
 
-This template is provided for operational use and should be reviewed by legal counsel before production release.

@@ -69,6 +69,8 @@ Depending on your jurisdiction, we process data based on:
 - Legal obligations
 - Consent, where required
 
+For UK data subjects, processing is carried out in line with the UK GDPR and the Data Protection Act 2018.
+
 ## 6. Data Sharing
 
 We may share data with:
@@ -108,6 +110,8 @@ Depending on applicable law, individuals may have rights to:
 
 For data controlled by a Customer, please contact your organization first. We will assist Customers in responding to valid requests.
 
+If you are based in the UK and believe your data protection rights have been infringed, you may lodge a complaint with the UK Information Commissioner's Office (ICO): https://ico.org.uk/make-a-complaint/
+
 ## 11. Cookies and Similar Technologies
 
 We may use cookies or similar technologies for session management, authentication, preferences, and analytics.
@@ -126,9 +130,9 @@ We may update this Privacy Policy from time to time. Material changes will be co
 
 For privacy-related requests or questions:
 
-- Privacy Contact: privacy@eurekanow.example
+- Privacy Contact: cameron.donovan@eureka-technologies.co.uk
 - Company: EurekaNow / Eureka Technologies Ltd
 
----
+If you are contacting us from the UK or EEA regarding data protection rights, please include "Privacy Rights Request" in your subject line.
 
-This template is provided for operational use and should be reviewed by legal counsel before production release.
+---
