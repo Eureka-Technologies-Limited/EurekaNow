@@ -316,6 +316,16 @@ const isDemoLogin = (email, password) =>
 
 const shouldUseDemoMode = () => !SUPABASE_CONFIGURED || forceDemoMode;
 
+const isFetchFailure = (error) => {
+  const message = String(error?.message || error || "").toLowerCase();
+  return (
+    message.includes("failed to fetch")
+    || message.includes("networkerror")
+    || message.includes("load failed")
+    || message.includes("fetch")
+  );
+};
+
 const getDemoUser = () => {
   const state = getDemoState();
   return state.users.find((u) => u.email.toLowerCase() === DEMO_CREDENTIALS.email.toLowerCase()) || state.users[0];
@@ -359,58 +369,66 @@ export async function fetchAppData() {
     return clone(getDemoState());
   }
 
-  const [
-    orgsRes,
-    teamsRes,
-    usersRes,
-    ticketsRes,
-    commentsRes,
-    articlesRes,
-    orgSettingsRes,
-    teamSettingsRes,
-    teamRolesRes,
-    reviewsRes,
-  ] = await Promise.all([
-    supabase.from(TABLES.orgs).select("*").order("name", { ascending: true }),
-    supabase.from(TABLES.teams).select("*").order("name", { ascending: true }),
-    supabase.from(TABLES.users).select("*").order("name", { ascending: true }),
-    supabase.from(TABLES.tickets).select("*").order("created_at", { ascending: false }),
-    supabase.from(TABLES.comments).select("*").order("created_at", { ascending: true }),
-    supabase.from(TABLES.articles).select("*").order("created_at", { ascending: false }),
-    supabase.from(TABLES.orgSettings).select("*"),
-    supabase.from(TABLES.teamSettings).select("*"),
-    supabase.from(TABLES.teamRoles).select("*").order("created_at", { ascending: true }),
-    supabase.from(TABLES.postIncidentReviews).select("*").order("updated_at", { ascending: false }),
-  ]);
+  try {
+    const [
+      orgsRes,
+      teamsRes,
+      usersRes,
+      ticketsRes,
+      commentsRes,
+      articlesRes,
+      orgSettingsRes,
+      teamSettingsRes,
+      teamRolesRes,
+      reviewsRes,
+    ] = await Promise.all([
+      supabase.from(TABLES.orgs).select("*").order("name", { ascending: true }),
+      supabase.from(TABLES.teams).select("*").order("name", { ascending: true }),
+      supabase.from(TABLES.users).select("*").order("name", { ascending: true }),
+      supabase.from(TABLES.tickets).select("*").order("created_at", { ascending: false }),
+      supabase.from(TABLES.comments).select("*").order("created_at", { ascending: true }),
+      supabase.from(TABLES.articles).select("*").order("created_at", { ascending: false }),
+      supabase.from(TABLES.orgSettings).select("*"),
+      supabase.from(TABLES.teamSettings).select("*"),
+      supabase.from(TABLES.teamRoles).select("*").order("created_at", { ascending: true }),
+      supabase.from(TABLES.postIncidentReviews).select("*").order("updated_at", { ascending: false }),
+    ]);
 
-  fail(orgsRes.error, "Failed to load organizations.");
-  fail(teamsRes.error, "Failed to load teams.");
-  fail(usersRes.error, "Failed to load users.");
-  fail(ticketsRes.error, "Failed to load tickets.");
-  fail(commentsRes.error, "Failed to load comments.");
-  fail(articlesRes.error, "Failed to load articles.");
-  fail(orgSettingsRes.error, "Failed to load organization settings.");
-  fail(teamSettingsRes.error, "Failed to load team settings.");
-  fail(teamRolesRes.error, "Failed to load team roles.");
-  fail(reviewsRes.error, "Failed to load post-incident reviews.");
+    fail(orgsRes.error, "Failed to load organizations.");
+    fail(teamsRes.error, "Failed to load teams.");
+    fail(usersRes.error, "Failed to load users.");
+    fail(ticketsRes.error, "Failed to load tickets.");
+    fail(commentsRes.error, "Failed to load comments.");
+    fail(articlesRes.error, "Failed to load articles.");
+    fail(orgSettingsRes.error, "Failed to load organization settings.");
+    fail(teamSettingsRes.error, "Failed to load team settings.");
+    fail(teamRolesRes.error, "Failed to load team roles.");
+    fail(reviewsRes.error, "Failed to load post-incident reviews.");
 
-  const commentsByTicketId = {};
-  for (const row of commentsRes.data || []) {
-    if (!commentsByTicketId[row.ticket_id]) commentsByTicketId[row.ticket_id] = [];
-    commentsByTicketId[row.ticket_id].push(toComment(row));
+    const commentsByTicketId = {};
+    for (const row of commentsRes.data || []) {
+      if (!commentsByTicketId[row.ticket_id]) commentsByTicketId[row.ticket_id] = [];
+      commentsByTicketId[row.ticket_id].push(toComment(row));
+    }
+
+    return {
+      orgs: (orgsRes.data || []).map(toOrg),
+      teams: (teamsRes.data || []).map(toTeam),
+      users: (usersRes.data || []).map(toUser),
+      tickets: (ticketsRes.data || []).map((row) => toTicket(row, commentsByTicketId)),
+      articles: (articlesRes.data || []).map(toArticle),
+      orgSettings: (orgSettingsRes.data || []).map(toOrgSettings),
+      teamSettings: (teamSettingsRes.data || []).map(toTeamSettings),
+      teamRoles: (teamRolesRes.data || []).map(toTeamRole),
+      postIncidentReviews: (reviewsRes.data || []).map(toPostIncidentReview),
+    };
+  } catch (error) {
+    if (isFetchFailure(error)) {
+      forceDemoMode = true;
+      return clone(getDemoState());
+    }
+    throw error;
   }
-
-  return {
-    orgs: (orgsRes.data || []).map(toOrg),
-    teams: (teamsRes.data || []).map(toTeam),
-    users: (usersRes.data || []).map(toUser),
-    tickets: (ticketsRes.data || []).map((row) => toTicket(row, commentsByTicketId)),
-    articles: (articlesRes.data || []).map(toArticle),
-    orgSettings: (orgSettingsRes.data || []).map(toOrgSettings),
-    teamSettings: (teamSettingsRes.data || []).map(toTeamSettings),
-    teamRoles: (teamRolesRes.data || []).map(toTeamRole),
-    postIncidentReviews: (reviewsRes.data || []).map(toPostIncidentReview),
-  };
 }
 
 export async function createTicket(payload) {
