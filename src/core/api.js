@@ -278,6 +278,7 @@ const makeDemoSeed = () => {
 };
 
 let demoState = null;
+let forceDemoMode = false;
 
 const clone = (value) => JSON.parse(JSON.stringify(value));
 
@@ -313,6 +314,8 @@ const getDemoState = () => {
 const isDemoLogin = (email, password) =>
   email.trim().toLowerCase() === DEMO_CREDENTIALS.email.toLowerCase() && password === DEMO_CREDENTIALS.password;
 
+const shouldUseDemoMode = () => !SUPABASE_CONFIGURED || forceDemoMode;
+
 const getDemoUser = () => {
   const state = getDemoState();
   return state.users.find((u) => u.email.toLowerCase() === DEMO_CREDENTIALS.email.toLowerCase()) || state.users[0];
@@ -326,8 +329,11 @@ const ensureSupabaseOrDemo = () => {
 
 export async function loginWithEmailPassword(email, password) {
   if (isDemoLogin(email, password)) {
+    forceDemoMode = true;
     return clone(getDemoUser());
   }
+
+  forceDemoMode = false;
 
   ensureSupabaseOrDemo();
 
@@ -349,7 +355,7 @@ export async function loginWithEmailPassword(email, password) {
 }
 
 export async function fetchAppData() {
-  if (!SUPABASE_CONFIGURED) {
+  if (shouldUseDemoMode()) {
     return clone(getDemoState());
   }
 
@@ -408,7 +414,7 @@ export async function fetchAppData() {
 }
 
 export async function createTicket(payload) {
-  if (!SUPABASE_CONFIGURED) {
+  if (shouldUseDemoMode()) {
     const state = getDemoState();
     const created = {
       id: makeTicketId(payload.type),
@@ -460,7 +466,7 @@ export async function createTicket(payload) {
 }
 
 export async function updateTicketFields(ticketId, fields) {
-  if (!SUPABASE_CONFIGURED) {
+  if (shouldUseDemoMode()) {
     const state = getDemoState();
     const index = state.tickets.findIndex((row) => row.id === ticketId);
     if (index < 0) throw new Error("Ticket not found.");
@@ -516,7 +522,7 @@ export async function updateTicketFields(ticketId, fields) {
 }
 
 export async function createTicketComment(ticketId, payload) {
-  if (!SUPABASE_CONFIGURED) {
+  if (shouldUseDemoMode()) {
     const state = getDemoState();
     const ticket = state.tickets.find((row) => row.id === ticketId);
     if (!ticket) throw new Error("Ticket not found.");
@@ -550,7 +556,7 @@ export async function createTicketComment(ticketId, payload) {
 }
 
 export async function createArticle(payload) {
-  if (!SUPABASE_CONFIGURED) {
+  if (shouldUseDemoMode()) {
     const state = getDemoState();
     const article = {
       id: `kb_${uid()}`,
@@ -591,7 +597,7 @@ export async function createArticle(payload) {
 }
 
 export async function incrementArticleViews(articleId, nextViews) {
-  if (!SUPABASE_CONFIGURED) {
+  if (shouldUseDemoMode()) {
     const state = getDemoState();
     const index = state.articles.findIndex((row) => row.id === articleId);
     if (index < 0) throw new Error("Article not found.");
@@ -612,7 +618,7 @@ export async function incrementArticleViews(articleId, nextViews) {
 }
 
 export async function createOrganisation(payload) {
-  if (!SUPABASE_CONFIGURED) {
+  if (shouldUseDemoMode()) {
     const state = getDemoState();
     const created = {
       id: `o_${uid()}`,
@@ -659,7 +665,7 @@ export async function createOrganisation(payload) {
 }
 
 export async function createTeam(payload) {
-  if (!SUPABASE_CONFIGURED) {
+  if (shouldUseDemoMode()) {
     const state = getDemoState();
     const created = {
       id: `t_${uid()}`,
@@ -729,7 +735,7 @@ export async function createTeam(payload) {
 export async function createMember(payload) {
   const roles = normalizeUserRoles(payload.roles, payload.role);
 
-  if (!SUPABASE_CONFIGURED) {
+  if (shouldUseDemoMode()) {
     const state = getDemoState();
     const created = {
       id: `u_${uid()}`,
@@ -791,7 +797,7 @@ export async function createMember(payload) {
 export async function updateMemberRoles(userId, rolesInput) {
   const roles = normalizeUserRoles(rolesInput, "End User");
 
-  if (!SUPABASE_CONFIGURED) {
+  if (shouldUseDemoMode()) {
     const state = getDemoState();
     const index = state.users.findIndex((row) => row.id === userId);
     if (index < 0) throw new Error("Member not found.");
@@ -828,7 +834,7 @@ export async function updateMemberRoles(userId, rolesInput) {
 }
 
 export async function upsertOrgSettings(payload) {
-  if (!SUPABASE_CONFIGURED) {
+  if (shouldUseDemoMode()) {
     const state = getDemoState();
     const priorities = normalizePriorities(payload.priorities);
     const settings = {
@@ -863,7 +869,7 @@ export async function upsertOrgSettings(payload) {
 }
 
 export async function upsertTeamSettings(payload) {
-  if (!SUPABASE_CONFIGURED) {
+  if (shouldUseDemoMode()) {
     const state = getDemoState();
     const priorities = normalizePriorities(payload.priorities);
     const settings = {
@@ -898,7 +904,7 @@ export async function upsertTeamSettings(payload) {
 }
 
 export async function createTeamRole(payload) {
-  if (!SUPABASE_CONFIGURED) {
+  if (shouldUseDemoMode()) {
     const state = getDemoState();
     const role = {
       id: `role_${uid()}`,
@@ -931,7 +937,7 @@ export async function createTeamRole(payload) {
 }
 
 export async function savePostIncidentReview(payload) {
-  if (!SUPABASE_CONFIGURED) {
+  if (shouldUseDemoMode()) {
     const state = getDemoState();
     const review = {
       id: payload.id || `pir_${uid()}`,
