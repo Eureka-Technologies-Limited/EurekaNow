@@ -5,12 +5,29 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
-import { PRIORITIES, TICKET_TYPES, CATEGORIES } from "../core/constants.js";
+import { PRIORITIES, DEFAULT_URGENCIES, TICKET_TYPES, CATEGORIES } from "../core/constants.js";
 import { Btn, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
 
-export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCreate, defaultType, priorityCatalog, urgencyLevels, orgSettings = [] }) {
+export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCreate, defaultType, priorityCatalog, urgencyLevels, orgSettings = [], teamSettings = [] }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
+
+  const isDefaultPriorityMap = (priorityMap = {}) => {
+    const defaultEntries = Object.entries(PRIORITIES);
+    const currentEntries = Object.entries(priorityMap || {});
+    if (!currentEntries.length || currentEntries.length !== defaultEntries.length) return false;
+
+    return defaultEntries.every(([name, cfg]) => {
+      const current = priorityMap[name];
+      return current && current.color === cfg.color && Number(current.sla) === Number(cfg.sla);
+    });
+  };
+
+  const isDefaultUrgencies = (urgencies = []) => {
+    if (!Array.isArray(urgencies) || urgencies.length !== DEFAULT_URGENCIES.length) return false;
+    return urgencies.every((value, index) => value === DEFAULT_URGENCIES[index]);
+  };
+
   const fallbackCatalog = (priorityCatalog && Object.keys(priorityCatalog).length) ? priorityCatalog : PRIORITIES;
   const fallbackUrgencies = useMemo(
     () => (urgencyLevels?.length ? urgencyLevels : ["Critical", "High", "Medium", "Low"]),
@@ -34,10 +51,25 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const resolvedSettings = useMemo(() => {
+    const teamCfg = teamSettings.find((row) => row.teamId === form.teamId);
     const orgCfg = orgSettings.find((row) => row.orgId === form.orgId);
-    if (orgCfg) return orgCfg;
-    return { priorityMap: fallbackCatalog, urgencies: fallbackUrgencies };
-  }, [form.orgId, orgSettings, fallbackCatalog, fallbackUrgencies]);
+    const teamMap = teamCfg?.priorityMap || {};
+    const orgMap = orgCfg?.priorityMap || {};
+    const teamUrgencies = teamCfg?.urgencies || [];
+    const orgUrgencies = orgCfg?.urgencies || [];
+
+    const teamHasCustomPriority = Object.keys(teamMap).length && !isDefaultPriorityMap(teamMap);
+    const teamHasCustomUrgencies = teamUrgencies.length && !isDefaultUrgencies(teamUrgencies);
+
+    return {
+      priorityMap: teamHasCustomPriority
+        ? teamMap
+        : (Object.keys(orgMap).length ? orgMap : (Object.keys(teamMap).length ? teamMap : fallbackCatalog)),
+      urgencies: teamHasCustomUrgencies
+        ? teamUrgencies
+        : (orgUrgencies.length ? orgUrgencies : (teamUrgencies.length ? teamUrgencies : fallbackUrgencies)),
+    };
+  }, [form.orgId, form.teamId, orgSettings, teamSettings, fallbackCatalog, fallbackUrgencies]);
 
   const catalog = (resolvedSettings.priorityMap && Object.keys(resolvedSettings.priorityMap).length)
     ? resolvedSettings.priorityMap
@@ -136,7 +168,7 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
           </div>
           <div>
             <Label>Priority</Label>
-            <div style={{ display: "grid", gridTemplateColumns: "repeat(4,1fr)", gap: 5 }}>
+            <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(74px, 1fr))", gap: 5 }}>
               {catalogEntries.map(([p, cfg]) => (
                 <button
                   key={p}

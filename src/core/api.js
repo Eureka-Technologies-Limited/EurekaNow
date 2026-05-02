@@ -13,6 +13,7 @@ const TABLES = {
   teamSettings: "team_settings",
   teamRoles: "team_roles",
   postIncidentReviews: "post_incident_reviews",
+  activityLog: "activity_log",
 };
 
 const DEMO_STORAGE_KEY = "eurekanow_demo_state_v1";
@@ -39,13 +40,36 @@ const defaultPrioritiesArray = () => Object.entries(PRIORITIES).map(([name, cfg]
   sla: cfg.sla,
 }));
 
+const isValidHexColor = (color) => {
+  const hex = String(color || "").trim();
+  return /^#[0-9A-Fa-f]{6}$/.test(hex);
+};
+
 const normalizePriorities = (value) => {
   const rows = asArray(value)
-    .map((item) => ({
-      name: String(item?.name || "").trim(),
-      color: String(item?.color || "").trim() || "#888888",
-      sla: Number(item?.sla || 0),
-    }))
+    .map((item) => {
+      const rawColor = item?.color;
+      const name = String(item?.name || "").trim();
+      
+      // Try to preserve the color if it's a valid hex color
+      let color = isValidHexColor(rawColor) ? String(rawColor).trim() : null;
+      
+      // If no valid color, try to recover from PRIORITIES constant
+      if (!color && PRIORITIES[name]) {
+        color = PRIORITIES[name].color;
+      }
+      
+      // Fall back to a neutral color if still no valid color
+      if (!color) {
+        color = "#888888";
+      }
+      
+      return {
+        name,
+        color,
+        sla: Number(item?.sla || 0),
+      };
+    })
     .filter((item) => item.name && item.sla > 0);
 
   return rows.length ? rows : defaultPrioritiesArray();
@@ -1011,4 +1035,133 @@ export async function savePostIncidentReview(payload) {
 
   fail(result.error, "Failed to save post-incident review.");
   return toPostIncidentReview(result.data);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Activity Audit Log
+// Track all ticket changes for compliance and visibility
+// ─────────────────────────────────────────────────────────────────────────────
+
+const toActivityLog = (row) => ({
+  id: row.id,
+  ticketId: row.ticket_id,
+  orgId: row.org_id,
+  teamId: row.team_id,
+  userId: row.user_id,
+  action: row.action,
+  field: row.field || "",
+  oldValue: row.old_value,
+  newValue: row.new_value,
+  createdAt: Number(row.created_at),
+});
+
+export async function logActivity(payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    if (!state.activityLog) state.activityLog = [];
+    const log = {
+      id: `log_${uid()}`,
+      ticketId: payload.ticketId,
+      orgId: payload.orgId,
+      teamId: payload.teamId,
+      userId: payload.userId,
+      action: payload.action,
+      field: payload.field || "",
+      oldValue: payload.oldValue,
+      newValue: payload.newValue,
+      createdAt: Date.now(),
+    };
+    state.activityLog.push(log);
+    saveDemoState();
+    return clone(log);
+  }
+
+  const row = {
+    id: `log_${uid()}`,
+    ticket_id: payload.ticketId,
+    org_id: payload.orgId,
+    team_id: payload.teamId,
+    user_id: payload.userId,
+    action: payload.action,
+    field: payload.field || "",
+    old_value: payload.oldValue,
+    new_value: payload.newValue,
+    created_at: Date.now(),
+  };
+
+  const { data, error } = await supabase
+    .from(TABLES.activityLog)
+    .insert(row)
+    .select("*")
+    .single();
+
+  // Don't fail on audit log errors - they're non-critical
+  if (error) console.warn("Failed to log activity:", error.message);
+  return data ? toActivityLog(data) : null;
+}
+
+export async function fetchActivityLog(ticketId) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const logs = (state.activityLog || [])
+      .filter((log) => log.ticketId === ticketId)
+      .sort((a, b) => b.createdAt - a.createdAt);
+    return clone(logs);
+  }
+
+  const { data, error } = await supabase
+    .from(TABLES.activityLog)
+    .select("*")
+    .eq("ticket_id", ticketId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.warn("Failed to fetch activity log:", error.message);
+    return [];
+  }
+
+  return (data || []).map(toActivityLog);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SLA Breach Detection & Notifications
+// Check for tickets approaching or breaching SLA
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function checkSLAStatus(ticket, hours = 24) {
+  const createdMs = ticket.createdAt;
+  const nowMs = Date.now();
+  const elapsedMs = nowMs - createdMs;
+  const elapsedHours = elapsedMs / (1000 * 60 * 60);
+  const percentComplete = (elapsedHours / hours) * 100;
+
+  return {
+    elapsedHours: Math.round(elapsedHours * 10) / 10,
+    percentComplete: Math.round(percentComplete),
+    isBreached: elapsedHours > hours,
+    isRisk: percentComplete > 75 && percentComplete <= 100,
+    hoursRemaining: Math.max(0, Math.round((hours - elapsedHours) * 10) / 10),
+  };
+}
+
+export function findSLABreachers(tickets, priorityCatalog = {}) {
+  return tickets
+    .filter((tk) => !["Resolved", "Closed"].includes(tk.status))
+    .map((tk) => {
+      const slaHours = priorityCatalog[tk.priority]?.sla || 24;
+      const status = checkSLAStatus(tk, slaHours);
+      return { ticket: tk, slaStatus: status };
+    })
+    .filter(({ slaStatus }) => slaStatus.isBreached);
+}
+
+export function findSLAAtRisk(tickets, priorityCatalog = {}) {
+  return tickets
+    .filter((tk) => !["Resolved", "Closed"].includes(tk.status))
+    .map((tk) => {
+      const slaHours = priorityCatalog[tk.priority]?.sla || 24;
+      const status = checkSLAStatus(tk, slaHours);
+      return { ticket: tk, slaStatus: status };
+    })
+    .filter(({ slaStatus }) => slaStatus.isRisk && !slaStatus.isBreached);
 }

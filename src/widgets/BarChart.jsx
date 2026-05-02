@@ -20,15 +20,15 @@ export function BarChart({ data, label }) {
       <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 12 }}>
         {label}
       </div>
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         {data.map((d) => (
-          <div key={d.label}>
-            <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 3 }}>
-              <span style={{ fontSize: 11, color: t.text2 }}>{d.label}</span>
-              <span style={{ fontSize: 11, fontWeight: 700, color: t.text }}>{d.count}</span>
+          <div key={d.label} style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", height: 18 }}>
+              <span style={{ fontSize: 11, fontWeight: 600, color: t.text2, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{d.label}</span>
+              <span style={{ fontSize: 11, fontWeight: 700, color: t.text, marginLeft: 8, minWidth: 24, textAlign: "right", flexShrink: 0 }}>{d.count}</span>
             </div>
-            <div style={{ height: 5, background: t.surface3, borderRadius: 99 }}>
-              <div style={{ width: `${(d.count / max) * 100}%`, height: "100%", background: d.color || t.accent, borderRadius: 99 }} />
+            <div style={{ height: 6, background: t.surface3, borderRadius: 99, overflow: "hidden" }}>
+              <div style={{ width: `${(d.count / max) * 100}%`, height: "100%", background: d.color || t.accent, borderRadius: 99, transition: "width 0.2s ease" }} />
             </div>
           </div>
         ))}

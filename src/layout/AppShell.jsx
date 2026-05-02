@@ -4,7 +4,7 @@
 
 import { useEffect, useState } from "react";
 import { useTokens, useTheme, useBreakpoint } from "../core/hooks.js";
-import { VIEW_LABELS, VIEW_TO_TYPE } from "../core/constants.js";
+import { VIEW_LABELS, VIEW_TO_TYPE, PRIORITIES, DEFAULT_URGENCIES } from "../core/constants.js";
 import {
   createArticle,
   createMember,
@@ -347,18 +347,48 @@ export function AppShell({ currentUser, onLogout }) {
 
   const effectiveUser = users.find((u) => u.id === currentUser.id) || currentUser;
 
+  const isDefaultPriorityMap = (priorityMap = {}) => {
+    const defaultEntries = Object.entries(PRIORITIES);
+    const currentEntries = Object.entries(priorityMap || {});
+    if (!currentEntries.length || currentEntries.length !== defaultEntries.length) return false;
+
+    return defaultEntries.every(([name, cfg]) => {
+      const current = priorityMap[name];
+      return current && current.color === cfg.color && Number(current.sla) === Number(cfg.sla);
+    });
+  };
+
+  const isDefaultUrgencies = (urgencies = []) => {
+    if (!Array.isArray(urgencies) || urgencies.length !== DEFAULT_URGENCIES.length) return false;
+    return urgencies.every((value, index) => value === DEFAULT_URGENCIES[index]);
+  };
+
   const getPriorityCatalog = (orgId, teamId) => {
     const team = teamSettings.find((row) => row.teamId === teamId);
-    if (team?.priorityMap && Object.keys(team.priorityMap).length) return team.priorityMap;
     const org = orgSettings.find((row) => row.orgId === orgId);
+
+    const teamMap = team?.priorityMap || {};
+    const orgMap = org?.priorityMap || {};
+    const teamHasCustom = Object.keys(teamMap).length && !isDefaultPriorityMap(teamMap);
+
+    if (teamHasCustom) return teamMap;
+    if (Object.keys(orgMap).length) return orgMap;
+    if (Object.keys(teamMap).length) return teamMap;
     return org?.priorityMap || {};
   };
 
   const getUrgencyLevels = (orgId, teamId) => {
     const team = teamSettings.find((row) => row.teamId === teamId);
-    if (team?.urgencies?.length) return team.urgencies;
     const org = orgSettings.find((row) => row.orgId === orgId);
-    return org?.urgencies || ["Critical", "High", "Medium", "Low"];
+
+    const teamUrgencies = team?.urgencies || [];
+    const orgUrgencies = org?.urgencies || [];
+    const teamHasCustom = teamUrgencies.length && !isDefaultUrgencies(teamUrgencies);
+
+    if (teamHasCustom) return teamUrgencies;
+    if (orgUrgencies.length) return orgUrgencies;
+    if (teamUrgencies.length) return teamUrgencies;
+    return ["Critical", "High", "Medium", "Low"];
   };
 
   const openTicket = (tk) => {
