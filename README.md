@@ -14,3 +14,5 @@ EurekaNow is a React-based service desk application now backed by Supabase (no l
 
 - Terms of Service: `TERMS_OF_SERVICE.md`
 - Privacy Policy: `PRIVACY_POLICY.md`
+
+Version 2.0.0
