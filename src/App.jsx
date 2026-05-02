@@ -40,26 +40,26 @@ import { LandingPage, LoginPage } from "./views/PublicPages.jsx";
 import { AppShell } from "./layout/AppShell.jsx";
 
 function Root() {
+  const [page,        setPage]        = useState("landing"); // "landing" | "login" | "app"
+  const [currentUser, setCurrentUser] = useState(null);
+  const t = useTokens();
+
+  // Sync body background with the active theme
+  useEffect(() => {
+    document.body.style.margin     = "0";
+    document.body.style.padding    = "0";
+    document.body.style.background = t.bg;
+  }, [t.bg]);
+
+  const handleLogin = async ({ email, password }) => {
+    const user = await loginWithEmailPassword(email, password);
+    setCurrentUser(user);
+    setPage("app");
+  };
+
+  const handleLogout = ()     => { setCurrentUser(null); setPage("landing"); };
+
   try {
-    const [page,        setPage]        = useState("landing"); // "landing" | "login" | "app"
-    const [currentUser, setCurrentUser] = useState(null);
-    const t = useTokens();
-
-    // Sync body background with the active theme
-    useEffect(() => {
-      document.body.style.margin     = "0";
-      document.body.style.padding    = "0";
-      document.body.style.background = t.bg;
-    }, [t.bg]);
-
-    const handleLogin = async ({ email, password }) => {
-      const user = await loginWithEmailPassword(email, password);
-      setCurrentUser(user);
-      setPage("app");
-    };
-
-    const handleLogout = ()     => { setCurrentUser(null); setPage("landing"); };
-
     return (
       <div style={{ width: "100%", background: t.bg, minHeight: "100vh" }}>
         <style>{`
