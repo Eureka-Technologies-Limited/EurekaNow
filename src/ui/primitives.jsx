@@ -91,12 +91,12 @@ export function SLABar({ priority, createdAt, showLabel = true, slaHours }) {
   const left  = slaLeft(createdAt, h);
   const color = slaColor(createdAt, h, t);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <div style={{ flex: 1, height: 3, background: t.surface3, borderRadius: 99, overflow: "hidden" }}>
-        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 99 }} />
+    <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0 }}>
+      <div style={{ flex: 1, height: 4, background: t.surface3, borderRadius: 99, overflow: "hidden", minWidth: 0 }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 99, transition: "width 0.2s ease" }} />
       </div>
       {showLabel && (
-        <span style={{ fontSize: 10, fontWeight: 700, color, minWidth: 60, textAlign: "right" }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color, minWidth: "50px", textAlign: "right", flexShrink: 0 }}>
           {left}
         </span>
       )}

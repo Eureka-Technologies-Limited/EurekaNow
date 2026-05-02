@@ -13,13 +13,36 @@ const defaultPriorityRows = () => Object.entries(PRIORITIES).map(([name, cfg]) =
   sla: cfg.sla,
 }));
 
+const isValidHexColor = (color) => {
+  const hex = String(color || "").trim();
+  return /^#[0-9A-Fa-f]{6}$/.test(hex);
+};
+
 const normalizePriorityRows = (rows) => {
   const list = (rows || [])
-    .map((row) => ({
-      name: String(row?.name || "").trim(),
-      color: String(row?.color || "").trim() || "#888888",
-      sla: Number(row?.sla || 0),
-    }))
+    .map((row) => {
+      const rawColor = row?.color;
+      const name = String(row?.name || "").trim();
+      
+      // Try to preserve the color if it's a valid hex color
+      let color = isValidHexColor(rawColor) ? String(rawColor).trim() : null;
+      
+      // If no valid color, try to recover from PRIORITIES constant
+      if (!color && PRIORITIES[name]) {
+        color = PRIORITIES[name].color;
+      }
+      
+      // Fall back to a neutral color if still no valid color
+      if (!color) {
+        color = "#888888";
+      }
+      
+      return {
+        name,
+        color,
+        sla: Number(row?.sla || 0),
+      };
+    })
     .filter((row) => row.name && row.sla > 0);
   return list.length ? list : defaultPriorityRows();
 };
@@ -338,7 +361,11 @@ export function TeamsView({
 function SettingsForm({ defaultPriorities, defaultUrgencies, onSave, onCancel }) {
   const t = useTokens();
   const [priorities, setPriorities] = useState(defaultPriorities);
-  const [urgenciesText, setUrgenciesText] = useState((defaultUrgencies || []).join(", "));
+  const [urgencies, setUrgencies] = useState(
+    Array.isArray(defaultUrgencies) && defaultUrgencies.length
+      ? defaultUrgencies
+      : ["Critical", "High", "Medium", "Low"]
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -354,18 +381,30 @@ function SettingsForm({ defaultPriorities, defaultUrgencies, onSave, onCancel })
     setPriorities((rows) => [...rows, { name: "", color: "#666666", sla: 24 }]);
   };
 
+  const updateUrgency = (index, value) => {
+    setUrgencies((rows) => rows.map((row, i) => (i === index ? value : row)));
+  };
+
+  const removeUrgency = (index) => {
+    setUrgencies((rows) => rows.filter((_, i) => i !== index));
+  };
+
+  const addUrgency = () => {
+    setUrgencies((rows) => [...rows, ""]);
+  };
+
   const submit = async () => {
     setSaving(true);
     setError("");
     const nextPriorities = normalizePriorityRows(priorities);
-    const urgencies = urgenciesText.split(",").map((u) => u.trim()).filter(Boolean);
-    if (!urgencies.length) {
+    const nextUrgencies = urgencies.map((u) => String(u || "").trim()).filter(Boolean);
+    if (!nextUrgencies.length) {
       setError("Add at least one urgency level.");
       setSaving(false);
       return;
     }
     try {
-      await onSave({ priorities: nextPriorities, urgencies });
+      await onSave({ priorities: nextPriorities, urgencies: nextUrgencies });
     } catch (err) {
       setError(err?.message || "Failed to save settings.");
       setSaving(false);
@@ -382,7 +421,7 @@ function SettingsForm({ defaultPriorities, defaultUrgencies, onSave, onCancel })
         <Label>Priorities & SLA (hours)</Label>
         <div style={{ display: "grid", gap: 8 }}>
           {priorities.map((p, i) => (
-            <div key={`${p.name}-${i}`} style={{ display: "grid", gridTemplateColumns: "1.2fr 110px 110px auto", gap: 8 }}>
+            <div key={`priority-${i}`} style={{ display: "grid", gridTemplateColumns: "1.2fr 110px 110px auto", gap: 8 }}>
               <Input value={p.name} onChange={(e) => updatePriority(i, "name", e.target.value)} placeholder="Priority name" />
               <Input value={String(p.sla)} onChange={(e) => updatePriority(i, "sla", e.target.value)} placeholder="SLA h" />
               <input type="color" value={p.color} onChange={(e) => updatePriority(i, "color", e.target.value)} style={{ width: "100%", height: 38, border: `1px solid ${t.border}`, borderRadius: 8, background: t.surface2 }} />
@@ -396,8 +435,18 @@ function SettingsForm({ defaultPriorities, defaultUrgencies, onSave, onCancel })
       </div>
 
       <div>
-        <Label>Urgency Levels (comma-separated)</Label>
-        <Input value={urgenciesText} onChange={(e) => setUrgenciesText(e.target.value)} placeholder="Critical, High, Medium, Low" />
+        <Label>Urgency Levels</Label>
+        <div style={{ display: "grid", gap: 8 }}>
+          {urgencies.map((u, i) => (
+            <div key={`urgency-${i}`} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+              <Input value={u} onChange={(e) => updateUrgency(i, e.target.value)} placeholder="Urgency name" />
+              <Btn variant="secondary" size="sm" onClick={() => removeUrgency(i)}>Remove</Btn>
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <Btn variant="secondary" size="sm" onClick={addUrgency}><I name="plus" size={12} /> Add urgency</Btn>
+        </div>
       </div>
 
       {error && <div style={{ fontSize: 12, color: "#dc2626" }}>{error}</div>}

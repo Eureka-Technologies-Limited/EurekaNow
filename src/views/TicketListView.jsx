@@ -10,6 +10,7 @@ import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { PRIORITIES, STATUSES } from "../core/constants.js";
 import { slaPct } from "../core/utils.js";
 import { Avatar, Btn, Card, PriorityBadge, StatusBadge, TypeBadge, SLABar } from "../ui/primitives.jsx";
+import { BulkActionsBar } from "../ui/BulkActionsBar.jsx";
 import { I } from "../core/icons.jsx";
 
 const TYPE_ICON = {
@@ -20,7 +21,7 @@ const TYPE_ICON = {
   Task:             "task",
 };
 
-export function TicketListView({ typeFilter, tickets, users, onOpenTicket, onNewTicket, priorityCatalog }) {
+export function TicketListView({ typeFilter, tickets, users, onOpenTicket, onNewTicket, priorityCatalog, onBulkUpdate }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
   const catalog = (priorityCatalog && Object.keys(priorityCatalog).length) ? priorityCatalog : PRIORITIES;
@@ -32,6 +33,7 @@ export function TicketListView({ typeFilter, tickets, users, onOpenTicket, onNew
   const [fPriority,   setFPriority]   = useState("All");
   const [sortBy,      setSortBy]      = useState("newest");
   const [showFilters, setShowFilters] = useState(false);
+  const [selected,    setSelected]    = useState(new Set());
 
   const label = typeFilter || "All Tickets";
 
@@ -58,10 +60,54 @@ export function TicketListView({ typeFilter, tickets, users, onOpenTicket, onNew
       return 0;
     });
 
+  const toggleSelect = (ticketId) => {
+    setSelected((prev) => {
+      const next = new Set(prev);
+      next.has(ticketId) ? next.delete(ticketId) : next.add(ticketId);
+      return next;
+    });
+  };
+
+  const toggleSelectAll = () => {
+    if (selected.size === filtered.length) {
+      setSelected(new Set());
+    } else {
+      setSelected(new Set(filtered.map((tk) => tk.id)));
+    }
+  };
+
+  const handleBulkStatusChange = (newStatus) => {
+    if (!onBulkUpdate || selected.size === 0) return;
+    const updates = Array.from(selected).map((ticketId) => ({
+      ticketId,
+      updates: { status: newStatus },
+    }));
+    onBulkUpdate?.(updates);
+    setSelected(new Set());
+  };
+
+  const handleBulkAssign = (userId) => {
+    if (!onBulkUpdate || selected.size === 0) return;
+    const updates = Array.from(selected).map((ticketId) => ({
+      ticketId,
+      updates: { assignee: userId === "" ? null : userId },
+    }));
+    onBulkUpdate?.(updates);
+    setSelected(new Set());
+  };
+
   const inputStyle = { background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 9, padding: "9px 11px", fontSize: 13, color: t.text, outline: "none", fontFamily: t.font };
 
   return (
     <div>
+      <BulkActionsBar
+        selectedCount={selected.size}
+        onClearSelection={() => setSelected(new Set())}
+        onBulkStatusChange={handleBulkStatusChange}
+        onBulkAssign={handleBulkAssign}
+        statuses={STATUSES}
+        assignments={users}
+      />
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -193,13 +239,22 @@ export function TicketListView({ typeFilter, tickets, users, onOpenTicket, onNew
           {/* Table header */}
           <div style={{
             display: "grid",
-            gridTemplateColumns: "3px 1fr 110px 90px 110px 90px 140px",
-            padding: "10px 16px",
+            gridTemplateColumns: "40px 8px 1fr 100px 90px 100px 100px 140px",
+            gap: "12px",
+            padding: "12px 16px",
             borderBottom: `1px solid ${t.border}`,
             background: t.surface2,
+            alignItems: "center",
           }}>
+            <input
+              type="checkbox"
+              checked={selected.size > 0 && selected.size === filtered.length}
+              onChange={toggleSelectAll}
+              style={{ cursor: "pointer", width: 18, height: 18 }}
+              title="Select all tickets"
+            />
             {["", "Title", "Type", "Priority", "Status", "Agent", "SLA"].map((h) => (
-              <span key={h} style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3 }}>
+              <span key={h} style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, overflow: "hidden", textOverflow: "ellipsis" }}>
                 {h}
               </span>
             ))}
@@ -213,6 +268,7 @@ export function TicketListView({ typeFilter, tickets, users, onOpenTicket, onNew
 
           {filtered.map((tk, i) => {
             const agent = users.find((u) => u.id === tk.assignee);
+            const isSelected = selected.has(tk.id);
             return (
               <button
                 key={tk.id}
@@ -220,16 +276,35 @@ export function TicketListView({ typeFilter, tickets, users, onOpenTicket, onNew
                 style={{
                   width: "100%",
                   display: "grid",
-                  gridTemplateColumns: "3px 1fr 110px 90px 110px 90px 140px",
+                  gridTemplateColumns: "40px 8px 1fr 100px 90px 100px 100px 140px",
+                  gap: "12px",
                   alignItems: "center",
-                  padding: "11px 16px",
-                  background: "none", border: "none",
+                  padding: "12px 16px",
+                  background: isSelected ? t.accentBg : "none",
+                  border: "none",
                   borderTop: i > 0 ? `1px solid ${t.border}` : "none",
-                  cursor: "pointer", fontFamily: t.font, textAlign: "left",
+                  cursor: "pointer",
+                  fontFamily: t.font,
+                  textAlign: "left",
+                  minHeight: 52,
+                }}
+                onMouseDown={(e) => {
+                  if (e.target.type === "checkbox") {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    toggleSelect(tk.id);
+                  }
                 }}
               >
-                <span style={{ width: 3, height: 28, borderRadius: 99, background: catalog[tk.priority]?.color || "#888", display: "block" }} />
-                <div style={{ paddingRight: 12, overflow: "hidden" }}>
+                <input
+                  type="checkbox"
+                  checked={isSelected}
+                  onChange={() => toggleSelect(tk.id)}
+                  onClick={(e) => e.stopPropagation()}
+                  style={{ cursor: "pointer", width: 18, height: 18 }}
+                />
+                <div style={{ width: 8, height: 20, borderRadius: 4, background: catalog[tk.priority]?.color || "#888", display: "block", alignSelf: "center" }} />
+                <div style={{ paddingRight: 0, overflow: "hidden", minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {tk.title}
                   </div>
@@ -237,11 +312,11 @@ export function TicketListView({ typeFilter, tickets, users, onOpenTicket, onNew
                     {tk.id}
                   </div>
                 </div>
-                <span><TypeBadge type={tk.type} /></span>
-                <span><PriorityBadge priority={tk.priority} /></span>
-                <span><StatusBadge status={tk.status} /></span>
-                <span>{agent ? <Avatar name={agent.name} size={24} fs={8} /> : <span style={{ color: t.text3 }}>—</span>}</span>
-                <SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={catalog[tk.priority]?.sla} />
+                <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><TypeBadge type={tk.type} /></div>
+                <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><PriorityBadge priority={tk.priority} /></div>
+                <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><StatusBadge status={tk.status} /></div>
+                <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}>{agent ? <Avatar name={agent.name} size={24} fs={8} /> : <span style={{ color: t.text3 }}>—</span>}</div>
+                <div style={{ minWidth: 0 }}><SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={catalog[tk.priority]?.sla} /></div>
               </button>
             );
           })}
