@@ -1,4 +1,4 @@
-import { DEFAULT_TEAM_ROLES, DEFAULT_URGENCIES, PRIORITIES, TICKET_PREFIX } from "./constants.js";
+import { DEFAULT_TEAM_ROLES, DEFAULT_URGENCIES, PRIORITIES, TICKET_PREFIX, CATEGORIES } from "./constants.js";
 import { uid } from "./utils.js";
 import { supabase } from "./supabase.js";
 
@@ -13,6 +13,8 @@ const TABLES = {
   teamSettings: "team_settings",
   teamRoles: "team_roles",
   postIncidentReviews: "post_incident_reviews",
+  closingTemplates: "closing_templates",
+  pirFieldConfigs: "pir_field_configs",
   activityLog: "activity_log",
 };
 
@@ -139,6 +141,7 @@ const toTicket = (row, commentsByTicketId = {}) => ({
   status: row.status,
   createdAt: Number(row.created_at),
   tags: asArray(row.tags),
+  parentId: row.parent_id || null,
   comments: commentsByTicketId[row.id] || [],
 });
 
@@ -147,6 +150,7 @@ const toArticle = (row) => ({
   title: row.title,
   orgId: row.org_id,
   category: row.category,
+  folder: row.folder || "General",
   author: row.author,
   createdAt: Number(row.created_at),
   views: row.views || 0,
@@ -157,11 +161,13 @@ const toArticle = (row) => ({
 const toOrgSettings = (row) => {
   const priorities = normalizePriorities(row?.priorities);
   const urgencies = normalizeUrgencies(row?.urgencies);
+  const categories = Array.isArray(row?.categories) && row.categories.length ? row.categories.map((c) => String(c)) : CATEGORIES;
   return {
     orgId: row?.org_id,
     priorities,
     priorityMap: prioritiesToMap(priorities),
     urgencies,
+    categories,
     updatedAt: Number(row?.updated_at || 0),
   };
 };
@@ -196,6 +202,28 @@ const toPostIncidentReview = (row) => ({
   timeline: row.timeline || "",
   actionItems: asArray(row.action_items),
   owner: row.owner || "",
+  customData: row.data || {},
+  createdAt: Number(row.created_at),
+  updatedAt: Number(row.updated_at),
+});
+
+const toClosingTemplate = (row) => ({
+  id: row.id,
+  orgId: row.org_id,
+  teamId: row.team_id || "",
+  name: row.name,
+  description: row.description || "",
+  content: row.content,
+  applyToTypes: asArray(row.apply_to_types),
+  createdAt: Number(row.created_at),
+  updatedAt: Number(row.updated_at),
+});
+
+const toPirFieldConfig = (row) => ({
+  id: row.id,
+  orgId: row.org_id,
+  teamId: row.team_id || "",
+  fields: asArray(row.fields),
   createdAt: Number(row.created_at),
   updatedAt: Number(row.updated_at),
 });
@@ -229,6 +257,24 @@ const makeDemoSeed = () => {
     users: [demoUser, agentUser],
     tickets: [
       {
+        id: "INC-9000",
+        title: "Major Incident: Authentication service degradation",
+        description: "Widespread authentication failures affecting multiple services across the organisation.",
+        type: "Incident",
+        category: "Security",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        assignee: "u_demo_agent",
+        reporter: "u_demo",
+        priority: "Critical",
+        urgency: "Critical",
+        status: "In Progress",
+        createdAt: ago(5),
+        tags: ["major-incident", "auth"],
+        parentId: null,
+        comments: [],
+      },
+      {
         id: "INC-9001",
         title: "Demo incident: VPN login failures",
         description: "Users report VPN auth failures from remote network.",
@@ -243,7 +289,26 @@ const makeDemoSeed = () => {
         status: "In Progress",
         createdAt: ago(4),
         tags: ["vpn", "auth"],
+        parentId: "INC-9000",
         comments,
+      },
+      {
+        id: "INC-9003",
+        title: "Demo incident: SSO portal unreachable",
+        description: "Single sign-on portal returning 503 for external users.",
+        type: "Incident",
+        category: "Security",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        assignee: "",
+        reporter: "u_demo",
+        priority: "High",
+        urgency: "High",
+        status: "Open",
+        createdAt: ago(3),
+        tags: ["sso", "auth"],
+        parentId: "INC-9000",
+        comments: [],
       },
       {
         id: "REQ-9002",
@@ -260,6 +325,7 @@ const makeDemoSeed = () => {
         status: "Open",
         createdAt: ago(10),
         tags: ["access"],
+        parentId: null,
         comments: [],
       },
     ],
@@ -269,6 +335,7 @@ const makeDemoSeed = () => {
         title: "How to reset VPN credentials",
         orgId: "o_demo",
         category: "Network",
+        folder: "Access",
         author: "u_demo_agent",
         createdAt: ago(100),
         views: 15,
@@ -276,7 +343,7 @@ const makeDemoSeed = () => {
         content: "1. Open the VPN portal.\n2. Click reset password.\n3. Complete MFA verification.",
       },
     ],
-    orgSettings: [{ orgId: "o_demo", priorities, priorityMap: prioritiesToMap(priorities), urgencies: DEFAULT_URGENCIES, updatedAt: Date.now() }],
+    orgSettings: [{ orgId: "o_demo", priorities, priorityMap: prioritiesToMap(priorities), urgencies: DEFAULT_URGENCIES, categories: CATEGORIES, updatedAt: Date.now() }],
     teamSettings: [{ teamId: "t_demo", priorities, priorityMap: prioritiesToMap(priorities), urgencies: DEFAULT_URGENCIES, updatedAt: Date.now() }],
     teamRoles: [
       { id: "role_demo_admin", teamId: "t_demo", name: "Admin", description: "Full access", createdAt: ago(200) },
@@ -294,8 +361,38 @@ const makeDemoSeed = () => {
         timeline: "09:00 detection, 09:25 cert rolled, 09:35 validation complete.",
         actionItems: ["Add cert expiry alert", "Document runbook"],
         owner: "u_demo_agent",
+        customData: {},
         createdAt: ago(3),
         updatedAt: ago(2),
+      },
+    ],
+    closingTemplates: [
+      {
+        id: "tmpl_demo_1",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        name: "Standard Incident Close",
+        description: "Template for closing standard incidents",
+        content: "Incident resolved and verified. Root cause: [ROOT_CAUSE]. All affected systems are operational.",
+        applyToTypes: ["Incident"],
+        createdAt: ago(50),
+        updatedAt: ago(50),
+      },
+    ],
+    pirFieldConfigs: [
+      {
+        id: "pir_cfg_demo_1",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        fields: [
+          { name: "summary", label: "Summary", type: "text", required: true },
+          { name: "rootCause", label: "Root Cause", type: "text", required: true },
+          { name: "timeline", label: "Timeline", type: "text", required: false },
+          { name: "actionItems", label: "Action Items", type: "list", required: false },
+          { name: "owner", label: "Owner", type: "user", required: true },
+        ],
+        createdAt: ago(100),
+        updatedAt: ago(100),
       },
     ],
   };
@@ -405,6 +502,8 @@ export async function fetchAppData() {
       teamSettingsRes,
       teamRolesRes,
       reviewsRes,
+      templatesRes,
+      pirConfigsRes,
     ] = await Promise.all([
       supabase.from(TABLES.orgs).select("*").order("name", { ascending: true }),
       supabase.from(TABLES.teams).select("*").order("name", { ascending: true }),
@@ -416,6 +515,8 @@ export async function fetchAppData() {
       supabase.from(TABLES.teamSettings).select("*"),
       supabase.from(TABLES.teamRoles).select("*").order("created_at", { ascending: true }),
       supabase.from(TABLES.postIncidentReviews).select("*").order("updated_at", { ascending: false }),
+      supabase.from(TABLES.closingTemplates).select("*").order("created_at", { ascending: true }),
+      supabase.from(TABLES.pirFieldConfigs).select("*"),
     ]);
 
     fail(orgsRes.error, "Failed to load organizations.");
@@ -428,6 +529,8 @@ export async function fetchAppData() {
     fail(teamSettingsRes.error, "Failed to load team settings.");
     fail(teamRolesRes.error, "Failed to load team roles.");
     fail(reviewsRes.error, "Failed to load post-incident reviews.");
+    fail(templatesRes.error, "Failed to load templates.");
+    fail(pirConfigsRes.error, "Failed to load PIR field configs.");
 
     const commentsByTicketId = {};
     for (const row of commentsRes.data || []) {
@@ -445,6 +548,8 @@ export async function fetchAppData() {
       teamSettings: (teamSettingsRes.data || []).map(toTeamSettings),
       teamRoles: (teamRolesRes.data || []).map(toTeamRole),
       postIncidentReviews: (reviewsRes.data || []).map(toPostIncidentReview),
+      closingTemplates: (templatesRes.data || []).map(toClosingTemplate),
+      pirFieldConfigs: (pirConfigsRes.data || []).map(toPirFieldConfig),
     };
   } catch (error) {
     if (isFetchFailure(error)) {
@@ -473,6 +578,7 @@ export async function createTicket(payload) {
       status: payload.status || "Open",
       createdAt: Date.now(),
       tags: asArray(payload.tags),
+      parentId: payload.parentId || null,
       comments: [],
     };
     state.tickets.unshift(created);
@@ -495,6 +601,7 @@ export async function createTicket(payload) {
     status: payload.status || "Open",
     created_at: Date.now(),
     tags: asArray(payload.tags),
+    parent_id: payload.parentId || null,
   };
 
   const { data, error } = await supabase
@@ -523,6 +630,7 @@ export async function updateTicketFields(ticketId, fields) {
   if (typeof fields.priority === "string") patch.priority = fields.priority;
   if (typeof fields.urgency === "string") patch.urgency = fields.urgency;
   if (typeof fields.assignee === "string") patch.assignee = fields.assignee;
+  if ("parentId" in fields) patch.parent_id = fields.parentId ?? null;
 
   if (!Object.keys(patch).length) {
     const { data, error } = await supabase
@@ -605,6 +713,7 @@ export async function createArticle(payload) {
       title: payload.title,
       orgId: payload.orgId,
       category: payload.category,
+      folder: payload.folder || "General",
       author: payload.author,
       content: payload.content,
       views: 0,
@@ -621,6 +730,7 @@ export async function createArticle(payload) {
     title: payload.title,
     org_id: payload.orgId,
     category: payload.category,
+    folder: payload.folder || "General",
     author: payload.author,
     content: payload.content,
     views: 0,
@@ -635,6 +745,42 @@ export async function createArticle(payload) {
     .single();
 
   fail(error, "Failed to publish article.");
+  return toArticle(data);
+}
+
+export async function updateArticle(articleId, payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const index = state.articles.findIndex((row) => row.id === articleId);
+    if (index < 0) throw new Error("Article not found.");
+    state.articles[index] = {
+      ...state.articles[index],
+      title: payload.title,
+      category: payload.category,
+      folder: payload.folder || "General",
+      content: payload.content,
+      tags: asArray(payload.tags),
+    };
+    saveDemoState();
+    return clone(state.articles[index]);
+  }
+
+  const row = {
+    title: payload.title,
+    category: payload.category,
+    folder: payload.folder || "General",
+    content: payload.content,
+    tags: asArray(payload.tags),
+  };
+
+  const { data, error } = await supabase
+    .from(TABLES.articles)
+    .update(row)
+    .eq("id", articleId)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to update article.");
   return toArticle(data);
 }
 
@@ -884,6 +1030,7 @@ export async function upsertOrgSettings(payload) {
       priorities,
       priorityMap: prioritiesToMap(priorities),
       urgencies: normalizeUrgencies(payload.urgencies),
+      categories: Array.isArray(payload.categories) && payload.categories.length ? payload.categories.map((c) => String(c)) : CATEGORIES,
       updatedAt: Date.now(),
     };
     const index = state.orgSettings.findIndex((row) => row.orgId === payload.orgId);
@@ -897,6 +1044,7 @@ export async function upsertOrgSettings(payload) {
     org_id: payload.orgId,
     priorities: normalizePriorities(payload.priorities),
     urgencies: normalizeUrgencies(payload.urgencies),
+    categories: Array.isArray(payload.categories) && payload.categories.length ? payload.categories.map((c) => String(c)) : CATEGORIES,
     updated_at: Date.now(),
   };
 
@@ -991,6 +1139,7 @@ export async function savePostIncidentReview(payload) {
       timeline: payload.timeline || "",
       actionItems: asArray(payload.actionItems),
       owner: payload.owner || "",
+      customData: payload.customData || {},
       createdAt: payload.createdAt || Date.now(),
       updatedAt: Date.now(),
     };
@@ -1014,6 +1163,7 @@ export async function savePostIncidentReview(payload) {
     timeline: payload.timeline || "",
     action_items: asArray(payload.actionItems),
     owner: payload.owner || "",
+    data: payload.customData || {},
     updated_at: Date.now(),
   };
 
@@ -1035,6 +1185,157 @@ export async function savePostIncidentReview(payload) {
 
   fail(result.error, "Failed to save post-incident review.");
   return toPostIncidentReview(result.data);
+}
+
+export async function createClosingTemplate(payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    if (!state.closingTemplates) state.closingTemplates = [];
+    const template = {
+      id: `tmpl_${uid()}`,
+      orgId: payload.orgId,
+      teamId: payload.teamId || "",
+      name: payload.name,
+      description: payload.description || "",
+      content: payload.content,
+      applyToTypes: asArray(payload.applyToTypes),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    state.closingTemplates.push(template);
+    saveDemoState();
+    return clone(template);
+  }
+
+  const row = {
+    id: `tmpl_${uid()}`,
+    org_id: payload.orgId,
+    team_id: payload.teamId || "",
+    name: payload.name,
+    description: payload.description || "",
+    content: payload.content,
+    apply_to_types: asArray(payload.applyToTypes),
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  };
+
+  const { data, error } = await supabase
+    .from(TABLES.closingTemplates)
+    .insert(row)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to create template.");
+  return toClosingTemplate(data);
+}
+
+export async function updateClosingTemplate(templateId, payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    if (!state.closingTemplates) state.closingTemplates = [];
+    const index = state.closingTemplates.findIndex((t) => t.id === templateId);
+    if (index < 0) throw new Error("Template not found.");
+    state.closingTemplates[index] = {
+      ...state.closingTemplates[index],
+      ...payload,
+      updatedAt: Date.now(),
+    };
+    saveDemoState();
+    return clone(state.closingTemplates[index]);
+  }
+
+  const patch = {
+    name: payload.name,
+    description: payload.description || "",
+    content: payload.content,
+    apply_to_types: asArray(payload.applyToTypes),
+    updated_at: Date.now(),
+  };
+
+  const { data, error } = await supabase
+    .from(TABLES.closingTemplates)
+    .update(patch)
+    .eq("id", templateId)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to update template.");
+  return toClosingTemplate(data);
+}
+
+export async function deleteClosingTemplate(templateId) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    if (!state.closingTemplates) state.closingTemplates = [];
+    state.closingTemplates = state.closingTemplates.filter((t) => t.id !== templateId);
+    saveDemoState();
+    return true;
+  }
+
+  const { error } = await supabase
+    .from(TABLES.closingTemplates)
+    .delete()
+    .eq("id", templateId);
+
+  if (error) throw new Error(error.message || "Failed to delete template.");
+  return true;
+}
+
+export async function upsertPirFieldConfig(payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    if (!state.pirFieldConfigs) state.pirFieldConfigs = [];
+    const existing = state.pirFieldConfigs.find((cfg) => cfg.teamId === payload.teamId && cfg.orgId === payload.orgId);
+    const config = {
+      id: existing?.id || `pir_cfg_${uid()}`,
+      orgId: payload.orgId,
+      teamId: payload.teamId || "",
+      fields: asArray(payload.fields),
+      createdAt: existing?.createdAt || Date.now(),
+      updatedAt: Date.now(),
+    };
+    if (existing) {
+      const index = state.pirFieldConfigs.indexOf(existing);
+      state.pirFieldConfigs[index] = config;
+    } else {
+      state.pirFieldConfigs.push(config);
+    }
+    saveDemoState();
+    return clone(config);
+  }
+
+  const row = {
+    org_id: payload.orgId,
+    team_id: payload.teamId || "",
+    fields: asArray(payload.fields),
+    updated_at: Date.now(),
+  };
+
+  const existing = await supabase
+    .from(TABLES.pirFieldConfigs)
+    .select("id")
+    .eq("org_id", payload.orgId)
+    .eq("team_id", payload.teamId || "")
+    .single();
+
+  let result;
+  if (existing.data?.id) {
+    result = await supabase
+      .from(TABLES.pirFieldConfigs)
+      .update(row)
+      .eq("id", existing.data.id)
+      .select("*")
+      .single();
+  } else {
+    result = await supabase
+      .from(TABLES.pirFieldConfigs)
+      .insert({ id: `pir_cfg_${uid()}`, ...row, created_at: Date.now() })
+      .select("*")
+      .single();
+  }
+
+  fail(result.error, "Failed to save PIR field config.");
+  return toPirFieldConfig(result.data);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
