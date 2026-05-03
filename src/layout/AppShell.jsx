@@ -26,7 +26,7 @@ import {
   upsertPirFieldConfig,
   updateTicketFields,
 } from "../core/api.js";
-import { Avatar, Btn } from "../ui/primitives.jsx";
+import { Avatar, Btn, Modal } from "../ui/primitives.jsx";
 import { slaForPriority } from "../core/utils.js";
 import { I } from "../core/icons.jsx";
 import { ToastContainer, useToasts } from "../ui/Toast.jsx";
@@ -39,11 +39,33 @@ import { TeamsView }        from "../views/TeamsView.jsx";
 import { KBView }           from "../views/KBView.jsx";
 import { KanbanView }       from "../views/KanbanView.jsx";
 
+const SIDEBAR_PREFS_KEY = (userId) => `sidebar_prefs_${userId || "global"}`;
+const DEFAULT_SIDEBAR_ITEMS = ["dashboard", "incidents", "requests", "changes", "problems", "tasks", "all_tickets", "kanban", "teams", "kb"];
+
+function loadSidebarPrefs(userId) {
+  try {
+    const raw = localStorage.getItem(SIDEBAR_PREFS_KEY(userId));
+    if (!raw) return DEFAULT_SIDEBAR_ITEMS;
+    const parsed = JSON.parse(raw);
+    if (!Array.isArray(parsed)) return DEFAULT_SIDEBAR_ITEMS;
+    const allowed = new Set(DEFAULT_SIDEBAR_ITEMS);
+    return parsed.filter((id) => allowed.has(id));
+  } catch {
+    return DEFAULT_SIDEBAR_ITEMS;
+  }
+}
+
+function saveSidebarPrefs(userId, items) {
+  try {
+    localStorage.setItem(SIDEBAR_PREFS_KEY(userId), JSON.stringify(items));
+  } catch {}
+}
+
 // ═════════════════════════════════════════════════════════════════════════════
 // DESKTOP SIDEBAR
 // ═════════════════════════════════════════════════════════════════════════════
 
-export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tickets, onLogout }) {
+export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tickets, onLogout, visibleNavItems = DEFAULT_SIDEBAR_ITEMS, onCustomizeSidebar }) {
     const currentUserRoles = Array.isArray(currentUser.roles) && currentUser.roles.length
       ? currentUser.roles
       : [currentUser.role].filter(Boolean);
@@ -73,7 +95,7 @@ export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tic
     { id: "kanban",      label: "Kanban Board",     icon: "kanban" },
     { id: "teams",       label: "Teams & Orgs",     icon: "teams" },
     { id: "kb",          label: "Knowledge Base",   icon: "kb"    },
-  ];
+  ].filter((item) => visibleNavItems.includes(item.id));
 
   return (
     <aside style={{
@@ -126,6 +148,15 @@ export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tic
 
       {/* Footer */}
       <div style={{ padding: "9px 5px", borderTop: `1px solid ${t.border}`, display: "flex", flexDirection: "column", gap: 2 }}>
+        {open && (
+          <button
+            onClick={onCustomizeSidebar}
+            style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, color: t.text2, padding: "7px 10px", borderRadius: 8, width: "100%", justifyContent: "flex-start", fontFamily: t.font }}
+          >
+            <I name="settings" size={13} />
+            <span style={{ fontSize: 12 }}>Customize sidebar</span>
+          </button>
+        )}
         <button
           onClick={toggle}
           style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, color: t.text2, padding: open ? "7px 10px" : "7px 0", borderRadius: 8, width: "100%", justifyContent: open ? "flex-start" : "center", fontFamily: t.font }}
@@ -156,7 +187,7 @@ export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tic
 // MOBILE NAV — bottom tab bar + "More" drawer
 // ═════════════════════════════════════════════════════════════════════════════
 
-export function MobileNav({ view, setView, currentUser, tickets, onLogout, onNewTicket }) {
+export function MobileNav({ view, setView, currentUser, tickets, onLogout, onNewTicket, visibleNavItems = DEFAULT_SIDEBAR_ITEMS, onCustomizeSidebar }) {
     const currentUserRoles = Array.isArray(currentUser.roles) && currentUser.roles.length
       ? currentUser.roles
       : [currentUser.role].filter(Boolean);
@@ -175,8 +206,7 @@ export function MobileNav({ view, setView, currentUser, tickets, onLogout, onNew
     { id: "all_tickets", icon: "ticket",   label: "Tickets",
       count: tickets.filter((tk) => !["Resolved","Closed"].includes(tk.status)).length },
     { id: "kb",          icon: "kb",       label: "KB" },
-    { id: "__more",      icon: "more",     label: "More" },
-  ];
+  ].filter((tab) => visibleNavItems.includes(tab.id));
 
   const drawerItems = [
     { id: "requests", label: "Service Requests", icon: "request" },
@@ -184,7 +214,11 @@ export function MobileNav({ view, setView, currentUser, tickets, onLogout, onNew
     { id: "problems", label: "Problems",         icon: "problem" },
     { id: "tasks",    label: "Tasks",            icon: "task"    },
     { id: "teams",    label: "Teams & Orgs",     icon: "teams"   },
-  ];
+  ].filter((item) => visibleNavItems.includes(item.id));
+
+  if (drawerItems.length > 0 && !tabs.some((tab) => tab.id === "__more")) {
+    tabs.push({ id: "__more", icon: "more", label: "More" });
+  }
 
   return (
     <>
@@ -211,6 +245,10 @@ export function MobileNav({ view, setView, currentUser, tickets, onLogout, onNew
                 </button>
               ))}
               <div style={{ height: 1, background: t.border, margin: "8px 0" }} />
+              <button onClick={() => { setDrawerOpen(false); onCustomizeSidebar?.(); }} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: "none", border: "none", borderRadius: 10, cursor: "pointer", fontFamily: t.font, color: t.text2 }}>
+                <I name="settings" size={18} />
+                <span style={{ fontSize: 14, fontWeight: 600 }}>Customize sidebar</span>
+              </button>
               <button onClick={toggle} style={{ display: "flex", alignItems: "center", gap: 12, padding: "12px 14px", background: "none", border: "none", borderRadius: 10, cursor: "pointer", fontFamily: t.font, color: t.text2 }}>
                 <I name={dark ? "sun" : "moon"} size={18} />
                 <span style={{ fontSize: 14, fontWeight: 600 }}>{dark ? "Light mode" : "Dark mode"}</span>
@@ -320,6 +358,8 @@ export function AppShell({ currentUser, onLogout }) {
   const [loadError,    setLoadError]    = useState("");
   const [view,         setView]         = useState("dashboard");
   const [sidebarOpen,  setSidebarOpen]  = useState(true);
+  const [sidebarItems, setSidebarItems] = useState(() => loadSidebarPrefs(currentUser?.id));
+  const [showSidebarPrefs, setShowSidebarPrefs] = useState(false);
   const [modal,        setModal]        = useState(null);   // "detail" | "new" | "customise"
   const [activeTicket, setActiveTicket] = useState(null);
   const [dashLayout,   setDashLayout]   = useState(DEFAULT_LAYOUT);
@@ -327,6 +367,37 @@ export function AppShell({ currentUser, onLogout }) {
   const [defaultType,  setDefaultType]  = useState(null);
   const { toasts, addToast, dismiss } = useToasts();
   const slaToastShown = useRef(false);
+  const sidebarOptions = [
+    { id: "dashboard", label: "Dashboard", icon: "grid" },
+    { id: "incidents", label: "Incidents", icon: "incident" },
+    { id: "requests", label: "Requests", icon: "request" },
+    { id: "changes", label: "Changes", icon: "change" },
+    { id: "problems", label: "Problems", icon: "problem" },
+    { id: "tasks", label: "Tasks", icon: "task" },
+    { id: "all_tickets", label: "All Tickets", icon: "ticket" },
+    { id: "kanban", label: "Kanban Board", icon: "kanban" },
+    { id: "teams", label: "Teams & Orgs", icon: "teams" },
+    { id: "kb", label: "Knowledge Base", icon: "kb" },
+  ];
+
+  useEffect(() => {
+    const next = loadSidebarPrefs(currentUser?.id);
+    setSidebarItems(next);
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    if (!sidebarItems.includes(view)) {
+      setView(sidebarItems[0] || "dashboard");
+    }
+  }, [sidebarItems, view]);
+
+  const updateSidebarItems = (next) => {
+    const cleaned = next.filter((id) => DEFAULT_SIDEBAR_ITEMS.includes(id));
+    const finalItems = cleaned.length ? cleaned : ["dashboard"];
+    setSidebarItems(finalItems);
+    saveSidebarPrefs(currentUser?.id, finalItems);
+    if (!finalItems.includes(view)) setView(finalItems[0]);
+  };
 
   useEffect(() => {
     let mounted = true;
@@ -574,6 +645,13 @@ export function AppShell({ currentUser, onLogout }) {
 
   const handleNew = (type) => { setDefaultType(type || null); setModal("new"); };
   const handleSetView = (v) => { setView(v); if (isMobile) window.scrollTo(0, 0); };
+  const toggleSidebarItem = (id) => {
+    updateSidebarItems(
+      sidebarItems.includes(id)
+        ? sidebarItems.filter((item) => item !== id)
+        : [...sidebarItems, id]
+    );
+  };
 
   // Type string for the "New Ticket" button in the topbar to pre-select
   const topbarType = VIEW_TO_TYPE[view] || null;
@@ -604,6 +682,8 @@ export function AppShell({ currentUser, onLogout }) {
           view={view} setView={handleSetView}
           open={sidebarOpen} onToggle={() => setSidebarOpen((o) => !o)}
           currentUser={effectiveUser} tickets={tickets} onLogout={onLogout}
+          visibleNavItems={sidebarItems}
+          onCustomizeSidebar={() => setShowSidebarPrefs(true)}
         />
       )}
 
@@ -692,6 +772,8 @@ export function AppShell({ currentUser, onLogout }) {
           view={view} setView={handleSetView}
           currentUser={effectiveUser} tickets={tickets}
           onLogout={onLogout} onNewTicket={() => handleNew(topbarType)}
+          visibleNavItems={sidebarItems}
+          onCustomizeSidebar={() => setShowSidebarPrefs(true)}
         />
       )}
 
@@ -732,6 +814,46 @@ export function AppShell({ currentUser, onLogout }) {
       )}
       {modal === "customise" && (
         <DashCustomiser layout={dashLayout} onSave={setDashLayout} onClose={() => setModal(null)} />
+      )}
+
+      {showSidebarPrefs && (
+        <Modal title="Customize Sidebar" onClose={() => setShowSidebarPrefs(false)} width={520}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <p style={{ margin: 0, fontSize: 13, color: t.text2 }}>
+              Choose the sections you want to see in the sidebar. Your selection is saved for your account.
+            </p>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10 }}>
+              {sidebarOptions.map((item) => {
+                const active = sidebarItems.includes(item.id);
+                return (
+                  <button
+                    key={item.id}
+                    onClick={() => toggleSidebarItem(item.id)}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 10, padding: "11px 12px",
+                      borderRadius: 10, border: `1px solid ${active ? t.accent : t.border}`,
+                      background: active ? t.accentBg : t.surface2, cursor: "pointer",
+                      color: active ? t.accentText : t.text, fontFamily: t.font, textAlign: "left",
+                    }}
+                  >
+                    <span style={{ width: 28, height: 28, borderRadius: 8, display: "grid", placeItems: "center", background: active ? t.accent : t.surface3, color: active ? "#0f0f0e" : t.text2, flexShrink: 0 }}>
+                      <I name={item.icon} size={14} />
+                    </span>
+                    <span style={{ fontSize: 13, fontWeight: 700 }}>{item.label}</span>
+                  </button>
+                );
+              })}
+            </div>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 8, marginTop: 8 }}>
+              <Btn variant="secondary" size="sm" onClick={() => updateSidebarItems(DEFAULT_SIDEBAR_ITEMS)}>
+                Reset Defaults
+              </Btn>
+              <Btn variant="primary" size="sm" onClick={() => setShowSidebarPrefs(false)}>
+                Done
+              </Btn>
+            </div>
+          </div>
+        </Modal>
       )}
 
       <ToastContainer toasts={toasts} onDismiss={dismiss} />
