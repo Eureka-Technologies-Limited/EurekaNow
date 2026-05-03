@@ -107,7 +107,7 @@ function KanbanCard({ ticket, users, catalog, cardFields, onOpenTicket, onDragSt
 
       {(cardFields.includes("priority") || cardFields.includes("type") || cardFields.includes("status") || cardFields.includes("assignee")) && (
         <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginBottom: cardFields.includes("sla") ? 8 : 0 }}>
-          {cardFields.includes("priority") && <PriorityBadge priority={ticket.priority} />}
+          {cardFields.includes("priority") && <PriorityBadge priority={ticket.priority} catalog={catalog} />}
           {cardFields.includes("type")     && <TypeBadge     type={ticket.type} />}
           {cardFields.includes("status")   && <StatusBadge   status={ticket.status} />}
           {cardFields.includes("assignee") && assignee && (

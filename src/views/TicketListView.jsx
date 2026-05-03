@@ -313,7 +313,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                   <TypeBadge type={tk.type} />
-                  <PriorityBadge priority={tk.priority} />
+                  <PriorityBadge priority={tk.priority} catalog={catalog} />
                   <StatusBadge status={tk.status} />
                 </div>
                 <div style={{ marginTop: 8 }}>
@@ -403,7 +403,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                   </div>
                 </div>
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><TypeBadge type={tk.type} /></div>
-                <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><PriorityBadge priority={tk.priority} /></div>
+                <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><PriorityBadge priority={tk.priority} catalog={catalog} /></div>
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><StatusBadge status={tk.status} /></div>
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}>{agent ? <Avatar name={agent.name} size={24} fs={8} /> : <span style={{ color: t.text3 }}>—</span>}</div>
                 <div style={{ minWidth: 0 }}><SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={(findPriorityCfg(catalog, tk.priority) && Number(findPriorityCfg(catalog, tk.priority).sla) > 0) ? Number(findPriorityCfg(catalog, tk.priority).sla) : slaForPriority(tk.priority)} /></div>

@@ -206,8 +206,9 @@ export function SLARisk({ tickets, onOpenTicket, priorityCatalog }) {
 // ── MyTickets ─────────────────────────────────────────────────────────────────
 // Shows open tickets assigned to the current user. PAGINATED.
 
-export function MyTickets({ tickets, currentUser, onOpenTicket }) {
+export function MyTickets({ tickets, currentUser, onOpenTicket, priorityCatalog }) {
   const t = useTokens();
+  const catalog = Object.keys(priorityCatalog || {}).length ? priorityCatalog : PRIORITIES;
   const [page, setPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(1);
   const containerRef = useRef(null);
@@ -256,7 +257,7 @@ export function MyTickets({ tickets, currentUser, onOpenTicket }) {
                   cursor: "pointer", fontFamily: t.font, textAlign: "left", width: "100%",
                 }}
               >
-                <PriorityBadge priority={tk.priority} />
+                <PriorityBadge priority={tk.priority} catalog={catalog} />
                 <span style={{ flex: 1, fontSize: 12, fontWeight: 500, color: t.text, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                   {tk.title}
                 </span>
