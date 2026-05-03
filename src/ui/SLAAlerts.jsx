@@ -2,6 +2,7 @@ import { useState, useRef, useEffect } from "react";
 import { useTokens } from "../core/hooks.js";
 import { Avatar } from "./primitives.jsx";
 import { checkSLAStatus } from "../core/api.js";
+import { slaForPriority, findPriorityCfg } from "../core/utils.js";
 
 export function SLAAlerts({ tickets, priorityCatalog, users }) {
   const t = useTokens();
@@ -45,7 +46,8 @@ export function SLAAlerts({ tickets, priorityCatalog, users }) {
   const allIssues = tickets
     .filter((tk) => !["Resolved", "Closed"].includes(tk.status))
     .map((tk) => {
-      const slaHours = priorityCatalog?.[tk.priority]?.sla || 24;
+      const cfg = findPriorityCfg(priorityCatalog, tk.priority);
+      const slaHours = cfg && Number(cfg.sla) > 0 ? Number(cfg.sla) : slaForPriority(tk.priority);
       const status = checkSLAStatus(tk, slaHours);
       return { ticket: tk, slaStatus: status };
     })

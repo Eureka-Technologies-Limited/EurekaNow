@@ -42,3 +42,24 @@ export const slaColor = (createdAt, slaHours, tokens) => {
 
 /** Convenience: look up SLA config from priority string */
 export const slaForPriority = (priority) => PRIORITIES[priority]?.sla ?? 24;
+
+/**
+ * Find a priority config from a catalog using case-insensitive matching.
+ * Returns the matched config object or null.
+ */
+export const findPriorityCfg = (catalog = {}, priority) => {
+  if (!catalog || !priority) {
+    if (typeof window !== "undefined" && window.__EUREKA_DEBUG_SLA) console.debug("findPriorityCfg: missing catalog or priority", { priority, catalogKeys: Object.keys(catalog || {}) });
+    return null;
+  }
+
+  if (catalog[priority]) {
+    if (typeof window !== "undefined" && window.__EUREKA_DEBUG_SLA) console.debug("findPriorityCfg: exact match", { priority, cfg: catalog[priority] });
+    return catalog[priority];
+  }
+
+  const key = Object.keys(catalog).find((k) => String(k).toLowerCase() === String(priority).toLowerCase());
+  const found = key ? catalog[key] : null;
+  if (typeof window !== "undefined" && window.__EUREKA_DEBUG_SLA) console.debug("findPriorityCfg: lookup", { priority, foundKey: key, found });
+  return found;
+};

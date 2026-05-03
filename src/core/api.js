@@ -1,5 +1,5 @@
 import { DEFAULT_TEAM_ROLES, DEFAULT_URGENCIES, PRIORITIES, TICKET_PREFIX, CATEGORIES } from "./constants.js";
-import { uid } from "./utils.js";
+import { uid, slaForPriority } from "./utils.js";
 import { supabase } from "./supabase.js";
 
 const TABLES = {
@@ -152,6 +152,7 @@ const toArticle = (row) => ({
   category: row.category,
   folder: row.folder || "General",
   author: row.author,
+  editors: asArray(row.editors),
   createdAt: Number(row.created_at),
   views: row.views || 0,
   tags: asArray(row.tags),
@@ -715,6 +716,7 @@ export async function createArticle(payload) {
       category: payload.category,
       folder: payload.folder || "General",
       author: payload.author,
+      editors: asArray(payload.editors),
       content: payload.content,
       views: 0,
       tags: asArray(payload.tags),
@@ -732,6 +734,7 @@ export async function createArticle(payload) {
     category: payload.category,
     folder: payload.folder || "General",
     author: payload.author,
+    editors: asArray(payload.editors),
     content: payload.content,
     views: 0,
     tags: asArray(payload.tags),
@@ -760,6 +763,7 @@ export async function updateArticle(articleId, payload) {
       folder: payload.folder || "General",
       content: payload.content,
       tags: asArray(payload.tags),
+      editors: asArray(payload.editors),
     };
     saveDemoState();
     return clone(state.articles[index]);
@@ -771,6 +775,7 @@ export async function updateArticle(articleId, payload) {
     folder: payload.folder || "General",
     content: payload.content,
     tags: asArray(payload.tags),
+    editors: asArray(payload.editors),
   };
 
   const { data, error } = await supabase
@@ -1449,7 +1454,8 @@ export function findSLABreachers(tickets, priorityCatalog = {}) {
   return tickets
     .filter((tk) => !["Resolved", "Closed"].includes(tk.status))
     .map((tk) => {
-      const slaHours = priorityCatalog[tk.priority]?.sla || 24;
+      const cfg = priorityCatalog[tk.priority];
+      const slaHours = cfg && Number(cfg.sla) > 0 ? Number(cfg.sla) : slaForPriority(tk.priority);
       const status = checkSLAStatus(tk, slaHours);
       return { ticket: tk, slaStatus: status };
     })
@@ -1460,7 +1466,8 @@ export function findSLAAtRisk(tickets, priorityCatalog = {}) {
   return tickets
     .filter((tk) => !["Resolved", "Closed"].includes(tk.status))
     .map((tk) => {
-      const slaHours = priorityCatalog[tk.priority]?.sla || 24;
+      const cfg = priorityCatalog[tk.priority];
+      const slaHours = cfg && Number(cfg.sla) > 0 ? Number(cfg.sla) : slaForPriority(tk.priority);
       const status = checkSLAStatus(tk, slaHours);
       return { ticket: tk, slaStatus: status };
     })

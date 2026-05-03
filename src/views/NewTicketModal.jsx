@@ -57,6 +57,18 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
     setCategoryQuery("");
   }, [form.orgId]);
 
+  // Normalize orgSettings shape: accept array or object map
+  const getOrgCategories = (settings, orgId) => {
+    if (!settings) return [];
+    if (Array.isArray(settings)) {
+      const row = settings.find((r) => String(r?.orgId) === String(orgId));
+      return Array.isArray(row?.categories) ? row.categories : [];
+    }
+    // object keyed by orgId
+    const row = settings[String(orgId)] || settings?.orgId === orgId ? settings : null;
+    return Array.isArray(row?.categories) ? row.categories : [];
+  };
+
   const parentResults = parentQuery.length >= 1
     ? allTickets
         .filter((tk) =>
@@ -84,7 +96,7 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
       urgencies: teamHasCustomUrgencies
         ? teamUrgencies
         : (orgUrgencies.length ? orgUrgencies : (teamUrgencies.length ? teamUrgencies : fallbackUrgencies)),
-      categories: Array.isArray(orgCfg?.categories) ? orgCfg.categories : [], // ✅ org-only
+      categories: getOrgCategories(orgSettings, form.orgId), // ✅ org-only (normalized)
     };
   }, [form.orgId, form.teamId, orgSettings, teamSettings, fallbackCatalog, fallbackUrgencies]);
 

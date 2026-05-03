@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { PRIORITIES, STATUSES } from "../core/constants.js";
-import { slaPct } from "../core/utils.js";
+import { slaPct, slaForPriority, findPriorityCfg } from "../core/utils.js";
 import { Avatar, Btn, Card, PriorityBadge, StatusBadge, TypeBadge, SLABar } from "../ui/primitives.jsx";
 import { BulkActionsBar } from "../ui/BulkActionsBar.jsx";
 import { I } from "../core/icons.jsx";
@@ -64,7 +64,13 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
       if (sortBy === "newest")   return b.createdAt - a.createdAt;
       if (sortBy === "oldest")   return a.createdAt - b.createdAt;
       if (sortBy === "priority") return priorityOrder.indexOf(a.priority) - priorityOrder.indexOf(b.priority);
-      if (sortBy === "sla")      return slaPct(b.createdAt, catalog[b.priority]?.sla ?? 24) - slaPct(a.createdAt, catalog[a.priority]?.sla ?? 24);
+      if (sortBy === "sla") {
+        const cfgB = findPriorityCfg(catalog, b.priority);
+        const cfgA = findPriorityCfg(catalog, a.priority);
+        const slaB = cfgB && Number(cfgB.sla) > 0 ? Number(cfgB.sla) : slaForPriority(b.priority);
+        const slaA = cfgA && Number(cfgA.sla) > 0 ? Number(cfgA.sla) : slaForPriority(a.priority);
+        return slaPct(b.createdAt, slaB) - slaPct(a.createdAt, slaA);
+      }
       return 0;
     });
 
@@ -387,7 +393,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                   onClick={(e) => e.stopPropagation()}
                   style={{ cursor: "pointer", width: 18, height: 18 }}
                 />
-                <div style={{ width: 8, height: 20, borderRadius: 4, background: catalog[tk.priority]?.color || "#888", display: "block", alignSelf: "center" }} />
+                <div style={{ width: 8, height: 20, borderRadius: 4, background: (findPriorityCfg(catalog, tk.priority)?.color) || "#888", display: "block", alignSelf: "center" }} />
                 <div style={{ paddingRight: 0, overflow: "hidden", minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {tk.title}
@@ -400,7 +406,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><PriorityBadge priority={tk.priority} /></div>
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><StatusBadge status={tk.status} /></div>
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}>{agent ? <Avatar name={agent.name} size={24} fs={8} /> : <span style={{ color: t.text3 }}>—</span>}</div>
-                <div style={{ minWidth: 0 }}><SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={catalog[tk.priority]?.sla} /></div>
+                <div style={{ minWidth: 0 }}><SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={(findPriorityCfg(catalog, tk.priority) && Number(findPriorityCfg(catalog, tk.priority).sla) > 0) ? Number(findPriorityCfg(catalog, tk.priority).sla) : slaForPriority(tk.priority)} /></div>
               </button>
             );
           })}

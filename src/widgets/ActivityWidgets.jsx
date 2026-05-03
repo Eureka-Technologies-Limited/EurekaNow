@@ -5,7 +5,7 @@
 
 import { useState, useRef, useEffect } from "react";
 import { useTokens } from "../core/hooks.js";
-import { slaPct, slaForPriority } from "../core/utils.js";
+import { slaPct, slaForPriority, findPriorityCfg } from "../core/utils.js";
 import { PriorityBadge, StatusBadge, SLABar, Btn } from "../ui/primitives.jsx";
 import { PRIORITIES } from "../core/constants.js";
 
@@ -87,7 +87,7 @@ export function CriticalList({ tickets, onOpenTicket, priorityCatalog }) {
                   <StatusBadge status={tk.status} />
                 </div>
                 <div style={{ fontSize: 10, color: t.text3 }}>{tk.id}</div>
-                <SLABar priority={tk.priority} createdAt={tk.createdAt} />
+                <SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={(findPriorityCfg(catalog, tk.priority) && Number(findPriorityCfg(catalog, tk.priority).sla) > 0) ? Number(findPriorityCfg(catalog, tk.priority).sla) : slaForPriority(tk.priority)} />
               </button>
             ))}
           </div>
@@ -143,7 +143,11 @@ export function SLARisk({ tickets, onOpenTicket, priorityCatalog }) {
   const catalog = Object.keys(priorityCatalog || {}).length ? priorityCatalog : PRIORITIES;
   const atRisk = tickets
     .filter((tk) => !["Resolved", "Closed"].includes(tk.status))
-    .map((tk) => ({ ...tk, pct: slaPct(tk.createdAt, catalog[tk.priority]?.sla ?? slaForPriority(tk.priority)) }))
+    .map((tk) => {
+      const cfg = findPriorityCfg(catalog, tk.priority);
+      const slaHours = cfg && Number(cfg.sla) > 0 ? Number(cfg.sla) : slaForPriority(tk.priority);
+      return { ...tk, pct: slaPct(tk.createdAt, slaHours) };
+    })
     .filter((tk) => tk.pct >= 50)
     .sort((a, b) => b.pct - a.pct);
 
@@ -173,7 +177,7 @@ export function SLARisk({ tickets, onOpenTicket, priorityCatalog }) {
                 }}
               >
                 <div style={{ fontSize: 12, fontWeight: 500, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{tk.title}</div>
-                <SLABar priority={tk.priority} createdAt={tk.createdAt} />
+                <SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={(findPriorityCfg(catalog, tk.priority) && Number(findPriorityCfg(catalog, tk.priority).sla) > 0) ? Number(findPriorityCfg(catalog, tk.priority).sla) : slaForPriority(tk.priority)} />
               </button>
             ))}
           </div>

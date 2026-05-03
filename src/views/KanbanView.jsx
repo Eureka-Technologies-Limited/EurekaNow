@@ -4,9 +4,14 @@ import { PRIORITIES, STATUSES, TICKET_TYPES } from "../core/constants.js";
 import { Avatar, PriorityBadge, StatusBadge, TypeBadge, SLABar, Btn } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 import { KanbanConfig } from "./KanbanConfig.jsx";
+import { findPriorityCfg, slaForPriority } from "../core/utils.js";
+import { ColorSwatch, SWATCH_COLORS } from "./KanbanConfig.jsx";
 
 const STORAGE_KEY = (orgId, teamId) =>
   `kanban_${orgId || "global"}_${teamId || "global"}`;
+
+const COLUMN_MAP_KEY = (orgId, teamId) =>
+  `kanban_map_${orgId || "global"}_${teamId || "global"}`;
 
 const DEFAULT_BOARD = {
   name: "Team Board",
@@ -36,13 +41,30 @@ function persistBoard(orgId, teamId, board) {
   } catch {}
 }
 
+function loadColumnMap(orgId, teamId) {
+  try {
+    const raw = localStorage.getItem(COLUMN_MAP_KEY(orgId, teamId));
+    if (!raw) return {};
+    return JSON.parse(raw);
+  } catch {
+    return {};
+  }
+}
+
+function persistColumnMap(orgId, teamId, map) {
+  try {
+    localStorage.setItem(COLUMN_MAP_KEY(orgId, teamId), JSON.stringify(map));
+  } catch {}
+}
+
 // ── KanbanCard ────────────────────────────────────────────────────────────────
 
 function KanbanCard({ ticket, users, catalog, cardFields, onOpenTicket, onDragStart, onDragEnd, isDragging, isChild, isParent, isCollapsed, onToggleChildren }) {
   const t = useTokens();
   const assignee = users.find((u) => u.id === ticket.assignee);
-  const slaHours = catalog[ticket.priority]?.sla;
-  const priorityColor = catalog[ticket.priority]?.color || "#888";
+  const cfg = findPriorityCfg(catalog, ticket.priority);
+  const slaHours = cfg && Number(cfg.sla) > 0 ? Number(cfg.sla) : slaForPriority(ticket.priority);
+  const priorityColor = (cfg && cfg.color) || "#888";
 
   return (
     <div
@@ -105,7 +127,7 @@ function KanbanCard({ ticket, users, catalog, cardFields, onOpenTicket, onDragSt
 
 // ── KanbanColumn ──────────────────────────────────────────────────────────────
 
-function KanbanColumn({ col, tickets, users, catalog, cardFields, isOver, onOpenTicket, onDragStart, onDragEnd, draggingId, onDragOver, onDragLeave, onDrop }) {
+function KanbanColumn({ col, tickets, users, catalog, cardFields, isOver, onOpenTicket, onDragStart, onDragEnd, draggingId, onDragOver, onDragLeave, onDrop, onUpdateColumn }) {
   const t = useTokens();
   const atWip = col.wipLimit !== null && tickets.length >= col.wipLimit;
   const overWip = col.wipLimit !== null && tickets.length > col.wipLimit;
@@ -156,7 +178,7 @@ function KanbanColumn({ col, tickets, users, catalog, cardFields, isOver, onOpen
         flexShrink: 0,
       }}>
         <div style={{ display: "flex", alignItems: "center", gap: 7 }}>
-          <span style={{ width: 8, height: 8, borderRadius: "50%", background: col.color, flexShrink: 0 }} />
+          <ColorSwatch value={col.color} onChange={(c) => onUpdateColumn?.(col.id, { color: c })} colors={SWATCH_COLORS} />
           <span style={{ fontSize: 12, fontWeight: 700, color: t.text, whiteSpace: "nowrap" }}>{col.name}</span>
         </div>
         <span style={{
@@ -226,6 +248,7 @@ function KanbanColumn({ col, tickets, users, catalog, cardFields, isOver, onOpen
 export function KanbanView({ tickets, users, currentUser, priorityCatalog, onOpenTicket, onPatchTicket }) {
   const t = useTokens();
   const [board, setBoard] = useState(() => loadBoard(currentUser?.orgId, currentUser?.teamId));
+  const [columnMap, setColumnMap] = useState(() => loadColumnMap(currentUser?.orgId, currentUser?.teamId));
   const [showConfig, setShowConfig] = useState(false);
   const [draggingId, setDraggingId] = useState(null);
   const [overColId, setOverColId]   = useState(null);
@@ -237,6 +260,17 @@ export function KanbanView({ tickets, users, currentUser, priorityCatalog, onOpe
     persistBoard(currentUser?.orgId, currentUser?.teamId, next);
   };
 
+  const updateColumn = (colId, patch) => {
+    const next = structuredClone(board);
+    next.columns = next.columns.map((c) => (c.id === colId ? { ...c, ...patch } : c));
+    updateBoard(next);
+  };
+
+  const updateColumnMap = (next) => {
+    setColumnMap(next);
+    persistColumnMap(currentUser?.orgId, currentUser?.teamId, next);
+  };
+
   // Apply auto-add filters to decide which tickets appear on this board
   const boardTickets = tickets.filter((tk) => {
     const { types, priorities } = board.autoAdd;
@@ -245,8 +279,15 @@ export function KanbanView({ tickets, users, currentUser, priorityCatalog, onOpe
     return true;
   });
 
-  const getColTickets = (col) =>
-    boardTickets.filter((tk) => col.statusMap.includes(tk.status));
+  const getColTickets = (col) => {
+    // If no statuses mapped, use column-specific ticket map
+    if (col.statusMap.length === 0) {
+      const ticketIds = columnMap[col.id] || [];
+      return ticketIds.map((id) => tickets.find((t) => t.id === id)).filter(Boolean);
+    }
+    // Otherwise filter by status
+    return boardTickets.filter((tk) => col.statusMap.includes(tk.status));
+  };
 
   const handleDrop = async (e, targetColId) => {
     e.preventDefault();
@@ -257,18 +298,40 @@ export function KanbanView({ tickets, users, currentUser, priorityCatalog, onOpe
 
     const tk = tickets.find((t) => t.id === ticketId);
     const col = board.columns.find((c) => c.id === targetColId);
-    if (!tk || !col || col.statusMap.length === 0) return;
+    if (!tk || !col) return;
 
-    // Map to the first status in the column if not already in one of the column's statuses
-    const newStatus = col.statusMap[0];
-    if (tk.status !== newStatus) {
-      await onPatchTicket(ticketId, { status: newStatus });
+    // If column has statuses mapped, update the ticket status
+    if (col.statusMap.length > 0) {
+      const newStatus = col.statusMap[0];
+      if (tk.status !== newStatus) {
+        await onPatchTicket(ticketId, { status: newStatus });
 
-      // propagate status change to child tickets that belong to the same board
-      const children = tickets.filter((t) => t.parentId === ticketId);
-      if (children.length > 0) {
-        await Promise.all(children.map((c) => onPatchTicket(c.id, { status: newStatus })));
+        // propagate status change to child tickets that belong to the same board
+        const children = tickets.filter((t) => t.parentId === ticketId);
+        if (children.length > 0) {
+          await Promise.all(children.map((c) => onPatchTicket(c.id, { status: newStatus })));
+        }
       }
+      // Remove from blank column maps when moved to a status-mapped column
+      const newMap = structuredClone(columnMap);
+      Object.keys(newMap).forEach((colId) => {
+        newMap[colId] = newMap[colId].filter((id) => id !== ticketId);
+      });
+      updateColumnMap(newMap);
+    } else {
+      // Blank column: add ticket to this column's map
+      const newMap = structuredClone(columnMap);
+      if (!newMap[targetColId]) newMap[targetColId] = [];
+      if (!newMap[targetColId].includes(ticketId)) {
+        newMap[targetColId].push(ticketId);
+      }
+      // Remove from other blank columns
+      Object.keys(newMap).forEach((colId) => {
+        if (colId !== targetColId) {
+          newMap[colId] = newMap[colId].filter((id) => id !== ticketId);
+        }
+      });
+      updateColumnMap(newMap);
     }
   };
 
@@ -316,6 +379,7 @@ export function KanbanView({ tickets, users, currentUser, priorityCatalog, onOpe
               if (!e.currentTarget.contains(e.relatedTarget)) setOverColId(null);
             }}
             onDrop={(e) => handleDrop(e, col.id)}
+            onUpdateColumn={updateColumn}
           />
         ))}
 

@@ -27,6 +27,7 @@ import {
   updateTicketFields,
 } from "../core/api.js";
 import { Avatar, Btn } from "../ui/primitives.jsx";
+import { slaForPriority } from "../core/utils.js";
 import { I } from "../core/icons.jsx";
 import { ToastContainer, useToasts } from "../ui/Toast.jsx";
 import { DEFAULT_LAYOUT } from "../widgets/registry.js";
@@ -367,7 +368,8 @@ export function AppShell({ currentUser, onLogout }) {
     const now = Date.now();
     const breached = tickets.filter((tk) => {
       if (["Resolved", "Closed"].includes(tk.status)) return false;
-      const slaHours = cat[tk.priority]?.sla ?? 24;
+      const cfg = cat[tk.priority];
+      const slaHours = cfg && Number(cfg.sla) > 0 ? Number(cfg.sla) : slaForPriority(tk.priority);
       return (now - tk.createdAt) / 3600000 > slaHours;
     }).length;
     if (breached > 0) {
