@@ -7,15 +7,19 @@
 
 import { useTokens } from "../core/hooks.js";
 import { hrs } from "../core/utils.js";
+import { PRIORITIES } from "../core/constants.js";
 
-export function StatWidget({ id, tickets, currentUser }) {
+export function StatWidget({ id, tickets, currentUser, priorityCatalog }) {
   const t = useTokens();
   const open = tickets.filter((tk) => !["Resolved", "Closed"].includes(tk.status));
 
+  const catalog = Object.keys(priorityCatalog || {}).length ? priorityCatalog : PRIORITIES;
+  const highestPriority = Object.entries(catalog).sort((a, b) => a[1].sla - b[1].sla)[0]?.[0] || "Critical";
+
   const definitions = {
-    stat_open:      { label: "Open Tickets",   value: open.length,                                                   color: t.text,      sub: "all teams"     },
-    stat_mine:      { label: "Assigned to Me", value: open.filter((tk) => tk.assignee === currentUser.id).length,    color: t.accent,    sub: "need action"   },
-    stat_critical:  { label: "Critical",       value: open.filter((tk) => tk.priority === "Critical").length,        color: t.red,       sub: "SLA at risk"   },
+    stat_open:      { label: "Open Tickets",   value: open.length,                                                         color: t.text,      sub: "all teams"     },
+    stat_mine:      { label: "Assigned to Me", value: open.filter((tk) => tk.assignee === currentUser.id).length,          color: t.accent,    sub: "need action"   },
+    stat_critical:  { label: highestPriority,  value: open.filter((tk) => tk.priority === highestPriority).length,         color: t.red,       sub: "SLA at risk"   },
     stat_resolved:  { label: "Resolved (24h)", value: tickets.filter((tk) => tk.status === "Resolved" && tk.createdAt > hrs(24)).length, color: t.green, sub: "recently closed" },
     stat_incidents: { label: "Open Incidents", value: open.filter((tk) => tk.type === "Incident").length,            color: t.redText,   sub: "active"        },
     stat_requests:  { label: "Open Requests",  value: open.filter((tk) => tk.type === "Service Request").length,     color: t.greenText, sub: "pending"       },

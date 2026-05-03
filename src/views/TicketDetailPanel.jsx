@@ -11,22 +11,31 @@ import { fmtTs } from "../core/utils.js";
 import { Avatar, Btn, TypeBadge, SLABar } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 
-export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch, onComment, priorityCatalog, urgencyLevels, review, onSaveReview }) {
+export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch, onComment, priorityCatalog, urgencyLevels, review, onSaveReview, closingTemplates = [], pirFieldConfig = null }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
   const catalog = (priorityCatalog && Object.keys(priorityCatalog).length) ? priorityCatalog : PRIORITIES;
   const urgencyOptions = urgencyLevels?.length ? urgencyLevels : ["Critical", "High", "Medium", "Low"];
   const [tk, setTk] = useState(ticket);
   const [comment, setComment] = useState("");
+  const [showCloseTemplate, setShowCloseTemplate] = useState(false);
+  const [selectedTemplate, setSelectedTemplate] = useState("");
   const [reviewForm, setReviewForm] = useState({
     summary: review?.summary || "",
     rootCause: review?.rootCause || "",
     timeline: review?.timeline || "",
     actionItems: (review?.actionItems || []).join("\n"),
     owner: review?.owner || "",
+    ...((review?.customData || {})),
   });
   const [reviewSaving, setReviewSaving] = useState(false);
   const [saving, setSaving] = useState(false);
+  
+  // Get templates applicable to this ticket type
+  const applicableTemplates = closingTemplates.filter((tmpl) =>
+    tmpl.applyToTypes.includes(tk.type)
+  );
+
   const roleLabel = (user) => {
     const roles = Array.isArray(user.roles) && user.roles.length
       ? user.roles
@@ -39,14 +48,25 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
   }, [ticket]);
 
   useEffect(() => {
+    const customData = (review?.customData || {});
     setReviewForm({
       summary: review?.summary || "",
       rootCause: review?.rootCause || "",
       timeline: review?.timeline || "",
       actionItems: (review?.actionItems || []).join("\n"),
       owner: review?.owner || "",
+      ...customData,
     });
   }, [review]);
+
+  const applyTemplate = (templateId) => {
+    const template = applicableTemplates.find((t) => t.id === templateId);
+    if (!template) return;
+    // Pre-fill resolution comment with template
+    setComment(template.content);
+    setSelectedTemplate(templateId);
+    setShowCloseTemplate(false);
+  };
 
   /** Merge field updates, persist to parent */
   const update = async (fields) => {
@@ -87,7 +107,8 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
     if (!onSaveReview || tk.type !== "Incident") return;
     setReviewSaving(true);
     try {
-      await onSaveReview({
+      // Separate standard fields from custom fields
+      const standardFields = {
         id: review?.id,
         ticketId: tk.id,
         orgId: tk.orgId,
@@ -97,6 +118,20 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
         timeline: reviewForm.timeline,
         actionItems: reviewForm.actionItems.split("\n").map((row) => row.trim()).filter(Boolean),
         owner: reviewForm.owner,
+      };
+
+      // Extract custom fields (those not in the standard set)
+      const customData = {};
+      const fieldNames = ["summary", "rootCause", "timeline", "actionItems", "owner"];
+      Object.keys(reviewForm).forEach((key) => {
+        if (!fieldNames.includes(key)) {
+          customData[key] = reviewForm[key];
+        }
+      });
+
+      await onSaveReview({
+        ...standardFields,
+        customData,
       });
     } finally {
       setReviewSaving(false);
@@ -261,46 +296,142 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                   Post-Incident Review
                 </div>
                 <div style={{ display: "grid", gap: 8 }}>
-                  <textarea
-                    value={reviewForm.summary}
-                    onChange={(e) => setReviewForm((prev) => ({ ...prev, summary: e.target.value }))}
-                    placeholder="Incident summary"
-                    rows={2}
-                    style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", color: t.text, fontFamily: t.font, resize: "vertical" }}
-                  />
-                  <textarea
-                    value={reviewForm.rootCause}
-                    onChange={(e) => setReviewForm((prev) => ({ ...prev, rootCause: e.target.value }))}
-                    placeholder="Root cause"
-                    rows={2}
-                    style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", color: t.text, fontFamily: t.font, resize: "vertical" }}
-                  />
-                  <textarea
-                    value={reviewForm.timeline}
-                    onChange={(e) => setReviewForm((prev) => ({ ...prev, timeline: e.target.value }))}
-                    placeholder="Timeline"
-                    rows={2}
-                    style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", color: t.text, fontFamily: t.font, resize: "vertical" }}
-                  />
-                  <textarea
-                    value={reviewForm.actionItems}
-                    onChange={(e) => setReviewForm((prev) => ({ ...prev, actionItems: e.target.value }))}
-                    placeholder="Action items (one per line)"
-                    rows={3}
-                    style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", color: t.text, fontFamily: t.font, resize: "vertical" }}
-                  />
-                  <select
-                    value={reviewForm.owner}
-                    onChange={(e) => setReviewForm((prev) => ({ ...prev, owner: e.target.value }))}
-                    style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", color: t.text, fontFamily: t.font }}
-                  >
-                    <option value="">Select owner</option>
-                    {agents.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-                  </select>
+                  {/* Render fields based on config or defaults */}
+                  {(!pirFieldConfig || pirFieldConfig.fields.length === 0) ? (
+                    // Default fields
+                    <>
+                      <textarea
+                        value={reviewForm.summary}
+                        onChange={(e) => setReviewForm((prev) => ({ ...prev, summary: e.target.value }))}
+                        placeholder="Incident summary"
+                        rows={2}
+                        style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", color: t.text, fontFamily: t.font, resize: "vertical" }}
+                      />
+                      <textarea
+                        value={reviewForm.rootCause}
+                        onChange={(e) => setReviewForm((prev) => ({ ...prev, rootCause: e.target.value }))}
+                        placeholder="Root cause"
+                        rows={2}
+                        style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", color: t.text, fontFamily: t.font, resize: "vertical" }}
+                      />
+                      <textarea
+                        value={reviewForm.timeline}
+                        onChange={(e) => setReviewForm((prev) => ({ ...prev, timeline: e.target.value }))}
+                        placeholder="Timeline"
+                        rows={2}
+                        style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", color: t.text, fontFamily: t.font, resize: "vertical" }}
+                      />
+                      <textarea
+                        value={reviewForm.actionItems}
+                        onChange={(e) => setReviewForm((prev) => ({ ...prev, actionItems: e.target.value }))}
+                        placeholder="Action items (one per line)"
+                        rows={3}
+                        style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", color: t.text, fontFamily: t.font, resize: "vertical" }}
+                      />
+                      <select
+                        value={reviewForm.owner}
+                        onChange={(e) => setReviewForm((prev) => ({ ...prev, owner: e.target.value }))}
+                        style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", color: t.text, fontFamily: t.font }}
+                      >
+                        <option value="">Select owner</option>
+                        {agents.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                      </select>
+                    </>
+                  ) : (
+                    // Custom fields from config
+                    pirFieldConfig.fields.map((field) => {
+                      const value = reviewForm[field.name] || "";
+                      const required = field.required ? "*" : "";
+                      if (field.type === "text") {
+                        return (
+                          <textarea
+                            key={field.name}
+                            value={value}
+                            onChange={(e) => setReviewForm((prev) => ({ ...prev, [field.name]: e.target.value }))}
+                            placeholder={`${field.label}${required}`}
+                            rows={field.rows || 2}
+                            style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", color: t.text, fontFamily: t.font, resize: "vertical" }}
+                          />
+                        );
+                      } else if (field.type === "user") {
+                        return (
+                          <select
+                            key={field.name}
+                            value={value}
+                            onChange={(e) => setReviewForm((prev) => ({ ...prev, [field.name]: e.target.value }))}
+                            style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", color: t.text, fontFamily: t.font }}
+                          >
+                            <option value="">{field.label}{required}</option>
+                            {agents.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+                          </select>
+                        );
+                      } else if (field.type === "list") {
+                        return (
+                          <textarea
+                            key={field.name}
+                            value={value}
+                            onChange={(e) => setReviewForm((prev) => ({ ...prev, [field.name]: e.target.value }))}
+                            placeholder={`${field.label} (one per line)${required}`}
+                            rows={3}
+                            style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", color: t.text, fontFamily: t.font, resize: "vertical" }}
+                          />
+                        );
+                      }
+                      return null;
+                    })
+                  )}
                   <div style={{ display: "flex", justifyContent: "flex-end" }}>
                     <Btn variant="secondary" size="sm" onClick={saveReview} disabled={reviewSaving}>{reviewSaving ? "Saving..." : "Save PIR"}</Btn>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {/* Closing Template Selector */}
+            {applicableTemplates.length > 0 && (
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: `1px solid ${t.border}` }}>
+                <button
+                  onClick={() => setShowCloseTemplate(!showCloseTemplate)}
+                  style={{
+                    width: "100%",
+                    border: `1px solid ${t.border}`,
+                    background: t.surface2,
+                    borderRadius: 8,
+                    padding: "8px 10px",
+                    color: t.text,
+                    fontFamily: t.font,
+                    fontSize: 12,
+                    fontWeight: 600,
+                    cursor: "pointer",
+                    textAlign: "left",
+                  }}
+                >
+                  💬 Apply Closing Template
+                </button>
+                {showCloseTemplate && (
+                  <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
+                    {applicableTemplates.map((tmpl) => (
+                      <button
+                        key={tmpl.id}
+                        onClick={() => applyTemplate(tmpl.id)}
+                        style={{
+                          border: `1px solid ${t.border}`,
+                          background: selectedTemplate === tmpl.id ? t.accentBg : t.surface3,
+                          borderRadius: 6,
+                          padding: "8px 10px",
+                          color: selectedTemplate === tmpl.id ? t.accentText : t.text2,
+                          fontFamily: t.font,
+                          fontSize: 11,
+                          cursor: "pointer",
+                          textAlign: "left",
+                        }}
+                      >
+                        <div style={{ fontWeight: 600, marginBottom: 2 }}>{tmpl.name}</div>
+                        <div style={{ fontSize: 10, opacity: 0.8 }}>{tmpl.description}</div>
+                      </button>
+                    ))}
+                  </div>
+                )}
               </div>
             )}
           </div>

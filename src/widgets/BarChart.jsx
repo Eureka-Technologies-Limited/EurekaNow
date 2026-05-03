@@ -52,9 +52,10 @@ export function ByStatusChart({ tickets }) {
   return <BarChart data={data} label="By Status" />;
 }
 
-export function ByPriorityChart({ tickets }) {
+export function ByPriorityChart({ tickets, priorityCatalog }) {
+  const catalog = Object.keys(priorityCatalog || {}).length ? priorityCatalog : PRIORITIES;
   const open = tickets.filter((tk) => !["Resolved", "Closed"].includes(tk.status));
-  const data = Object.entries(PRIORITIES).map(([p, cfg]) => ({
+  const data = Object.entries(catalog).map(([p, cfg]) => ({
     label: p,
     count: open.filter((tk) => tk.priority === p).length,
     color: cfg.color,

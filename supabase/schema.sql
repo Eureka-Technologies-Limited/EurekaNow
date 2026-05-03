@@ -113,6 +113,7 @@ create table if not exists post_incident_reviews (
   timeline text,
   action_items jsonb not null default '[]'::jsonb,
   owner text,
+  data jsonb not null default '{}'::jsonb,
   created_at bigint not null,
   updated_at bigint not null
 );
@@ -126,6 +127,40 @@ begin
   end if;
 end $$;
 
+create table if not exists closing_templates (
+  id text primary key,
+  org_id text not null,
+  team_id text,
+  name text not null,
+  description text,
+  content text not null,
+  apply_to_types jsonb not null default '["Incident"]'::jsonb,
+  created_at bigint not null,
+  updated_at bigint not null
+);
+
+create table if not exists pir_field_configs (
+  id text primary key,
+  org_id text not null,
+  team_id text,
+  fields jsonb not null default '[]'::jsonb,
+  created_at bigint not null,
+  updated_at bigint not null
+);
+
+create table if not exists activity_log (
+  id text primary key,
+  ticket_id text not null,
+  org_id text not null,
+  team_id text,
+  user_id text not null,
+  action text not null,
+  field text,
+  old_value text,
+  new_value text,
+  created_at bigint not null
+);
+
 create index if not exists idx_teams_org_id on teams(org_id);
 create index if not exists idx_users_org_id on users(org_id);
 create index if not exists idx_users_team_id on users(team_id);
@@ -135,6 +170,12 @@ create index if not exists idx_ticket_comments_ticket_id on ticket_comments(tick
 create index if not exists idx_articles_org_id on articles(org_id);
 create index if not exists idx_team_roles_team_id on team_roles(team_id);
 create index if not exists idx_pir_ticket_id on post_incident_reviews(ticket_id);
+create index if not exists idx_closing_templates_org_id on closing_templates(org_id);
+create index if not exists idx_closing_templates_team_id on closing_templates(team_id);
+create index if not exists idx_pir_field_configs_org_id on pir_field_configs(org_id);
+create index if not exists idx_pir_field_configs_team_id on pir_field_configs(team_id);
+create index if not exists idx_activity_log_ticket_id on activity_log(ticket_id);
+create index if not exists idx_activity_log_org_id on activity_log(org_id);
 
 alter table organizations enable row level security;
 alter table teams enable row level security;
@@ -146,6 +187,9 @@ alter table org_settings enable row level security;
 alter table team_settings enable row level security;
 alter table team_roles enable row level security;
 alter table post_incident_reviews enable row level security;
+alter table closing_templates enable row level security;
+alter table pir_field_configs enable row level security;
+alter table activity_log enable row level security;
 
 drop policy if exists "public read organizations" on organizations;
 create policy "public read organizations" on organizations for select using (true);
@@ -196,6 +240,21 @@ drop policy if exists "public read post incident reviews" on post_incident_revie
 create policy "public read post incident reviews" on post_incident_reviews for select using (true);
 drop policy if exists "public write post incident reviews" on post_incident_reviews;
 create policy "public write post incident reviews" on post_incident_reviews for all using (true) with check (true);
+
+drop policy if exists "public read closing templates" on closing_templates;
+create policy "public read closing templates" on closing_templates for select using (true);
+drop policy if exists "public write closing templates" on closing_templates;
+create policy "public write closing templates" on closing_templates for all using (true) with check (true);
+
+drop policy if exists "public read pir field configs" on pir_field_configs;
+create policy "public read pir field configs" on pir_field_configs for select using (true);
+drop policy if exists "public write pir field configs" on pir_field_configs;
+create policy "public write pir field configs" on pir_field_configs for all using (true) with check (true);
+
+drop policy if exists "public read activity log" on activity_log;
+create policy "public read activity log" on activity_log for select using (true);
+drop policy if exists "public write activity log" on activity_log;
+create policy "public write activity log" on activity_log for all using (true) with check (true);
 
 -- Create at least one user so login can work immediately.
 insert into organizations (id, name, domain, industry, plan)

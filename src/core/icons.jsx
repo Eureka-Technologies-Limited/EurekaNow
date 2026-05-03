@@ -32,6 +32,8 @@ const ICONS = {
   filter:   "M22 3H2l8 9.46V19l4 2v-8.54L22 3",
   more:     "M12 5h.01|M12 12h.01|M12 19h.01",
   user:     "M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2|M12 7a4 4 0 100 8 4 4 0 000-8z",
+  download: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4|M7 10l5 5 5-5|M12 15V3",
+  kanban:   "M3 3h5v18H3z|M9.5 3h5v12h-5z|M16 3h5v15h-5z",
 };
 
 /** Low-level SVG renderer — use <I> instead in most cases */

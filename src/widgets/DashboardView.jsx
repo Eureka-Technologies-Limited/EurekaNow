@@ -83,7 +83,7 @@ export function DashCustomiser({ layout, onSave, onClose }) {
 // ── DashboardView ─────────────────────────────────────────────────────────────
 // The main dashboard page. Renders the widget grid from the user's layout.
 
-export function DashboardView({ tickets, articles, users, currentUser, layout, sizeOverrides = {}, onLayoutChange, onSizeChange, onCustomise, onOpenTicket, onNewTicket }) {
+export function DashboardView({ tickets, articles, users, currentUser, layout, sizeOverrides = {}, onLayoutChange, onSizeChange, onCustomise, onOpenTicket, onNewTicket, priorityCatalog }) {
   const t = useTokens();
   const { isMobile, isTablet } = useBreakpoint();
   const [arrangeMode, setArrangeMode] = useState(false);
@@ -264,6 +264,7 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, s
                 users={users}
                 currentUser={currentUser}
                 onOpenTicket={onOpenTicket}
+                priorityCatalog={priorityCatalog}
               />
               </Card>
               {arrangeMode && (

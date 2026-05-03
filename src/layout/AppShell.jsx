@@ -2,7 +2,7 @@
 // LAYOUT: DesktopSidebar · MobileNav · Topbar · AppShell
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useTokens, useTheme, useBreakpoint } from "../core/hooks.js";
 import { VIEW_LABELS, VIEW_TO_TYPE, PRIORITIES, DEFAULT_URGENCIES } from "../core/constants.js";
 import {
@@ -23,6 +23,7 @@ import {
 } from "../core/api.js";
 import { Avatar, Btn } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
+import { ToastContainer, useToasts } from "../ui/Toast.jsx";
 import { DEFAULT_LAYOUT } from "../widgets/registry.js";
 import { DashboardView, DashCustomiser } from "../widgets/DashboardView.jsx";
 import { TicketListView }   from "../views/TicketListView.jsx";
@@ -30,6 +31,7 @@ import { TicketDetailPanel } from "../views/TicketDetailPanel.jsx";
 import { NewTicketModal }   from "../views/NewTicketModal.jsx";
 import { TeamsView }        from "../views/TeamsView.jsx";
 import { KBView }           from "../views/KBView.jsx";
+import { KanbanView }       from "../views/KanbanView.jsx";
 
 // ═════════════════════════════════════════════════════════════════════════════
 // DESKTOP SIDEBAR
@@ -62,6 +64,7 @@ export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tic
     { id: "tasks",       label: "Tasks",            icon: "task",
       count: tickets.filter((tk) => tk.type === "Task" && !["Resolved","Closed"].includes(tk.status)).length },
     { id: "all_tickets", label: "All Tickets",      icon: "ticket", count: openCount },
+    { id: "kanban",      label: "Kanban Board",     icon: "kanban" },
     { id: "teams",       label: "Teams & Orgs",     icon: "teams" },
     { id: "kb",          label: "Knowledge Base",   icon: "kb"    },
   ];
@@ -305,6 +308,8 @@ export function AppShell({ currentUser, onLogout }) {
   const [teamSettings, setTeamSettings] = useState([]);
   const [teamRoles,    setTeamRoles]    = useState([]);
   const [postReviews,  setPostReviews]  = useState([]);
+  const [closingTemplates, setClosingTemplates] = useState([]);
+  const [pirFieldConfigs,  setPirFieldConfigs]  = useState([]);
   const [loading,      setLoading]      = useState(true);
   const [loadError,    setLoadError]    = useState("");
   const [view,         setView]         = useState("dashboard");
@@ -314,6 +319,8 @@ export function AppShell({ currentUser, onLogout }) {
   const [dashLayout,   setDashLayout]   = useState(DEFAULT_LAYOUT);
   const [dashSizes,    setDashSizes]    = useState({});
   const [defaultType,  setDefaultType]  = useState(null);
+  const { toasts, addToast, dismiss } = useToasts();
+  const slaToastShown = useRef(false);
 
   useEffect(() => {
     let mounted = true;
@@ -333,6 +340,8 @@ export function AppShell({ currentUser, onLogout }) {
         setTeamSettings(data.teamSettings);
         setTeamRoles(data.teamRoles);
         setPostReviews(data.postIncidentReviews);
+        setClosingTemplates(data.closingTemplates || []);
+        setPirFieldConfigs(data.pirFieldConfigs || []);
       } catch (err) {
         if (!mounted) return;
         setLoadError(err?.message || "Failed to load workspace data.");
@@ -344,6 +353,27 @@ export function AppShell({ currentUser, onLogout }) {
     load();
     return () => { mounted = false; };
   }, []);
+
+  // SLA breach toast — shown once after initial load
+  useEffect(() => {
+    if (loading || tickets.length === 0 || slaToastShown.current) return;
+    slaToastShown.current = true;
+    const cat = getPriorityCatalog(currentUser.orgId, currentUser.teamId);
+    const now = Date.now();
+    const breached = tickets.filter((tk) => {
+      if (["Resolved", "Closed"].includes(tk.status)) return false;
+      const slaHours = cat[tk.priority]?.sla ?? 24;
+      return (now - tk.createdAt) / 3600000 > slaHours;
+    }).length;
+    if (breached > 0) {
+      addToast({
+        type: "error",
+        title: "SLA Breach Alert",
+        message: `${breached} ticket${breached !== 1 ? "s have" : " has"} breached SLA. Check the dashboard for details.`,
+        duration: 8000,
+      });
+    }
+  }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const effectiveUser = users.find((u) => u.id === currentUser.id) || currentUser;
 
@@ -555,16 +585,28 @@ export function AppShell({ currentUser, onLogout }) {
               onSizeChange={(widgetId, size) => setDashSizes((prev) => ({ ...prev, [widgetId]: size }))}
               onCustomise={() => setModal("customise")}
               onOpenTicket={openTicket} onNewTicket={() => handleNew()}
+              priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)}
             />
           )}
 
           {/* Per-type ticket views */}
-          {view === "all_tickets" && <TicketListView typeFilter={null}             tickets={tickets} users={users} onOpenTicket={openTicket} onNewTicket={() => handleNew()} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
-          {view === "incidents"   && <TicketListView typeFilter="Incident"         tickets={tickets} users={users} onOpenTicket={openTicket} onNewTicket={() => handleNew("Incident")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
-          {view === "requests"    && <TicketListView typeFilter="Service Request"  tickets={tickets} users={users} onOpenTicket={openTicket} onNewTicket={() => handleNew("Service Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
-          {view === "changes"     && <TicketListView typeFilter="Change Request"   tickets={tickets} users={users} onOpenTicket={openTicket} onNewTicket={() => handleNew("Change Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
-          {view === "problems"    && <TicketListView typeFilter="Problem"          tickets={tickets} users={users} onOpenTicket={openTicket} onNewTicket={() => handleNew("Problem")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
-          {view === "tasks"       && <TicketListView typeFilter="Task"             tickets={tickets} users={users} onOpenTicket={openTicket} onNewTicket={() => handleNew("Task")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
+          {view === "all_tickets" && <TicketListView typeFilter={null}             tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew()} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
+          {view === "incidents"   && <TicketListView typeFilter="Incident"         tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Incident")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
+          {view === "requests"    && <TicketListView typeFilter="Service Request"  tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Service Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
+          {view === "changes"     && <TicketListView typeFilter="Change Request"   tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Change Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
+          {view === "problems"    && <TicketListView typeFilter="Problem"          tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Problem")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
+          {view === "tasks"       && <TicketListView typeFilter="Task"             tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Task")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
+
+          {view === "kanban" && (
+            <KanbanView
+              tickets={tickets}
+              users={users}
+              currentUser={effectiveUser}
+              priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)}
+              onOpenTicket={openTicket}
+              onPatchTicket={handlePatchTicket}
+            />
+          )}
 
           {view === "teams" && (
             <TeamsView
@@ -617,6 +659,8 @@ export function AppShell({ currentUser, onLogout }) {
           urgencyLevels={getUrgencyLevels(activeTicket.orgId, activeTicket.teamId)}
           review={postReviews.find((row) => row.ticketId === activeTicket.id) || null}
           onSaveReview={handleSavePostIncidentReview}
+          closingTemplates={closingTemplates.filter((tmpl) => tmpl.orgId === activeTicket.orgId && (!tmpl.teamId || tmpl.teamId === activeTicket.teamId))}
+          pirFieldConfig={pirFieldConfigs.find((cfg) => cfg.orgId === activeTicket.orgId && (!cfg.teamId || cfg.teamId === activeTicket.teamId)) || null}
         />
       )}
       {modal === "new" && (
@@ -637,6 +681,8 @@ export function AppShell({ currentUser, onLogout }) {
       {modal === "customise" && (
         <DashCustomiser layout={dashLayout} onSave={setDashLayout} onClose={() => setModal(null)} />
       )}
+
+      <ToastContainer toasts={toasts} onDismiss={dismiss} />
     </div>
   );
 }

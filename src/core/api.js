@@ -13,6 +13,8 @@ const TABLES = {
   teamSettings: "team_settings",
   teamRoles: "team_roles",
   postIncidentReviews: "post_incident_reviews",
+  closingTemplates: "closing_templates",
+  pirFieldConfigs: "pir_field_configs",
   activityLog: "activity_log",
 };
 
@@ -196,6 +198,28 @@ const toPostIncidentReview = (row) => ({
   timeline: row.timeline || "",
   actionItems: asArray(row.action_items),
   owner: row.owner || "",
+  customData: row.data || {},
+  createdAt: Number(row.created_at),
+  updatedAt: Number(row.updated_at),
+});
+
+const toClosingTemplate = (row) => ({
+  id: row.id,
+  orgId: row.org_id,
+  teamId: row.team_id || "",
+  name: row.name,
+  description: row.description || "",
+  content: row.content,
+  applyToTypes: asArray(row.apply_to_types),
+  createdAt: Number(row.created_at),
+  updatedAt: Number(row.updated_at),
+});
+
+const toPirFieldConfig = (row) => ({
+  id: row.id,
+  orgId: row.org_id,
+  teamId: row.team_id || "",
+  fields: asArray(row.fields),
   createdAt: Number(row.created_at),
   updatedAt: Number(row.updated_at),
 });
@@ -294,8 +318,38 @@ const makeDemoSeed = () => {
         timeline: "09:00 detection, 09:25 cert rolled, 09:35 validation complete.",
         actionItems: ["Add cert expiry alert", "Document runbook"],
         owner: "u_demo_agent",
+        customData: {},
         createdAt: ago(3),
         updatedAt: ago(2),
+      },
+    ],
+    closingTemplates: [
+      {
+        id: "tmpl_demo_1",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        name: "Standard Incident Close",
+        description: "Template for closing standard incidents",
+        content: "Incident resolved and verified. Root cause: [ROOT_CAUSE]. All affected systems are operational.",
+        applyToTypes: ["Incident"],
+        createdAt: ago(50),
+        updatedAt: ago(50),
+      },
+    ],
+    pirFieldConfigs: [
+      {
+        id: "pir_cfg_demo_1",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        fields: [
+          { name: "summary", label: "Summary", type: "text", required: true },
+          { name: "rootCause", label: "Root Cause", type: "text", required: true },
+          { name: "timeline", label: "Timeline", type: "text", required: false },
+          { name: "actionItems", label: "Action Items", type: "list", required: false },
+          { name: "owner", label: "Owner", type: "user", required: true },
+        ],
+        createdAt: ago(100),
+        updatedAt: ago(100),
       },
     ],
   };
@@ -405,6 +459,8 @@ export async function fetchAppData() {
       teamSettingsRes,
       teamRolesRes,
       reviewsRes,
+      templatesRes,
+      pirConfigsRes,
     ] = await Promise.all([
       supabase.from(TABLES.orgs).select("*").order("name", { ascending: true }),
       supabase.from(TABLES.teams).select("*").order("name", { ascending: true }),
@@ -416,6 +472,8 @@ export async function fetchAppData() {
       supabase.from(TABLES.teamSettings).select("*"),
       supabase.from(TABLES.teamRoles).select("*").order("created_at", { ascending: true }),
       supabase.from(TABLES.postIncidentReviews).select("*").order("updated_at", { ascending: false }),
+      supabase.from(TABLES.closingTemplates).select("*").order("created_at", { ascending: true }),
+      supabase.from(TABLES.pirFieldConfigs).select("*"),
     ]);
 
     fail(orgsRes.error, "Failed to load organizations.");
@@ -428,6 +486,8 @@ export async function fetchAppData() {
     fail(teamSettingsRes.error, "Failed to load team settings.");
     fail(teamRolesRes.error, "Failed to load team roles.");
     fail(reviewsRes.error, "Failed to load post-incident reviews.");
+    fail(templatesRes.error, "Failed to load templates.");
+    fail(pirConfigsRes.error, "Failed to load PIR field configs.");
 
     const commentsByTicketId = {};
     for (const row of commentsRes.data || []) {
@@ -445,6 +505,8 @@ export async function fetchAppData() {
       teamSettings: (teamSettingsRes.data || []).map(toTeamSettings),
       teamRoles: (teamRolesRes.data || []).map(toTeamRole),
       postIncidentReviews: (reviewsRes.data || []).map(toPostIncidentReview),
+      closingTemplates: (templatesRes.data || []).map(toClosingTemplate),
+      pirFieldConfigs: (pirConfigsRes.data || []).map(toPirFieldConfig),
     };
   } catch (error) {
     if (isFetchFailure(error)) {
@@ -991,6 +1053,7 @@ export async function savePostIncidentReview(payload) {
       timeline: payload.timeline || "",
       actionItems: asArray(payload.actionItems),
       owner: payload.owner || "",
+      customData: payload.customData || {},
       createdAt: payload.createdAt || Date.now(),
       updatedAt: Date.now(),
     };
@@ -1014,6 +1077,7 @@ export async function savePostIncidentReview(payload) {
     timeline: payload.timeline || "",
     action_items: asArray(payload.actionItems),
     owner: payload.owner || "",
+    data: payload.customData || {},
     updated_at: Date.now(),
   };
 
@@ -1035,6 +1099,157 @@ export async function savePostIncidentReview(payload) {
 
   fail(result.error, "Failed to save post-incident review.");
   return toPostIncidentReview(result.data);
+}
+
+export async function createClosingTemplate(payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    if (!state.closingTemplates) state.closingTemplates = [];
+    const template = {
+      id: `tmpl_${uid()}`,
+      orgId: payload.orgId,
+      teamId: payload.teamId || "",
+      name: payload.name,
+      description: payload.description || "",
+      content: payload.content,
+      applyToTypes: asArray(payload.applyToTypes),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    state.closingTemplates.push(template);
+    saveDemoState();
+    return clone(template);
+  }
+
+  const row = {
+    id: `tmpl_${uid()}`,
+    org_id: payload.orgId,
+    team_id: payload.teamId || "",
+    name: payload.name,
+    description: payload.description || "",
+    content: payload.content,
+    apply_to_types: asArray(payload.applyToTypes),
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  };
+
+  const { data, error } = await supabase
+    .from(TABLES.closingTemplates)
+    .insert(row)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to create template.");
+  return toClosingTemplate(data);
+}
+
+export async function updateClosingTemplate(templateId, payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    if (!state.closingTemplates) state.closingTemplates = [];
+    const index = state.closingTemplates.findIndex((t) => t.id === templateId);
+    if (index < 0) throw new Error("Template not found.");
+    state.closingTemplates[index] = {
+      ...state.closingTemplates[index],
+      ...payload,
+      updatedAt: Date.now(),
+    };
+    saveDemoState();
+    return clone(state.closingTemplates[index]);
+  }
+
+  const patch = {
+    name: payload.name,
+    description: payload.description || "",
+    content: payload.content,
+    apply_to_types: asArray(payload.applyToTypes),
+    updated_at: Date.now(),
+  };
+
+  const { data, error } = await supabase
+    .from(TABLES.closingTemplates)
+    .update(patch)
+    .eq("id", templateId)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to update template.");
+  return toClosingTemplate(data);
+}
+
+export async function deleteClosingTemplate(templateId) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    if (!state.closingTemplates) state.closingTemplates = [];
+    state.closingTemplates = state.closingTemplates.filter((t) => t.id !== templateId);
+    saveDemoState();
+    return true;
+  }
+
+  const { error } = await supabase
+    .from(TABLES.closingTemplates)
+    .delete()
+    .eq("id", templateId);
+
+  if (error) throw new Error(error.message || "Failed to delete template.");
+  return true;
+}
+
+export async function upsertPirFieldConfig(payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    if (!state.pirFieldConfigs) state.pirFieldConfigs = [];
+    const existing = state.pirFieldConfigs.find((cfg) => cfg.teamId === payload.teamId && cfg.orgId === payload.orgId);
+    const config = {
+      id: existing?.id || `pir_cfg_${uid()}`,
+      orgId: payload.orgId,
+      teamId: payload.teamId || "",
+      fields: asArray(payload.fields),
+      createdAt: existing?.createdAt || Date.now(),
+      updatedAt: Date.now(),
+    };
+    if (existing) {
+      const index = state.pirFieldConfigs.indexOf(existing);
+      state.pirFieldConfigs[index] = config;
+    } else {
+      state.pirFieldConfigs.push(config);
+    }
+    saveDemoState();
+    return clone(config);
+  }
+
+  const row = {
+    org_id: payload.orgId,
+    team_id: payload.teamId || "",
+    fields: asArray(payload.fields),
+    updated_at: Date.now(),
+  };
+
+  const existing = await supabase
+    .from(TABLES.pirFieldConfigs)
+    .select("id")
+    .eq("org_id", payload.orgId)
+    .eq("team_id", payload.teamId || "")
+    .single();
+
+  let result;
+  if (existing.data?.id) {
+    result = await supabase
+      .from(TABLES.pirFieldConfigs)
+      .update(row)
+      .eq("id", existing.data.id)
+      .select("*")
+      .single();
+  } else {
+    result = await supabase
+      .from(TABLES.pirFieldConfigs)
+      .insert({ id: `pir_cfg_${uid()}`, ...row, created_at: Date.now() })
+      .select("*")
+      .single();
+  }
+
+  fail(result.error, "Failed to save PIR field config.");
+  return toPirFieldConfig(result.data);
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

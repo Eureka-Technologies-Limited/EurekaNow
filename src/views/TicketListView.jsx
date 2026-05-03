@@ -21,19 +21,22 @@ const TYPE_ICON = {
   Task:             "task",
 };
 
-export function TicketListView({ typeFilter, tickets, users, onOpenTicket, onNewTicket, priorityCatalog, onBulkUpdate }) {
+export function TicketListView({ typeFilter, tickets, users, currentUser, onOpenTicket, onNewTicket, priorityCatalog, onBulkUpdate }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
   const catalog = (priorityCatalog && Object.keys(priorityCatalog).length) ? priorityCatalog : PRIORITIES;
   const priorityOrder = Object.keys(catalog);
+  const highestPriority = Object.entries(catalog).sort((a, b) => a[1].sla - b[1].sla)[0]?.[0] || "Critical";
 
-  const [search,      setSearch]      = useState("");
-  const [searchMode,  setSearchMode]  = useState("smart");
-  const [fStatus,     setFStatus]     = useState("All");
-  const [fPriority,   setFPriority]   = useState("All");
-  const [sortBy,      setSortBy]      = useState("newest");
-  const [showFilters, setShowFilters] = useState(false);
-  const [selected,    setSelected]    = useState(new Set());
+  const [search,       setSearch]       = useState("");
+  const [searchMode,   setSearchMode]   = useState("smart");
+  const [fStatus,      setFStatus]      = useState("All");
+  const [fPriority,    setFPriority]    = useState("All");
+  const [fAssignee,    setFAssignee]    = useState("All");
+  const [sortBy,       setSortBy]       = useState("newest");
+  const [showFilters,  setShowFilters]  = useState(false);
+  const [selected,     setSelected]     = useState(new Set());
+  const [activePreset, setActivePreset] = useState(null);
 
   const label = typeFilter || "All Tickets";
 
@@ -52,6 +55,11 @@ export function TicketListView({ typeFilter, tickets, users, onOpenTicket, onNew
     })
     .filter((tk) => fStatus   === "All" || tk.status   === fStatus)
     .filter((tk) => fPriority === "All" || tk.priority === fPriority)
+    .filter((tk) => {
+      if (fAssignee === "All") return true;
+      if (fAssignee === "__unassigned") return !tk.assignee;
+      return tk.assignee === fAssignee;
+    })
     .sort((a, b) => {
       if (sortBy === "newest")   return b.createdAt - a.createdAt;
       if (sortBy === "oldest")   return a.createdAt - b.createdAt;
@@ -59,6 +67,44 @@ export function TicketListView({ typeFilter, tickets, users, onOpenTicket, onNew
       if (sortBy === "sla")      return slaPct(b.createdAt, catalog[b.priority]?.sla ?? 24) - slaPct(a.createdAt, catalog[a.priority]?.sla ?? 24);
       return 0;
     });
+
+  const applyPreset = (id) => {
+    const clear = () => { setFStatus("All"); setFPriority("All"); setFAssignee("All"); setSortBy("newest"); };
+    if (activePreset === id) { setActivePreset(null); clear(); return; }
+    setActivePreset(id);
+    clear();
+    if (id === "mine")       setFAssignee(currentUser?.id || "All");
+    if (id === "open")       setFStatus("Open");
+    if (id === "critical")   setFPriority(highestPriority);
+    if (id === "unassigned") setFAssignee("__unassigned");
+    if (id === "sla")        setSortBy("sla");
+  };
+
+  const exportCSV = () => {
+    const headers = ["ID", "Title", "Type", "Priority", "Status", "Assignee", "Created"];
+    const rows = filtered.map((tk) => {
+      const agent = users.find((u) => u.id === tk.assignee);
+      return [
+        tk.id,
+        `"${(tk.title || "").replace(/"/g, '""')}"`,
+        tk.type || "",
+        tk.priority || "",
+        tk.status || "",
+        agent?.name || "",
+        new Date(tk.createdAt).toLocaleDateString("en-GB"),
+      ].join(",");
+    });
+    const csv = [headers.join(","), ...rows].join("\n");
+    const blob = new Blob([csv], { type: "text/csv;charset=utf-8;" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `${(typeFilter || "tickets").toLowerCase().replace(/\s+/g, "-")}-${Date.now()}.csv`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  };
 
   const toggleSelect = (ticketId) => {
     setSelected((prev) => {
@@ -121,6 +167,11 @@ export function TicketListView({ typeFilter, tickets, users, onOpenTicket, onNew
               <I name="filter" size={12} />
             </Btn>
           )}
+          {!isMobile && filtered.length > 0 && (
+            <Btn variant="secondary" size="sm" onClick={exportCSV} title="Export current view as CSV">
+              <I name="download" size={12} /> Export
+            </Btn>
+          )}
           <Btn variant="primary" size="sm" onClick={onNewTicket}>
             <I name="plus" size={12} />
             {!isMobile && ` New ${typeFilter || "Ticket"}`}
@@ -141,7 +192,7 @@ export function TicketListView({ typeFilter, tickets, users, onOpenTicket, onNew
         />
       </div>
 
-      <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+      <div style={{ display: "flex", gap: 6, marginBottom: 8, flexWrap: "wrap" }}>
         {[
           ["smart", "Smart"],
           ["exact", "Exact phrase"],
@@ -168,13 +219,46 @@ export function TicketListView({ typeFilter, tickets, users, onOpenTicket, onNew
         ))}
       </div>
 
+      {/* Quick filter presets */}
+      <div style={{ display: "flex", gap: 6, marginBottom: 10, flexWrap: "wrap" }}>
+        {[
+          ...(currentUser ? [{ id: "mine",       label: "Mine"        }] : []),
+          { id: "open",       label: "Open"        },
+          { id: "critical",   label: highestPriority },
+          { id: "unassigned", label: "Unassigned"  },
+          { id: "sla",        label: "SLA Risk"    },
+        ].map(({ id, label: presetLabel }) => {
+          const active = activePreset === id;
+          return (
+            <button
+              key={id}
+              onClick={() => applyPreset(id)}
+              style={{
+                background: active ? t.accent : t.surface2,
+                color: active ? "#fff" : t.text2,
+                border: `1px solid ${active ? t.accent : t.border}`,
+                borderRadius: 99,
+                padding: "4px 10px",
+                fontSize: 11,
+                fontWeight: active ? 700 : 500,
+                cursor: "pointer",
+                fontFamily: t.font,
+              }}
+            >
+              {presetLabel}
+            </button>
+          );
+        })}
+      </div>
+
       {/* Filters (collapsible on mobile) */}
       {(!isMobile || showFilters) && (
         <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
           {[
-            { v: fStatus,   s: setFStatus,   o: ["All", ...STATUSES]                    },
-            { v: fPriority, s: setFPriority, o: ["All", ...Object.keys(catalog)]      },
-            { v: sortBy,    s: setSortBy,     o: [["newest","Newest"],["oldest","Oldest"],["priority","Priority"],["sla","SLA Risk"]] },
+            { v: fStatus,   s: (v) => { setFStatus(v);   setActivePreset(null); }, o: ["All", ...STATUSES] },
+            { v: fPriority, s: (v) => { setFPriority(v); setActivePreset(null); }, o: ["All", ...Object.keys(catalog)] },
+            { v: fAssignee, s: (v) => { setFAssignee(v); setActivePreset(null); }, o: [["All", "All agents"], ["__unassigned", "Unassigned"], ...users.map((u) => [u.id, u.name])] },
+            { v: sortBy,    s: (v) => { setSortBy(v);    setActivePreset(null); }, o: [["newest","Newest"],["oldest","Oldest"],["priority","Priority"],["sla","SLA Risk"]] },
           ].map((f, i) => (
             <select
               key={i}
