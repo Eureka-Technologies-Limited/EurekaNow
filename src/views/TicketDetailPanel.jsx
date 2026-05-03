@@ -109,6 +109,15 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
     try {
       const saved = await onPatch(tk.id, fields);
       if (saved) setTk(saved);
+
+      // If status changed on a parent ticket, propagate to its children
+      if (fields.status) {
+        const newStatus = fields.status;
+        const children = allTickets.filter((t) => t.parentId === tk.id);
+        if (children.length > 0) {
+          await Promise.all(children.map((c) => onPatch?.(c.id, { status: newStatus })));
+        }
+      }
     } catch {
       setTk(previous);
     } finally {
@@ -122,7 +131,8 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
     setSaving(true);
     try {
       const created = await onComment(tk.id, { userId: currentUser.id, text });
-      if (created) setTk((prev) => ({ ...prev, comments: [...prev.comments, created] }));
+      // Parent updates `tickets` and `activeTicket`; avoid optimistic local append
+      // to prevent duplicate comments when the parent prop refreshes.
       setComment("");
     } finally {
       setSaving(false);
@@ -170,15 +180,17 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
   const SearchDropdown = ({ results, onSelect }) => results.length === 0 ? null : (
     <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: 8, marginTop: 3, overflow: "hidden", boxShadow: "0 4px 12px rgba(0,0,0,0.12)" }}>
       {results.map((r) => (
-        <button
+        <Btn
           key={r.id}
+          variant="ghost"
+          full
           onClick={() => onSelect(r)}
-          style={{ width: "100%", background: "none", border: "none", borderBottom: `1px solid ${t.border}`, cursor: "pointer", padding: "8px 10px", textAlign: "left", fontFamily: t.font, display: "flex", gap: 8, alignItems: "center" }}
+          style={{ justifyContent: "flex-start", borderBottom: `1px solid ${t.border}`, padding: "8px 10px", textAlign: "left", fontFamily: t.font, display: "flex", gap: 8, alignItems: "center" }}
         >
           <span style={{ fontSize: 10, fontFamily: t.mono, color: t.text3, flexShrink: 0 }}>{r.id}</span>
           <span style={{ fontSize: 12, color: t.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.title}</span>
           <StatusBadge status={r.status} />
-        </button>
+        </Btn>
       ))}
     </div>
   );
@@ -244,7 +256,7 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                 </div>
               )}
             </div>
-            <button onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: t.text3, fontSize: 24, lineHeight: 1, padding: "0 0 0 12px", flexShrink: 0 }}>×</button>
+            <Btn variant="ghost" onClick={onClose} style={{ fontSize: 22, padding: 2, color: t.text3, lineHeight: 1, flexShrink: 0 }}>×</Btn>
           </div>
         </div>
 
@@ -355,23 +367,25 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                 {/* Closing templates */}
                 {applicableTemplates.length > 0 && (
                   <div style={{ paddingTop: 14, borderTop: `1px solid ${t.border}` }}>
-                    <button
-                      onClick={() => setShowCloseTemplate(!showCloseTemplate)}
-                      style={{ width: "100%", border: `1px solid ${t.border}`, background: t.surface2, borderRadius: 8, padding: "8px 10px", color: t.text, fontFamily: t.font, fontSize: 12, fontWeight: 600, cursor: "pointer", textAlign: "left" }}
-                    >
+                    <Btn variant="secondary" size="md" full onClick={() => setShowCloseTemplate(!showCloseTemplate)} style={{ textAlign: "left", padding: "8px 10px", borderRadius: 8, fontWeight: 600 }}>
                       💬 Apply Closing Template
-                    </button>
+                    </Btn>
                     {showCloseTemplate && (
                       <div style={{ marginTop: 8, display: "grid", gap: 6 }}>
                         {applicableTemplates.map((tmpl) => (
-                          <button
+                          <Btn
                             key={tmpl.id}
+                            variant={selectedTemplate === tmpl.id ? "primary" : "secondary"}
+                            size="sm"
+                            full
                             onClick={() => applyTemplate(tmpl.id)}
-                            style={{ border: `1px solid ${t.border}`, background: selectedTemplate === tmpl.id ? t.accentBg : t.surface3, borderRadius: 6, padding: "8px 10px", color: selectedTemplate === tmpl.id ? t.accentText : t.text2, fontFamily: t.font, fontSize: 11, cursor: "pointer", textAlign: "left" }}
+                            style={{ justifyContent: "flex-start", borderRadius: 6, padding: "8px 10px", textAlign: "left" }}
                           >
-                            <div style={{ fontWeight: 600, marginBottom: 2 }}>{tmpl.name}</div>
-                            <div style={{ fontSize: 10, opacity: 0.8 }}>{tmpl.description}</div>
-                          </button>
+                            <div style={{ textAlign: "left", width: "100%" }}>
+                              <div style={{ fontWeight: 600, marginBottom: 2 }}>{tmpl.name}</div>
+                              <div style={{ fontSize: 10, opacity: 0.8 }}>{tmpl.description}</div>
+                            </div>
+                          </Btn>
                         ))}
                       </div>
                     )}
@@ -400,10 +414,9 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                         <span style={{ fontSize: 12, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{parentTicket.title}</span>
                       </div>
                       <StatusBadge status={parentTicket.status} />
-                      <button onClick={() => update({ parentId: null })} title="Unlink parent"
-                        style={{ background: "none", border: "none", cursor: "pointer", color: t.text3, padding: "2px 4px", borderRadius: 4, flexShrink: 0 }}>
+                      <Btn variant="ghost" size="sm" onClick={() => update({ parentId: null })} title="Unlink parent" style={{ padding: "2px 4px", borderRadius: 4, flexShrink: 0 }}>
                         <I name="x" size={11} />
-                      </button>
+                      </Btn>
                     </div>
                   ) : showParentSearch ? (
                     <div>
@@ -414,10 +427,7 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                         style={{ width: "100%", background: t.surface2, border: `1px solid ${t.accent}`, borderRadius: 8, padding: "8px 10px", fontSize: 12, color: t.text, fontFamily: t.font, outline: "none", boxSizing: "border-box" }}
                       />
                       <SearchDropdown results={parentSearchResults} onSelect={async (r) => { await update({ parentId: r.id }); setShowParentSearch(false); setParentQuery(""); }} />
-                      <button onClick={() => { setShowParentSearch(false); setParentQuery(""); }}
-                        style={{ marginTop: 6, fontSize: 11, color: t.text3, background: "none", border: "none", cursor: "pointer", fontFamily: t.font, padding: 0 }}>
-                        Cancel
-                      </button>
+                      <Btn variant="ghost" size="sm" onClick={() => { setShowParentSearch(false); setParentQuery(""); }} style={{ marginTop: 6, fontSize: 11, padding: 0 }}>{"Cancel"}</Btn>
                     </div>
                   ) : (
                     <Btn variant="secondary" size="sm" onClick={() => setShowParentSearch(true)}>
@@ -445,10 +455,9 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                             <span style={{ fontSize: 12, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{child.title}</span>
                           </div>
                           <StatusBadge status={child.status} />
-                          <button onClick={() => onPatch?.(child.id, { parentId: null })} title="Unlink child"
-                            style={{ background: "none", border: "none", cursor: "pointer", color: t.text3, padding: "2px 4px", borderRadius: 4, flexShrink: 0 }}>
+                          <Btn variant="ghost" size="sm" onClick={() => onPatch?.(child.id, { parentId: null })} title="Unlink child" style={{ padding: "2px 4px", borderRadius: 4, flexShrink: 0 }}>
                             <I name="x" size={11} />
-                          </button>
+                          </Btn>
                         </div>
                       ))}
                     </div>
@@ -462,10 +471,7 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                         style={{ width: "100%", background: t.surface2, border: `1px solid ${t.accent}`, borderRadius: 8, padding: "8px 10px", fontSize: 12, color: t.text, fontFamily: t.font, outline: "none", boxSizing: "border-box" }}
                       />
                       <SearchDropdown results={childSearchResults} onSelect={async (r) => { await onPatch?.(r.id, { parentId: tk.id }); setShowChildSearch(false); setChildQuery(""); }} />
-                      <button onClick={() => { setShowChildSearch(false); setChildQuery(""); }}
-                        style={{ marginTop: 6, fontSize: 11, color: t.text3, background: "none", border: "none", cursor: "pointer", fontFamily: t.font, padding: 0 }}>
-                        Cancel
-                      </button>
+                      <Btn variant="ghost" size="sm" onClick={() => { setShowChildSearch(false); setChildQuery(""); }} style={{ marginTop: 6, fontSize: 11, padding: 0 }}>{"Cancel"}</Btn>
                     </div>
                   ) : (
                     <Btn variant="secondary" size="sm" onClick={() => setShowChildSearch(true)}>

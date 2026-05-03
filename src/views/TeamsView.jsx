@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { DEFAULT_URGENCIES, PRIORITIES } from "../core/constants.js";
+import { DEFAULT_URGENCIES, PRIORITIES, TICKET_TYPES } from "../core/constants.js";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { Avatar, Badge, Btn, Card, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
@@ -54,6 +54,8 @@ export function TeamsView({
   tickets,
   orgSettings,
   teamSettings,
+  closingTemplates = [],
+  pirFieldConfigs = [],
   teamRoles,
   onCreateOrg,
   onCreateTeam,
@@ -62,6 +64,10 @@ export function TeamsView({
   onSaveOrgSettings,
   onSaveTeamSettings,
   onAddTeamRole,
+  onCreateClosingTemplate,
+  onUpdateClosingTemplate,
+  onDeleteClosingTemplate,
+  onUpsertPirFieldConfig,
 }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
@@ -73,6 +79,8 @@ export function TeamsView({
   const [editRolesUserId, setEditRolesUserId] = useState(null);
   const [settingsOrgOpen, setSettingsOrgOpen] = useState(false);
   const [settingsTeamId, setSettingsTeamId] = useState(null);
+  const [settingsTab, setSettingsTab] = useState("sla");
+  const [templateEditor, setTemplateEditor] = useState(null); // { orgId, teamId, template }
   const [addRoleTeamId, setAddRoleTeamId] = useState(null);
 
   useEffect(() => {
@@ -93,6 +101,14 @@ export function TeamsView({
   const selectedMemberTeamRoles = teamRoles.filter((r) => r.teamId === selectedMember?.teamId);
 
   const orgSetting = orgSettings.find((row) => row.orgId === selOrg);
+
+  const templatesForOrg = (orgId, teamId) => (
+    closingTemplates.filter((tmpl) => tmpl.orgId === orgId && (!tmpl.teamId || tmpl.teamId === teamId || tmpl.teamId === ""))
+  );
+
+  const pirConfigFor = (orgId, teamId) => (
+    pirFieldConfigs.find((cfg) => cfg.orgId === orgId && (cfg.teamId === (teamId || ""))) || null
+  );
 
   return (
     <div>
@@ -302,30 +318,166 @@ export function TeamsView({
       )}
 
       {settingsOrgOpen && org && (
-        <Modal title="Organisation SLA, Priority & Urgency" onClose={() => setSettingsOrgOpen(false)} width={620}>
-          <SettingsForm
-            defaultPriorities={normalizePriorityRows(orgSetting?.priorities)}
-            defaultUrgencies={orgSetting?.urgencies || DEFAULT_URGENCIES}
-            onSave={async (settings) => {
-              await onSaveOrgSettings({ orgId: org.id, ...settings });
-              setSettingsOrgOpen(false);
-            }}
-            onCancel={() => setSettingsOrgOpen(false)}
-          />
+        <Modal title="Organisation Settings" onClose={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }} width={820}>
+          <div style={{ display: "flex", gap: 12 }}>
+            <div style={{ width: 200 }}>
+              {[
+                { id: "sla", label: "SLA & Priority" },
+                { id: "templates", label: "Templates" },
+                { id: "pir", label: "PIR Fields" },
+              ].map((it) => (
+                <Btn
+                  key={it.id}
+                  variant={settingsTab === it.id ? "primary" : "ghost"}
+                  full
+                  size="md"
+                  onClick={() => setSettingsTab(it.id)}
+                  style={{ justifyContent: "flex-start", textAlign: "left", padding: "8px 10px", marginBottom: 6, borderRadius: 8 }}
+                >
+                  {it.label}
+                </Btn>
+              ))}
+            </div>
+            <div style={{ flex: 1 }}>
+              {settingsTab === "sla" && (
+                <SettingsForm
+                  defaultPriorities={normalizePriorityRows(orgSetting?.priorities)}
+                  defaultUrgencies={orgSetting?.urgencies || DEFAULT_URGENCIES}
+                  onSave={async (settings) => {
+                    await onSaveOrgSettings({ orgId: org.id, ...settings });
+                    setSettingsOrgOpen(false);
+                    setSettingsTab("sla");
+                  }}
+                  onCancel={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }}
+                />
+              )}
+
+              {settingsTab === "templates" && (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>Closing Templates</div>
+                    <Btn variant="primary" size="sm" onClick={() => setTemplateEditor({ orgId: org.id, teamId: "", template: null })}>Add Template</Btn>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {templatesForOrg(org.id, "").map((tmpl) => (
+                      <div key={tmpl.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 10, border: `1px solid ${t.border}`, borderRadius: 8 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700 }}>{tmpl.name}</div>
+                          <div style={{ fontSize: 12, color: t.text3 }}>{tmpl.description}</div>
+                          <div style={{ fontSize: 11, color: t.text3, marginTop: 6 }}>Applies to: {tmpl.applyToTypes.join(", ")}</div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <Btn size="sm" variant="secondary" onClick={() => setTemplateEditor({ orgId: org.id, teamId: tmpl.teamId || "", template: tmpl })}>Edit</Btn>
+                          <Btn size="sm" variant="danger" onClick={async () => { await onDeleteClosingTemplate?.(tmpl.id); }}>
+                            Delete
+                          </Btn>
+                        </div>
+                      </div>
+                    ))}
+                    {templatesForOrg(org.id, "").length === 0 && <div style={{ color: t.text3 }}>No templates yet.</div>}
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === "pir" && (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>PIR Field Config</div>
+                  </div>
+                  <div>
+                    <PirEditor
+                      orgId={org.id}
+                      teamId={""}
+                      initial={pirConfigFor(org.id, "")}
+                      onSave={async (cfg) => { await onUpsertPirFieldConfig?.({ orgId: org.id, teamId: "", fields: cfg }); setSettingsOrgOpen(false); setSettingsTab("sla"); }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </Modal>
       )}
 
       {settingsTeamId && selectedTeam && (
-        <Modal title={`Team Settings - ${selectedTeam.name}`} onClose={() => setSettingsTeamId(null)} width={620}>
-          <SettingsForm
-            defaultPriorities={normalizePriorityRows(teamSettings.find((cfg) => cfg.teamId === settingsTeamId)?.priorities || orgSetting?.priorities)}
-            defaultUrgencies={teamSettings.find((cfg) => cfg.teamId === settingsTeamId)?.urgencies || orgSetting?.urgencies || DEFAULT_URGENCIES}
-            onSave={async (settings) => {
-              await onSaveTeamSettings({ teamId: settingsTeamId, ...settings });
-              setSettingsTeamId(null);
-            }}
-            onCancel={() => setSettingsTeamId(null)}
-          />
+        <Modal title={`Team Settings - ${selectedTeam.name}`} onClose={() => { setSettingsTeamId(null); setSettingsTab("sla"); }} width={820}>
+          <div style={{ display: "flex", gap: 12 }}>
+            <div style={{ width: 200 }}>
+              {[
+                { id: "sla", label: "SLA & Priority" },
+                { id: "templates", label: "Templates" },
+                { id: "pir", label: "PIR Fields" },
+              ].map((it) => (
+                <Btn
+                  key={it.id}
+                  variant={settingsTab === it.id ? "primary" : "ghost"}
+                  full
+                  size="md"
+                  onClick={() => setSettingsTab(it.id)}
+                  style={{ justifyContent: "flex-start", textAlign: "left", padding: "8px 10px", marginBottom: 6, borderRadius: 8 }}
+                >
+                  {it.label}
+                </Btn>
+              ))}
+            </div>
+            <div style={{ flex: 1 }}>
+              {settingsTab === "sla" && (
+                <SettingsForm
+                  defaultPriorities={normalizePriorityRows(teamSettings.find((cfg) => cfg.teamId === settingsTeamId)?.priorities || orgSetting?.priorities)}
+                  defaultUrgencies={teamSettings.find((cfg) => cfg.teamId === settingsTeamId)?.urgencies || orgSetting?.urgencies || DEFAULT_URGENCIES}
+                  onSave={async (settings) => {
+                    await onSaveTeamSettings({ teamId: settingsTeamId, ...settings });
+                    setSettingsTeamId(null);
+                    setSettingsTab("sla");
+                  }}
+                  onCancel={() => { setSettingsTeamId(null); setSettingsTab("sla"); }}
+                />
+              )}
+
+              {settingsTab === "templates" && (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>Closing Templates</div>
+                    <Btn variant="primary" size="sm" onClick={() => setTemplateEditor({ orgId: org.id, teamId: selectedTeam.id, template: null })}>Add Template</Btn>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {templatesForOrg(org.id, selectedTeam.id).map((tmpl) => (
+                      <div key={tmpl.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 10, border: `1px solid ${t.border}`, borderRadius: 8 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700 }}>{tmpl.name}</div>
+                          <div style={{ fontSize: 12, color: t.text3 }}>{tmpl.description}</div>
+                          <div style={{ fontSize: 11, color: t.text3, marginTop: 6 }}>Applies to: {tmpl.applyToTypes.join(", ")}</div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <Btn size="sm" variant="secondary" onClick={() => setTemplateEditor({ orgId: org.id, teamId: tmpl.teamId || "", template: tmpl })}>Edit</Btn>
+                          <Btn size="sm" variant="danger" onClick={async () => { await onDeleteClosingTemplate?.(tmpl.id); }}>
+                            Delete
+                          </Btn>
+                        </div>
+                      </div>
+                    ))}
+                    {templatesForOrg(org.id, selectedTeam.id).length === 0 && <div style={{ color: t.text3 }}>No templates yet.</div>}
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === "pir" && (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>PIR Field Config</div>
+                  </div>
+                  <div>
+                    <PirEditor
+                      orgId={org.id}
+                      teamId={selectedTeam.id}
+                      initial={pirConfigFor(org.id, selectedTeam.id)}
+                      onSave={async (cfg) => { await onUpsertPirFieldConfig?.({ orgId: org.id, teamId: selectedTeam.id, fields: cfg }); setSettingsTeamId(null); setSettingsTab("sla"); }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </Modal>
       )}
 
@@ -353,6 +505,16 @@ export function TeamsView({
             onCancel={() => setEditRolesUserId(null)}
           />
         </Modal>
+      )}
+      {templateEditor && (
+        <TemplateEditor
+          orgId={templateEditor.orgId}
+          teamId={templateEditor.teamId}
+          template={templateEditor.template}
+          onClose={() => setTemplateEditor(null)}
+          onCreate={onCreateClosingTemplate}
+          onUpdate={onUpdateClosingTemplate}
+        />
       )}
     </div>
   );
@@ -744,6 +906,139 @@ function EditMemberRolesForm({ user, teamRoles, onSave, onCancel }) {
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
         <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
         <Btn variant="primary" onClick={submit} disabled={saving}>Save Roles</Btn>
+      </div>
+    </div>
+  );
+}
+
+function TemplateEditor({ orgId, teamId, template, onClose, onCreate, onUpdate }) {
+  const t = useTokens();
+  const [name, setName] = useState(template?.name || "");
+  const [desc, setDesc] = useState(template?.description || "");
+  const [content, setContent] = useState(template?.content || "");
+  const [applyTo, setApplyTo] = useState(template?.applyToTypes || ["Incident"]);
+  const [saving, setSaving] = useState(false);
+
+  const toggleType = (type) => {
+    setApplyTo((prev) => prev.includes(type) ? prev.filter((p) => p !== type) : [...prev, type]);
+  };
+
+  const save = async () => {
+    if (!name.trim() || !content.trim()) return;
+    setSaving(true);
+    try {
+      if (template?.id) {
+        await onUpdate?.(template.id, { name: name.trim(), description: desc.trim(), content, applyToTypes: applyTo });
+      } else {
+        await onCreate?.({ orgId, teamId: teamId || "", name: name.trim(), description: desc.trim(), content, applyToTypes: applyTo });
+      }
+      onClose();
+    } catch (err) {
+      // ignore for now
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title={template?.id ? "Edit Template" : "New Template"} onClose={onClose} width={720}>
+      <div style={{ display: "grid", gap: 10 }}>
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Template name" autoFocus />
+        <Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Short description" />
+        <div>
+          <div style={{ fontSize: 11, color: t.text3, marginBottom: 6 }}>Applies to</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {TICKET_TYPES.map((tt) => (
+              <button key={tt} onClick={() => toggleType(tt)} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${applyTo.includes(tt) ? t.accent : t.border}`, background: applyTo.includes(tt) ? t.accentBg : "none", cursor: "pointer" }}>{tt}</button>
+            ))}
+          </div>
+        </div>
+        <Input multiline rows={8} value={content} onChange={(e) => setContent(e.target.value)} placeholder="Template content" />
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+          <Btn variant="primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function PirEditor({ orgId, teamId, initial, onSave }) {
+  const t = useTokens();
+  const [fields, setFields] = useState(() => (initial?.fields ? initial.fields.map((f) => ({ ...f })) : []));
+  const [saving, setSaving] = useState(false);
+
+  const addField = () => {
+    setFields((f) => [...f, { name: `field_${f.length + 1}`, label: "New Field", type: "text", required: false }]);
+  };
+
+  const updateField = (index, key, value) => {
+    setFields((rows) => rows.map((r, i) => (i === index ? { ...r, [key]: value } : r)));
+  };
+
+  const removeField = (index) => setFields((rows) => rows.filter((_, i) => i !== index));
+
+  const move = (index, dir) => {
+    setFields((rows) => {
+      const next = [...rows];
+      const j = index + dir;
+      if (j < 0 || j >= next.length) return next;
+      const tmp = next[j]; next[j] = next[index]; next[index] = tmp;
+      return next;
+    });
+  };
+
+  const reset = () => setFields(initial?.fields ? initial.fields.map((f) => ({ ...f })) : []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      // basic validation: names must be non-empty
+      const invalid = fields.some((f) => !f.name || !f.name.trim());
+      if (invalid) {
+        // simple client-side feedback: abort save
+        setSaving(false);
+        return;
+      }
+      await onSave(fields.map((f) => ({ name: String(f.name).trim(), label: String(f.label || "").trim(), type: f.type || "text", required: !!f.required })));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const typeOptions = ["text", "list", "user"];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ fontSize: 12, color: t.text3 }}>Add fields for the PIR form. Use <strong>user</strong> type to select an owner.</div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {fields.map((fld, i) => (
+          <div key={`pir-field-${i}`} style={{ display: "grid", gridTemplateColumns: "1fr 1.2fr 110px 90px auto", gap: 8, alignItems: "center" }}>
+            <Input value={fld.name} onChange={(e) => updateField(i, "name", e.target.value)} placeholder="field_name" />
+            <Input value={fld.label} onChange={(e) => updateField(i, "label", e.target.value)} placeholder="Label shown to users" />
+            <Sel value={fld.type} onChange={(e) => updateField(i, "type", e.target.value)}>
+              {typeOptions.map((tp) => <option key={tp} value={tp}>{tp}</option>)}
+            </Sel>
+            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={!!fld.required} onChange={(e) => updateField(i, "required", e.target.checked)} />
+              <span style={{ fontSize: 11, color: t.text3 }}>Required</span>
+            </label>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={() => move(i, -1)} title="Move up" style={{ background: "none", border: "1px solid " + t.border, borderRadius: 6, padding: "6px 8px", cursor: "pointer" }}>↑</button>
+              <button onClick={() => move(i, 1)} title="Move down" style={{ background: "none", border: "1px solid " + t.border, borderRadius: 6, padding: "6px 8px", cursor: "pointer" }}>↓</button>
+              <button onClick={() => removeField(i)} title="Remove" style={{ background: "none", border: "1px solid " + t.border, borderRadius: 6, padding: "6px 8px", cursor: "pointer", color: t.redText }}>✕</button>
+            </div>
+          </div>
+        ))}
+        {fields.length === 0 && <div style={{ color: t.text3 }}>No fields yet. Click Add field to get started.</div>}
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <Btn variant="secondary" onClick={reset}>Reset</Btn>
+        <Btn onClick={addField} variant="secondary">Add Field</Btn>
+        <div style={{ flex: 1 }} />
+        <Btn variant="primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Btn>
       </div>
     </div>
   );

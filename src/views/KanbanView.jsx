@@ -38,7 +38,7 @@ function persistBoard(orgId, teamId, board) {
 
 // ── KanbanCard ────────────────────────────────────────────────────────────────
 
-function KanbanCard({ ticket, users, catalog, cardFields, onOpenTicket, onDragStart, onDragEnd, isDragging }) {
+function KanbanCard({ ticket, users, catalog, cardFields, onOpenTicket, onDragStart, onDragEnd, isDragging, isChild, isParent, isCollapsed, onToggleChildren }) {
   const t = useTokens();
   const assignee = users.find((u) => u.id === ticket.assignee);
   const slaHours = catalog[ticket.priority]?.sla;
@@ -52,7 +52,8 @@ function KanbanCard({ ticket, users, catalog, cardFields, onOpenTicket, onDragSt
       style={{
         background: t.surface,
         border: `1px solid ${t.border}`,
-        borderLeft: `3px solid ${priorityColor}`,
+        borderLeft: isChild ? `3px dashed ${priorityColor}` : `3px solid ${priorityColor}`,
+        marginLeft: isChild ? 12 : 0,
         borderRadius: 8,
         padding: "10px 12px",
         cursor: isDragging ? "grabbing" : "grab",
@@ -67,9 +68,15 @@ function KanbanCard({ ticket, users, catalog, cardFields, onOpenTicket, onDragSt
         tabIndex={0}
         onClick={() => onOpenTicket(ticket)}
         onKeyDown={(e) => e.key === "Enter" && onOpenTicket(ticket)}
-        style={{ fontSize: 12, fontWeight: 600, color: t.text, lineHeight: 1.45, marginBottom: 4, cursor: "pointer" }}
+        style={{ fontSize: 12, fontWeight: 600, color: t.text, lineHeight: 1.45, marginBottom: 4, cursor: "pointer", display: "flex", alignItems: "center", gap: 8 }}
       >
-        {ticket.title}
+        {isParent && (
+          <button onClick={(e) => { e.stopPropagation(); onToggleChildren?.(ticket.id); }}
+            style={{ background: "transparent", border: "none", padding: 0, cursor: "pointer", color: t.text3 }} aria-label={isCollapsed ? "Expand" : "Collapse"}>
+            <I name={isCollapsed ? "chev-right" : "chev-down"} size={12} />
+          </button>
+        )}
+        <div style={{ marginLeft: isParent ? 0 : (isChild ? 8 : 0) }}>{ticket.title}</div>
       </div>
 
       <div style={{ fontSize: 10, color: t.text3, fontFamily: t.mono, marginBottom: cardFields.length > 0 ? 8 : 0 }}>
@@ -102,6 +109,27 @@ function KanbanColumn({ col, tickets, users, catalog, cardFields, isOver, onOpen
   const t = useTokens();
   const atWip = col.wipLimit !== null && tickets.length >= col.wipLimit;
   const overWip = col.wipLimit !== null && tickets.length > col.wipLimit;
+  const [collapsedParents, setCollapsedParents] = useState(() => new Set());
+
+  // Build quick lookup and parent->children map for tickets in this column
+  const ticketsById = Object.fromEntries(tickets.map((tk) => [tk.id, tk]));
+  const childrenMap = {};
+  tickets.forEach((tk) => {
+    if (tk.parentId && ticketsById[tk.parentId]) {
+      childrenMap[tk.parentId] = childrenMap[tk.parentId] || [];
+      childrenMap[tk.parentId].push(tk);
+    }
+  });
+
+  const roots = tickets.filter((tk) => !tk.parentId || !ticketsById[tk.parentId]);
+
+  const toggleParent = (id) => {
+    setCollapsedParents((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
 
   return (
     <div
@@ -141,20 +169,41 @@ function KanbanColumn({ col, tickets, users, catalog, cardFields, isOver, onOpen
         </span>
       </div>
 
-      {/* Cards */}
+      {/* Cards (group parents & children) */}
       <div style={{ padding: "8px 8px 12px", overflowY: "auto", flex: 1, display: "flex", flexDirection: "column", gap: 8 }}>
-        {tickets.map((tk) => (
-          <KanbanCard
-            key={tk.id}
-            ticket={tk}
-            users={users}
-            catalog={catalog}
-            cardFields={cardFields}
-            onOpenTicket={onOpenTicket}
-            isDragging={draggingId === tk.id}
-            onDragStart={(e) => { e.dataTransfer.setData("kanban_ticket", tk.id); onDragStart(tk.id); }}
-            onDragEnd={onDragEnd}
-          />
+        {roots.map((root) => (
+          <div key={root.id}>
+            <KanbanCard
+              ticket={root}
+              users={users}
+              catalog={catalog}
+              cardFields={cardFields}
+              onOpenTicket={onOpenTicket}
+              isDragging={draggingId === root.id}
+              isParent={Boolean(childrenMap[root.id] && childrenMap[root.id].length)}
+              isCollapsed={collapsedParents.has(root.id)}
+              onToggleChildren={toggleParent}
+              onDragStart={(e) => { e.dataTransfer.setData("kanban_ticket", root.id); onDragStart(root.id); }}
+              onDragEnd={onDragEnd}
+            />
+
+            {childrenMap[root.id] && !collapsedParents.has(root.id) && (
+              childrenMap[root.id].map((child) => (
+                <KanbanCard
+                  key={child.id}
+                  ticket={child}
+                  users={users}
+                  catalog={catalog}
+                  cardFields={cardFields}
+                  onOpenTicket={onOpenTicket}
+                  isDragging={draggingId === child.id}
+                  isChild={true}
+                  onDragStart={(e) => { e.dataTransfer.setData("kanban_ticket", child.id); onDragStart(child.id); }}
+                  onDragEnd={onDragEnd}
+                />
+              ))
+            )}
+          </div>
         ))}
 
         {tickets.length === 0 && (
@@ -214,6 +263,12 @@ export function KanbanView({ tickets, users, currentUser, priorityCatalog, onOpe
     const newStatus = col.statusMap[0];
     if (tk.status !== newStatus) {
       await onPatchTicket(ticketId, { status: newStatus });
+
+      // propagate status change to child tickets that belong to the same board
+      const children = tickets.filter((t) => t.parentId === ticketId);
+      if (children.length > 0) {
+        await Promise.all(children.map((c) => onPatchTicket(c.id, { status: newStatus })));
+      }
     }
   };
 

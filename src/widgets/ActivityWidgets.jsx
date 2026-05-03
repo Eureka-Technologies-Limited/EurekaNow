@@ -6,7 +6,7 @@
 import { useState, useRef, useEffect } from "react";
 import { useTokens } from "../core/hooks.js";
 import { slaPct, slaForPriority } from "../core/utils.js";
-import { PriorityBadge, StatusBadge, SLABar } from "../ui/primitives.jsx";
+import { PriorityBadge, StatusBadge, SLABar, Btn } from "../ui/primitives.jsx";
 import { PRIORITIES } from "../core/constants.js";
 
 // ── CriticalList ──────────────────────────────────────────────────────────────
@@ -98,62 +98,15 @@ export function CriticalList({ tickets, onOpenTicket, priorityCatalog }) {
                 Showing {start + 1}–{Math.min(start + itemsPerPage, critical.length)} of {critical.length} critical alerts
               </div>
               <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-                <button
-                  onClick={() => setPage(Math.max(1, page - 1))}
-                  disabled={page === 1}
-                  style={{
-                    background: page === 1 ? t.surface2 : t.surface3,
-                    border: `1px solid ${t.border}`,
-                    borderRadius: 5,
-                    padding: "4px 8px",
-                    cursor: page === 1 ? "not-allowed" : "pointer",
-                    fontFamily: t.font,
-                    fontSize: 10,
-                    fontWeight: 600,
-                    color: page === 1 ? t.text3 : t.text2,
-                  }}
-                >
-                  ← Prev
-                </button>
+                <Btn variant="secondary" size="sm" onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} style={{ padding: "4px 8px" }}>← Prev</Btn>
 
                 {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-                  <button
-                    key={p}
-                    onClick={() => setPage(p)}
-                    style={{
-                      background: page === p ? t.accent : t.surface2,
-                      border: `1px solid ${page === p ? t.accent : t.border}`,
-                      borderRadius: 4,
-                      padding: "4px 8px",
-                      minWidth: 28,
-                      cursor: "pointer",
-                      fontFamily: t.font,
-                      fontSize: 10,
-                      fontWeight: page === p ? 700 : 500,
-                      color: page === p ? "#fff" : t.text2,
-                    }}
-                  >
-                    {p}
-                  </button>
+                  p === page
+                    ? <Btn key={p} variant="primary" size="sm" onClick={() => setPage(p)} style={{ padding: "4px 8px", minWidth: 28 }}>{p}</Btn>
+                    : <Btn key={p} variant="secondary" size="sm" onClick={() => setPage(p)} style={{ padding: "4px 8px", minWidth: 28 }}>{p}</Btn>
                 ))}
 
-                <button
-                  onClick={() => setPage(Math.min(totalPages, page + 1))}
-                  disabled={page === totalPages}
-                  style={{
-                    background: page === totalPages ? t.surface2 : t.surface3,
-                    border: `1px solid ${t.border}`,
-                    borderRadius: 5,
-                    padding: "4px 8px",
-                    cursor: page === totalPages ? "not-allowed" : "pointer",
-                    fontFamily: t.font,
-                    fontSize: 10,
-                    fontWeight: 600,
-                    color: page === totalPages ? t.text3 : t.text2,
-                  }}
-                >
-                  Next →
-                </button>
+                <Btn variant="secondary" size="sm" onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} style={{ padding: "4px 8px" }}>Next →</Btn>
               </div>
             </div>
           )}
@@ -230,11 +183,13 @@ export function SLARisk({ tickets, onOpenTicket, priorityCatalog }) {
                 {start + 1}–{Math.min(start + itemsPerPage, atRisk.length)} of {atRisk.length}
               </div>
               <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-                <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} style={{ background: page === 1 ? t.surface2 : t.surface3, border: `1px solid ${t.border}`, borderRadius: 5, padding: "4px 8px", cursor: page === 1 ? "not-allowed" : "pointer", fontFamily: t.font, fontSize: 10, fontWeight: 600, color: page === 1 ? t.text3 : t.text2 }}>← Prev</button>
+                <Btn variant="secondary" size="sm" onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} style={{ padding: "4px 8px" }}>← Prev</Btn>
                 {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-                  <button key={p} onClick={() => setPage(p)} style={{ background: page === p ? t.accent : t.surface2, border: `1px solid ${page === p ? t.accent : t.border}`, borderRadius: 4, padding: "4px 8px", minWidth: 28, cursor: "pointer", fontFamily: t.font, fontSize: 10, fontWeight: page === p ? 700 : 500, color: page === p ? "#fff" : t.text2 }}>{p}</button>
+                  p === page
+                    ? <Btn key={p} variant="primary" size="sm" onClick={() => setPage(p)} style={{ padding: "4px 8px", minWidth: 28 }}>{p}</Btn>
+                    : <Btn key={p} variant="secondary" size="sm" onClick={() => setPage(p)} style={{ padding: "4px 8px", minWidth: 28 }}>{p}</Btn>
                 ))}
-                <button onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} style={{ background: page === totalPages ? t.surface2 : t.surface3, border: `1px solid ${t.border}`, borderRadius: 5, padding: "4px 8px", cursor: page === totalPages ? "not-allowed" : "pointer", fontFamily: t.font, fontSize: 10, fontWeight: 600, color: page === totalPages ? t.text3 : t.text2 }}>Next →</button>
+                <Btn variant="secondary" size="sm" onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} style={{ padding: "4px 8px" }}>Next →</Btn>
               </div>
             </div>
           )}
@@ -311,11 +266,13 @@ export function MyTickets({ tickets, currentUser, onOpenTicket }) {
                 {start + 1}–{Math.min(start + itemsPerPage, mine.length)} of {mine.length}
               </div>
               <div style={{ display: "flex", justifyContent: "center", alignItems: "center", gap: 4, flexWrap: "wrap" }}>
-                <button onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} style={{ background: page === 1 ? t.surface2 : t.surface3, border: `1px solid ${t.border}`, borderRadius: 5, padding: "4px 8px", cursor: page === 1 ? "not-allowed" : "pointer", fontFamily: t.font, fontSize: 10, fontWeight: 600, color: page === 1 ? t.text3 : t.text2 }}>← Prev</button>
+                <Btn variant="secondary" size="sm" onClick={() => setPage(Math.max(1, page - 1))} disabled={page === 1} style={{ padding: "4px 8px" }}>← Prev</Btn>
                 {Array.from({ length: totalPages }, (_, i) => i + 1).map((p) => (
-                  <button key={p} onClick={() => setPage(p)} style={{ background: page === p ? t.accent : t.surface2, border: `1px solid ${page === p ? t.accent : t.border}`, borderRadius: 4, padding: "4px 8px", minWidth: 28, cursor: "pointer", fontFamily: t.font, fontSize: 10, fontWeight: page === p ? 700 : 500, color: page === p ? "#fff" : t.text2 }}>{p}</button>
+                  p === page
+                    ? <Btn key={p} variant="primary" size="sm" onClick={() => setPage(p)} style={{ padding: "4px 8px", minWidth: 28 }}>{p}</Btn>
+                    : <Btn key={p} variant="secondary" size="sm" onClick={() => setPage(p)} style={{ padding: "4px 8px", minWidth: 28 }}>{p}</Btn>
                 ))}
-                <button onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} style={{ background: page === totalPages ? t.surface2 : t.surface3, border: `1px solid ${t.border}`, borderRadius: 5, padding: "4px 8px", cursor: page === totalPages ? "not-allowed" : "pointer", fontFamily: t.font, fontSize: 10, fontWeight: 600, color: page === totalPages ? t.text3 : t.text2 }}>Next →</button>
+                <Btn variant="secondary" size="sm" onClick={() => setPage(Math.min(totalPages, page + 1))} disabled={page === totalPages} style={{ padding: "4px 8px" }}>Next →</Btn>
               </div>
             </div>
           )}

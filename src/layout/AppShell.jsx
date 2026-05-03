@@ -13,12 +13,16 @@ import {
   createTeam,
   createTicket,
   createTicketComment,
+  createClosingTemplate,
+  updateClosingTemplate,
+  deleteClosingTemplate,
   fetchAppData,
   incrementArticleViews,
   savePostIncidentReview,
   updateMemberRoles,
   upsertOrgSettings,
   upsertTeamSettings,
+  upsertPirFieldConfig,
   updateTicketFields,
 } from "../core/api.js";
 import { Avatar, Btn } from "../ui/primitives.jsx";
@@ -485,6 +489,34 @@ export function AppShell({ currentUser, onLogout }) {
     return saved;
   };
 
+  const handleCreateClosingTemplate = async (payload) => {
+    const created = await createClosingTemplate(payload);
+    setClosingTemplates((rows) => [...rows, created]);
+    return created;
+  };
+
+  const handleUpdateClosingTemplate = async (id, payload) => {
+    const updated = await updateClosingTemplate(id, payload);
+    setClosingTemplates((rows) => rows.map((r) => r.id === updated.id ? updated : r));
+    return updated;
+  };
+
+  const handleDeleteClosingTemplate = async (id) => {
+    await deleteClosingTemplate(id);
+    setClosingTemplates((rows) => rows.filter((r) => r.id !== id));
+    return true;
+  };
+
+  const handleUpsertPirFieldConfig = async (payload) => {
+    const saved = await upsertPirFieldConfig(payload);
+    setPirFieldConfigs((rows) => {
+      const exists = rows.some((r) => r.id === saved.id || (r.orgId === saved.orgId && r.teamId === saved.teamId));
+      if (!exists) return [...rows, saved];
+      return rows.map((r) => (r.id === saved.id || (r.orgId === saved.orgId && r.teamId === saved.teamId)) ? saved : r);
+    });
+    return saved;
+  };
+
   const handleAddTeamRole = async (payload) => {
     const created = await createTeamRole(payload);
     setTeamRoles((rows) => [...rows, created]);
@@ -616,6 +648,8 @@ export function AppShell({ currentUser, onLogout }) {
               tickets={tickets}
               orgSettings={orgSettings}
               teamSettings={teamSettings}
+              closingTemplates={closingTemplates}
+              pirFieldConfigs={pirFieldConfigs}
               teamRoles={teamRoles}
               onCreateOrg={handleCreateOrg}
               onCreateTeam={handleCreateTeam}
@@ -624,6 +658,10 @@ export function AppShell({ currentUser, onLogout }) {
               onSaveOrgSettings={handleSaveOrgSettings}
               onSaveTeamSettings={handleSaveTeamSettings}
               onAddTeamRole={handleAddTeamRole}
+              onCreateClosingTemplate={handleCreateClosingTemplate}
+              onUpdateClosingTemplate={handleUpdateClosingTemplate}
+              onDeleteClosingTemplate={handleDeleteClosingTemplate}
+              onUpsertPirFieldConfig={handleUpsertPirFieldConfig}
             />
           )}
           {view === "kb" && (
