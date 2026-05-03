@@ -130,7 +130,7 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
     if (!text || saving || !onComment) return;
     setSaving(true);
     try {
-      const created = await onComment(tk.id, { userId: currentUser.id, text });
+      //const created = await onComment(tk.id, { userId: currentUser.id, text });
       // Parent updates `tickets` and `activeTicket`; avoid optimistic local append
       // to prevent duplicate comments when the parent prop refreshes.
       setComment("");
