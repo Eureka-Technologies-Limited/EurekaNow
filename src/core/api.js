@@ -141,6 +141,7 @@ const toTicket = (row, commentsByTicketId = {}) => ({
   status: row.status,
   createdAt: Number(row.created_at),
   tags: asArray(row.tags),
+  parentId: row.parent_id || null,
   comments: commentsByTicketId[row.id] || [],
 });
 
@@ -253,6 +254,24 @@ const makeDemoSeed = () => {
     users: [demoUser, agentUser],
     tickets: [
       {
+        id: "INC-9000",
+        title: "Major Incident: Authentication service degradation",
+        description: "Widespread authentication failures affecting multiple services across the organisation.",
+        type: "Incident",
+        category: "Security",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        assignee: "u_demo_agent",
+        reporter: "u_demo",
+        priority: "Critical",
+        urgency: "Critical",
+        status: "In Progress",
+        createdAt: ago(5),
+        tags: ["major-incident", "auth"],
+        parentId: null,
+        comments: [],
+      },
+      {
         id: "INC-9001",
         title: "Demo incident: VPN login failures",
         description: "Users report VPN auth failures from remote network.",
@@ -267,7 +286,26 @@ const makeDemoSeed = () => {
         status: "In Progress",
         createdAt: ago(4),
         tags: ["vpn", "auth"],
+        parentId: "INC-9000",
         comments,
+      },
+      {
+        id: "INC-9003",
+        title: "Demo incident: SSO portal unreachable",
+        description: "Single sign-on portal returning 503 for external users.",
+        type: "Incident",
+        category: "Security",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        assignee: "",
+        reporter: "u_demo",
+        priority: "High",
+        urgency: "High",
+        status: "Open",
+        createdAt: ago(3),
+        tags: ["sso", "auth"],
+        parentId: "INC-9000",
+        comments: [],
       },
       {
         id: "REQ-9002",
@@ -284,6 +322,7 @@ const makeDemoSeed = () => {
         status: "Open",
         createdAt: ago(10),
         tags: ["access"],
+        parentId: null,
         comments: [],
       },
     ],
@@ -535,6 +574,7 @@ export async function createTicket(payload) {
       status: payload.status || "Open",
       createdAt: Date.now(),
       tags: asArray(payload.tags),
+      parentId: payload.parentId || null,
       comments: [],
     };
     state.tickets.unshift(created);
@@ -557,6 +597,7 @@ export async function createTicket(payload) {
     status: payload.status || "Open",
     created_at: Date.now(),
     tags: asArray(payload.tags),
+    parent_id: payload.parentId || null,
   };
 
   const { data, error } = await supabase
@@ -585,6 +626,7 @@ export async function updateTicketFields(ticketId, fields) {
   if (typeof fields.priority === "string") patch.priority = fields.priority;
   if (typeof fields.urgency === "string") patch.urgency = fields.urgency;
   if (typeof fields.assignee === "string") patch.assignee = fields.assignee;
+  if ("parentId" in fields) patch.parent_id = fields.parentId ?? null;
 
   if (!Object.keys(patch).length) {
     const { data, error } = await supabase

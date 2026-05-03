@@ -661,6 +661,8 @@ export function AppShell({ currentUser, onLogout }) {
           onSaveReview={handleSavePostIncidentReview}
           closingTemplates={closingTemplates.filter((tmpl) => tmpl.orgId === activeTicket.orgId && (!tmpl.teamId || tmpl.teamId === activeTicket.teamId))}
           pirFieldConfig={pirFieldConfigs.find((cfg) => cfg.orgId === activeTicket.orgId && (!cfg.teamId || cfg.teamId === activeTicket.teamId)) || null}
+          allTickets={tickets}
+          onOpenTicket={openTicket}
         />
       )}
       {modal === "new" && (
@@ -676,6 +678,7 @@ export function AppShell({ currentUser, onLogout }) {
           urgencyLevels={getUrgencyLevels(effectiveUser.orgId, effectiveUser.teamId)}
           orgSettings={orgSettings}
           teamSettings={teamSettings}
+          allTickets={tickets}
         />
       )}
       {modal === "customise" && (

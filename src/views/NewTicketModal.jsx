@@ -8,7 +8,7 @@ import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { PRIORITIES, DEFAULT_URGENCIES, TICKET_TYPES, CATEGORIES } from "../core/constants.js";
 import { Btn, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
 
-export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCreate, defaultType, priorityCatalog, urgencyLevels, orgSettings = [], teamSettings = [] }) {
+export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCreate, defaultType, priorityCatalog, urgencyLevels, orgSettings = [], teamSettings = [], allTickets = [] }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
 
@@ -45,9 +45,20 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
     teamId: currentUser.teamId,
     assignee: "",
     tags: "",
+    parentId: null,
   });
+  const [parentQuery, setParentQuery] = useState("");
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  const parentResults = parentQuery.length >= 1
+    ? allTickets
+        .filter((tk) =>
+          tk.id.toLowerCase().includes(parentQuery.toLowerCase()) ||
+          tk.title.toLowerCase().includes(parentQuery.toLowerCase())
+        )
+        .slice(0, 6)
+    : [];
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const resolvedSettings = useMemo(() => {
@@ -117,6 +128,7 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
         assignee:    form.assignee || currentUser.id,
         status:      "Open",
         tags,
+        parentId:    form.parentId || null,
       });
       onClose();
     } catch (err) {
@@ -232,6 +244,44 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
         <div>
           <Label>Tags (comma-separated)</Label>
           <Input value={form.tags} onChange={(e) => set("tags", e.target.value)} placeholder="vpn, auth, remote-work" />
+        </div>
+
+        {/* Parent Incident */}
+        <div>
+          <Label>Parent Incident <span style={{ fontWeight: 400, fontSize: 10, color: t.text3 }}>optional</span></Label>
+          {form.parentId ? (
+            <div style={{ display: "flex", alignItems: "center", gap: 8, background: t.surface2, borderRadius: 9, padding: "9px 12px", border: `1px solid ${t.border}` }}>
+              <span style={{ fontSize: 10, fontFamily: t.mono, color: t.text3, flexShrink: 0 }}>{form.parentId}</span>
+              <span style={{ flex: 1, fontSize: 12, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                {allTickets.find((tk) => tk.id === form.parentId)?.title || ""}
+              </span>
+              <button onClick={() => { set("parentId", null); setParentQuery(""); }}
+                style={{ background: "none", border: "none", cursor: "pointer", color: t.text3, fontSize: 16, lineHeight: 1, padding: "0 2px" }}>×</button>
+            </div>
+          ) : (
+            <div style={{ position: "relative" }}>
+              <Input
+                value={parentQuery}
+                onChange={(e) => setParentQuery(e.target.value)}
+                placeholder="Search for a parent ticket by ID or title…"
+              />
+              {parentResults.length > 0 && (
+                <div style={{ position: "absolute", top: "100%", left: 0, right: 0, zIndex: 50, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 9, overflow: "hidden", boxShadow: "0 6px 20px rgba(0,0,0,0.15)", marginTop: 3 }}>
+                  {parentResults.map((r) => (
+                    <button
+                      key={r.id}
+                      onClick={() => { set("parentId", r.id); setParentQuery(""); }}
+                      style={{ width: "100%", background: "none", border: "none", borderBottom: `1px solid ${t.border}`, cursor: "pointer", padding: "9px 12px", textAlign: "left", fontFamily: t.font, display: "flex", gap: 10, alignItems: "center" }}
+                    >
+                      <span style={{ fontSize: 10, fontFamily: t.mono, color: t.text3, flexShrink: 0 }}>{r.id}</span>
+                      <span style={{ fontSize: 12, color: t.text, flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{r.title}</span>
+                      <span style={{ fontSize: 10, color: t.text3, flexShrink: 0 }}>{r.status}</span>
+                    </button>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
 
         {/* Actions */}

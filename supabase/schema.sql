@@ -60,6 +60,7 @@ create table if not exists tickets (
 );
 
 alter table tickets add column if not exists urgency text not null default 'Medium';
+alter table tickets add column if not exists parent_id text;
 
 create table if not exists ticket_comments (
   id text primary key,
@@ -176,6 +177,7 @@ create index if not exists idx_pir_field_configs_org_id on pir_field_configs(org
 create index if not exists idx_pir_field_configs_team_id on pir_field_configs(team_id);
 create index if not exists idx_activity_log_ticket_id on activity_log(ticket_id);
 create index if not exists idx_activity_log_org_id on activity_log(org_id);
+create index if not exists idx_tickets_parent_id on tickets(parent_id);
 
 alter table organizations enable row level security;
 alter table teams enable row level security;

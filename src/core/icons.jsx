@@ -34,6 +34,7 @@ const ICONS = {
   user:     "M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2|M12 7a4 4 0 100 8 4 4 0 000-8z",
   download: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4|M7 10l5 5 5-5|M12 15V3",
   kanban:   "M3 3h5v18H3z|M9.5 3h5v12h-5z|M16 3h5v15h-5z",
+  link:     "M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71|M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71",
 };
 
 /** Low-level SVG renderer — use <I> instead in most cases */
