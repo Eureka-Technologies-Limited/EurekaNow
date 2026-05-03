@@ -323,6 +323,7 @@ export function TeamsView({
             <div style={{ width: 200 }}>
               {[
                 { id: "sla", label: "SLA & Priority" },
+                { id: "categories", label: "Categories" },
                 { id: "templates", label: "Templates" },
                 { id: "pir", label: "PIR Fields" },
               ].map((it) => (
@@ -345,6 +346,18 @@ export function TeamsView({
                   defaultUrgencies={orgSetting?.urgencies || DEFAULT_URGENCIES}
                   onSave={async (settings) => {
                     await onSaveOrgSettings({ orgId: org.id, ...settings });
+                    setSettingsOrgOpen(false);
+                    setSettingsTab("sla");
+                  }}
+                  onCancel={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }}
+                />
+              )}
+
+              {settingsTab === "categories" && (
+                <CategoriesForm
+                  defaultCategories={orgSetting?.categories || []}
+                  onSave={async (settings) => {
+                    await onSaveOrgSettings({ orgId: org.id, priorities: normalizePriorityRows(orgSetting?.priorities), urgencies: orgSetting?.urgencies || DEFAULT_URGENCIES, ...settings });
                     setSettingsOrgOpen(false);
                     setSettingsTab("sla");
                   }}
@@ -616,6 +629,65 @@ function SettingsForm({ defaultPriorities, defaultUrgencies, onSave, onCancel })
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
         <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
         <Btn variant="primary" onClick={submit} disabled={saving}>{saving ? "Saving..." : "Save Settings"}</Btn>
+      </div>
+    </div>
+  );
+}
+
+function CategoriesForm({ defaultCategories, onSave, onCancel }) {
+  const t = useTokens();
+  const [categories, setCategories] = useState(Array.isArray(defaultCategories) && defaultCategories.length ? defaultCategories : ["General"]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const updateCategory = (index, value) => {
+    setCategories((rows) => rows.map((row, i) => (i === index ? value : row)));
+  };
+
+  const removeCategory = (index) => {
+    setCategories((rows) => rows.filter((_, i) => i !== index));
+  };
+
+  const addCategory = () => {
+    setCategories((rows) => [...rows, ""]);
+  };
+
+  const submit = async () => {
+    const nextCategories = categories.map((c) => String(c || "").trim()).filter(Boolean);
+    if (!nextCategories.length) {
+      setError("Add at least one category.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onSave({ categories: nextCategories });
+    } catch (err) {
+      setError(err?.message || "Failed to save categories.");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ fontSize: 12, color: t.text3, lineHeight: 1.5 }}>
+        Define the categories your organisation uses for tickets and KB content.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {categories.map((c, i) => (
+          <div key={`cat-${i}`} style={{ display: "grid", gridTemplateColumns: "1fr auto", gap: 8 }}>
+            <Input value={c} onChange={(e) => updateCategory(i, e.target.value)} placeholder="Category name" />
+            <Btn variant="secondary" size="sm" onClick={() => removeCategory(i)}>Remove</Btn>
+          </div>
+        ))}
+        <div>
+          <Btn variant="secondary" size="sm" onClick={addCategory}><I name="plus" size={12} /> Add category</Btn>
+        </div>
+      </div>
+      {error && <div style={{ fontSize: 12, color: "#dc2626" }}>{error}</div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
+        <Btn variant="primary" onClick={submit} disabled={saving}>Save Categories</Btn>
       </div>
     </div>
   );

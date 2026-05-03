@@ -15,6 +15,7 @@ import {
   createTicketComment,
   createClosingTemplate,
   updateClosingTemplate,
+  updateArticle,
   deleteClosingTemplate,
   fetchAppData,
   incrementArticleViews,
@@ -541,6 +542,12 @@ export function AppShell({ currentUser, onLogout }) {
     return created;
   };
 
+  const handleUpdateArticle = async (articleId, payload) => {
+    const saved = await updateArticle(articleId, payload);
+    setArticles((rows) => rows.map((row) => row.id === saved.id ? saved : row));
+    return saved;
+  };
+
   const handleSavePostIncidentReview = async (payload) => {
     const existing = postReviews.find((row) => row.ticketId === payload.ticketId);
     const saved = await savePostIncidentReview({ ...payload, id: existing?.id || payload.id });
@@ -669,7 +676,9 @@ export function AppShell({ currentUser, onLogout }) {
               articles={articles}
               users={users}
               currentUser={effectiveUser}
+                orgSettings={orgSettings}
               onCreateArticle={handleCreateArticle}
+                onUpdateArticle={handleUpdateArticle}
               onViewArticle={handleViewArticle}
             />
           )}

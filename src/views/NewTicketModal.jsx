@@ -1,11 +1,6 @@
-// ─────────────────────────────────────────────────────────────────────────────
-// VIEW: NewTicketModal
-// Form for creating any ticket type. Pre-selects type based on current view.
-// ─────────────────────────────────────────────────────────────────────────────
-
 import { useEffect, useMemo, useState } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
-import { PRIORITIES, DEFAULT_URGENCIES, TICKET_TYPES, CATEGORIES } from "../core/constants.js";
+import { PRIORITIES, DEFAULT_URGENCIES, TICKET_TYPES } from "../core/constants.js";
 import { Btn, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
 
 export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCreate, defaultType, priorityCatalog, urgencyLevels, orgSettings = [], teamSettings = [], allTickets = [] }) {
@@ -38,7 +33,7 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
   const [form, setForm] = useState({
     title: "", description: "",
     type: defaultType || "Incident",
-    category: CATEGORIES[0],
+    category: "",
     priority: fallbackDefaultPriority,
     urgency: fallbackUrgencies.includes("Medium") ? "Medium" : fallbackUrgencies[0],
     orgId: currentUser.orgId,
@@ -47,9 +42,20 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
     tags: "",
     parentId: null,
   });
+
   const [parentQuery, setParentQuery] = useState("");
+  const [categoryQuery, setCategoryQuery] = useState("");
+  const [categoryOpen, setCategoryOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  // ✅ FIX: reset category when org changes
+  useEffect(() => {
+    set("category", "");
+    setCategoryQuery("");
+  }, [form.orgId]);
 
   const parentResults = parentQuery.length >= 1
     ? allTickets
@@ -60,7 +66,6 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
         .slice(0, 6)
     : [];
 
-  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
   const resolvedSettings = useMemo(() => {
     const teamCfg = teamSettings.find((row) => row.teamId === form.teamId);
     const orgCfg = orgSettings.find((row) => row.orgId === form.orgId);
@@ -79,6 +84,7 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
       urgencies: teamHasCustomUrgencies
         ? teamUrgencies
         : (orgUrgencies.length ? orgUrgencies : (teamUrgencies.length ? teamUrgencies : fallbackUrgencies)),
+      categories: Array.isArray(orgCfg?.categories) ? orgCfg.categories : [], // ✅ org-only
     };
   }, [form.orgId, form.teamId, orgSettings, teamSettings, fallbackCatalog, fallbackUrgencies]);
 
@@ -100,6 +106,7 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
 
   const orgTeams = teams.filter((t2) => t2.orgId === form.orgId);
   const orgUsers = users.filter((u)  => u.orgId  === form.orgId);
+
   const roleLabel = (user) => {
     const roles = Array.isArray(user.roles) && user.roles.length
       ? user.roles
@@ -111,24 +118,25 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
     if (!form.title.trim()) return;
     setSaving(true);
     setError("");
-    const tags   = form.tags
+
+    const tags = form.tags
       ? form.tags.split(",").map((tg) => tg.trim().toLowerCase()).filter(Boolean)
       : [];
 
     try {
       await onCreate({
-        title:       form.title.trim(),
+        title: form.title.trim(),
         description: form.description.trim(),
-        type:        form.type,
-        category:    form.category,
-        priority:    form.priority,
-        urgency:     form.urgency,
-        orgId:       form.orgId,
-        teamId:      form.teamId,
-        assignee:    form.assignee || currentUser.id,
-        status:      "Open",
+        type: form.type,
+        category: form.category,
+        priority: form.priority,
+        urgency: form.urgency,
+        orgId: form.orgId,
+        teamId: form.teamId,
+        assignee: form.assignee || currentUser.id,
+        status: "Open",
         tags,
-        parentId:    form.parentId || null,
+        parentId: form.parentId || null,
       });
       onClose();
     } catch (err) {
@@ -136,6 +144,7 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
       setSaving(false);
     }
   };
+
 
   return (
     <Modal title="Raise New Ticket" onClose={onClose} width={580}>
@@ -174,9 +183,46 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
         <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
           <div>
             <Label>Category</Label>
-            <Sel value={form.category} onChange={(e) => set("category", e.target.value)}>
-              {CATEGORIES.map((c) => <option key={c}>{c}</option>)}
-            </Sel>
+            <div style={{ position: "relative" }}>
+              <Input
+                value={categoryQuery || form.category}
+                onChange={(e) => {
+                  const value = e.target.value;
+                  setCategoryQuery(value);
+                  set("category", value);
+                  setCategoryOpen(true);
+                }}
+                onFocus={() => setCategoryOpen(true)}
+                onKeyDown={(e) => {
+                  if (e.key === "Escape") setCategoryOpen(false);
+                }}
+                placeholder="Type or search categories…"
+                aria-label="Category"
+              />
+              {categoryOpen && (
+                <div style={{ position: "absolute", left: 0, right: 0, top: "100%", zIndex: 40 }}>
+                  <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: 8, marginTop: 6, overflow: "hidden", boxShadow: "0 8px 24px rgba(0,0,0,0.12)", maxHeight: 220, overflowY: "auto" }}>
+                    {(() => {
+                      const options = resolvedSettings.categories || [];
+                      const term = String(categoryQuery || form.category || "").trim().toLowerCase();
+                      const filtered = term
+                        ? options.filter((c) => c.toLowerCase().includes(term))
+                        : options;
+                      const shown = filtered.slice(0, 8);
+                      return shown.length > 0 ? shown.map((c) => (
+                        <Btn key={c} variant="ghost" full size="sm" onMouseDown={(e) => e.preventDefault()} onClick={() => { set("category", c); setCategoryQuery(c); setCategoryOpen(false); }} style={{ justifyContent: "flex-start", borderBottom: `1px solid ${t.border}`, padding: "8px 10px", textAlign: "left", fontFamily: t.font }}>
+                          {c}
+                        </Btn>
+                      )) : (
+                        <div style={{ padding: 10, fontSize: 12, color: t.text3 }}>
+                          No saved categories for this organisation yet. You can type a new one, or add categories in org settings.
+                        </div>
+                      );
+                    })()}
+                  </div>
+                </div>
+              )}
+            </div>
           </div>
           <div>
             <Label>Priority</Label>

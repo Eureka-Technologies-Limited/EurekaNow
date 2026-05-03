@@ -1,4 +1,4 @@
-import { DEFAULT_TEAM_ROLES, DEFAULT_URGENCIES, PRIORITIES, TICKET_PREFIX } from "./constants.js";
+import { DEFAULT_TEAM_ROLES, DEFAULT_URGENCIES, PRIORITIES, TICKET_PREFIX, CATEGORIES } from "./constants.js";
 import { uid } from "./utils.js";
 import { supabase } from "./supabase.js";
 
@@ -150,6 +150,7 @@ const toArticle = (row) => ({
   title: row.title,
   orgId: row.org_id,
   category: row.category,
+  folder: row.folder || "General",
   author: row.author,
   createdAt: Number(row.created_at),
   views: row.views || 0,
@@ -160,11 +161,13 @@ const toArticle = (row) => ({
 const toOrgSettings = (row) => {
   const priorities = normalizePriorities(row?.priorities);
   const urgencies = normalizeUrgencies(row?.urgencies);
+  const categories = Array.isArray(row?.categories) && row.categories.length ? row.categories.map((c) => String(c)) : CATEGORIES;
   return {
     orgId: row?.org_id,
     priorities,
     priorityMap: prioritiesToMap(priorities),
     urgencies,
+    categories,
     updatedAt: Number(row?.updated_at || 0),
   };
 };
@@ -332,6 +335,7 @@ const makeDemoSeed = () => {
         title: "How to reset VPN credentials",
         orgId: "o_demo",
         category: "Network",
+        folder: "Access",
         author: "u_demo_agent",
         createdAt: ago(100),
         views: 15,
@@ -339,7 +343,7 @@ const makeDemoSeed = () => {
         content: "1. Open the VPN portal.\n2. Click reset password.\n3. Complete MFA verification.",
       },
     ],
-    orgSettings: [{ orgId: "o_demo", priorities, priorityMap: prioritiesToMap(priorities), urgencies: DEFAULT_URGENCIES, updatedAt: Date.now() }],
+    orgSettings: [{ orgId: "o_demo", priorities, priorityMap: prioritiesToMap(priorities), urgencies: DEFAULT_URGENCIES, categories: CATEGORIES, updatedAt: Date.now() }],
     teamSettings: [{ teamId: "t_demo", priorities, priorityMap: prioritiesToMap(priorities), urgencies: DEFAULT_URGENCIES, updatedAt: Date.now() }],
     teamRoles: [
       { id: "role_demo_admin", teamId: "t_demo", name: "Admin", description: "Full access", createdAt: ago(200) },
@@ -709,6 +713,7 @@ export async function createArticle(payload) {
       title: payload.title,
       orgId: payload.orgId,
       category: payload.category,
+      folder: payload.folder || "General",
       author: payload.author,
       content: payload.content,
       views: 0,
@@ -725,6 +730,7 @@ export async function createArticle(payload) {
     title: payload.title,
     org_id: payload.orgId,
     category: payload.category,
+    folder: payload.folder || "General",
     author: payload.author,
     content: payload.content,
     views: 0,
@@ -739,6 +745,42 @@ export async function createArticle(payload) {
     .single();
 
   fail(error, "Failed to publish article.");
+  return toArticle(data);
+}
+
+export async function updateArticle(articleId, payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const index = state.articles.findIndex((row) => row.id === articleId);
+    if (index < 0) throw new Error("Article not found.");
+    state.articles[index] = {
+      ...state.articles[index],
+      title: payload.title,
+      category: payload.category,
+      folder: payload.folder || "General",
+      content: payload.content,
+      tags: asArray(payload.tags),
+    };
+    saveDemoState();
+    return clone(state.articles[index]);
+  }
+
+  const row = {
+    title: payload.title,
+    category: payload.category,
+    folder: payload.folder || "General",
+    content: payload.content,
+    tags: asArray(payload.tags),
+  };
+
+  const { data, error } = await supabase
+    .from(TABLES.articles)
+    .update(row)
+    .eq("id", articleId)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to update article.");
   return toArticle(data);
 }
 
@@ -988,6 +1030,7 @@ export async function upsertOrgSettings(payload) {
       priorities,
       priorityMap: prioritiesToMap(priorities),
       urgencies: normalizeUrgencies(payload.urgencies),
+      categories: Array.isArray(payload.categories) && payload.categories.length ? payload.categories.map((c) => String(c)) : CATEGORIES,
       updatedAt: Date.now(),
     };
     const index = state.orgSettings.findIndex((row) => row.orgId === payload.orgId);
@@ -1001,6 +1044,7 @@ export async function upsertOrgSettings(payload) {
     org_id: payload.orgId,
     priorities: normalizePriorities(payload.priorities),
     urgencies: normalizeUrgencies(payload.urgencies),
+    categories: Array.isArray(payload.categories) && payload.categories.length ? payload.categories.map((c) => String(c)) : CATEGORIES,
     updated_at: Date.now(),
   };
 
