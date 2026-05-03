@@ -17,7 +17,6 @@ export function CriticalList({ tickets, onOpenTicket, priorityCatalog }) {
   const [page, setPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(1);
   const containerRef = useRef(null);
-  const contentRef = useRef(null);
   
   useEffect(() => {
     const measureHeight = () => {

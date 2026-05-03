@@ -61,7 +61,6 @@ function ColorSwatch({ value, onChange, colors }) {
 
 function ColumnRow({ col, statuses, isFirst, isLast, onChange, onToggleStatus, onRemove, onMove }) {
   const t = useTokens();
-  const [expanded, setExpanded] = useState(false);
 
   return (
     <div style={{
