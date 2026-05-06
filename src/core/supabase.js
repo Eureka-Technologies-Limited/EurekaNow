@@ -1,17 +1,23 @@
 import { createClient } from "@supabase/supabase-js";
 
-const supabaseUrl = process.env.REACT_APP_SUPABASE_URL;
+const supabaseUrl     = process.env.REACT_APP_SUPABASE_URL;
 const supabaseAnonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
 
-// eslint-disable-next-line no-console
-console.info("🎮 Demo Mode Active: Using local data. Supabase not configured.\n\n📝 Demo Credentials:\n   Email: demo@eurekanow.local\n   Password: demo123\n\n✅ To enable real Supabase backend, set environment variables:\n   REACT_APP_SUPABASE_URL\n   REACT_APP_SUPABASE_ANON_KEY");
-
-// Create a dummy client if not configured - will only be used if Supabase mode is enabled
-// In demo mode, the api.js shouldUseDemoMode() will prevent any Supabase calls
-const dummyUrl = "https://placeholder.supabase.co";
-const dummyKey = "placeholder_anon_key";
+if (!supabaseUrl || !supabaseAnonKey) {
+  // eslint-disable-next-line no-console
+  console.info(
+    "🎮 Demo Mode Active — Supabase not configured.\n\n" +
+    "   Demo credentials: demo@eurekanow.local / demo123\n\n" +
+    "   To connect a real database:\n" +
+    "     1. Run supabase/schema.sql in your Supabase SQL Editor\n" +
+    "     2. Copy your project URL and anon key from Project → Settings → API\n" +
+    "     3. Add them to .env:\n" +
+    "          REACT_APP_SUPABASE_URL=https://<ref>.supabase.co\n" +
+    "          REACT_APP_SUPABASE_ANON_KEY=<your-anon-key>"
+  );
+}
 
 export const supabase = createClient(
-  supabaseUrl || dummyUrl,
-  supabaseAnonKey || dummyKey
+  supabaseUrl     || "https://placeholder.supabase.co",
+  supabaseAnonKey || "placeholder_anon_key"
 );

@@ -37,6 +37,11 @@ const ICONS = {
   download: "M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4|M7 10l5 5 5-5|M12 15V3",
   kanban:   "M3 3h5v18H3z|M9.5 3h5v12h-5z|M16 3h5v15h-5z",
   link:     "M10 13a5 5 0 007.54.54l3-3a5 5 0 00-7.07-7.07l-1.72 1.71|M14 11a5 5 0 00-7.54-.54l-3 3a5 5 0 007.07 7.07l1.71-1.71",
+  chart:    "M3 3v18h18|M7 16l4-4 4 4 4-8",
+  clock:    "M12 2a10 10 0 100 20A10 10 0 0012 2z|M12 6v6l4 2",
+  "trending-up": "M23 6l-9.5 9.5-5-5L1 18|M17 6h6v6",
+  "user-circle": "M12 2a10 10 0 100 20A10 10 0 0012 2z|M12 8a3 3 0 100 6 3 3 0 000-6z|M6.6 20.3A8 8 0 0112 18a8 8 0 015.4 2.3",
+  "pie-chart": "M21.21 15.89A10 10 0 118 2.83|M22 12A10 10 0 0012 2v10z",
 };
 
 /** Low-level SVG renderer — use <I> instead in most cases */

@@ -9,6 +9,139 @@ import { fmtTs } from "../core/utils.js";
 import { Avatar, Badge, Btn, Card, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 
+// ── Markdown renderer ─────────────────────────────────────────────────────────
+
+function parseInline(text, t, pfx) {
+  const re = /\*\*(.+?)\*\*|\*(.+?)\*|`([^`]+)`|\[([^\]]+)\]\(([^)]+)\)/g;
+  const result = [];
+  let last = 0, i = 0, m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) result.push(text.slice(last, m.index));
+    if (m[1] !== undefined)      result.push(<strong key={`${pfx}b${i}`}>{m[1]}</strong>);
+    else if (m[2] !== undefined) result.push(<em key={`${pfx}i${i}`}>{m[2]}</em>);
+    else if (m[3] !== undefined) result.push(<code key={`${pfx}c${i}`} style={{ background: t.surface3, padding: "1px 5px", borderRadius: 3, fontFamily: t.mono, fontSize: "0.88em" }}>{m[3]}</code>);
+    else if (m[4] !== undefined) result.push(<a key={`${pfx}l${i}`} href={m[5]} target="_blank" rel="noopener noreferrer" style={{ color: t.accent, textDecoration: "underline" }}>{m[4]}</a>);
+    last = m.index + m[0].length;
+    i++;
+  }
+  if (last < text.length) result.push(text.slice(last));
+  return result.length ? result : [text];
+}
+
+function MarkdownRenderer({ content }) {
+  const t = useTokens();
+  const els = [];
+  const lines = (content || "").split("\n");
+  let i = 0, key = 0;
+
+  while (i < lines.length) {
+    const line = lines[i];
+
+    // Fenced code block
+    if (line.startsWith("```")) {
+      const codeLines = [];
+      i++;
+      while (i < lines.length && !lines[i].startsWith("```")) { codeLines.push(lines[i]); i++; }
+      const k = key++;
+      els.push(
+        <pre key={k} style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "12px 14px", overflow: "auto", fontSize: 12, fontFamily: t.mono, lineHeight: 1.6, whiteSpace: "pre-wrap", margin: "10px 0" }}>
+          <code>{codeLines.join("\n")}</code>
+        </pre>
+      );
+      i++;
+      continue;
+    }
+
+    // Headings
+    const hm = line.match(/^(#{1,6})\s+(.*)/);
+    if (hm) {
+      const level = hm[1].length;
+      const Tag = `h${level}`;
+      const fs = [22, 18, 16, 14, 13, 12][level - 1];
+      const k = key++;
+      els.push(<Tag key={k} style={{ fontSize: fs, fontWeight: 700, color: t.text, margin: `${level <= 2 ? 18 : 12}px 0 6px`, lineHeight: 1.3 }}>{parseInline(hm[2], t, `${k}`)}</Tag>);
+      i++;
+      continue;
+    }
+
+    // Horizontal rule
+    if (/^(-{3,}|\*{3,}|_{3,})$/.test(line.trim())) {
+      els.push(<hr key={key++} style={{ border: "none", borderTop: `1px solid ${t.border}`, margin: "14px 0" }} />);
+      i++;
+      continue;
+    }
+
+    // Blockquote
+    if (line.startsWith("> ")) {
+      const ql = [];
+      while (i < lines.length && lines[i].startsWith("> ")) { ql.push(lines[i].slice(2)); i++; }
+      const k = key++;
+      els.push(
+        <blockquote key={k} style={{ borderLeft: `3px solid ${t.accent}`, paddingLeft: 12, margin: "8px 0", color: t.text2, fontStyle: "italic" }}>
+          {ql.map((q, qi) => <span key={qi}>{parseInline(q, t, `${k}q${qi}`)}{qi < ql.length - 1 && <br />}</span>)}
+        </blockquote>
+      );
+      continue;
+    }
+
+    // Unordered list
+    if (/^[-*+] /.test(line)) {
+      const items = [];
+      while (i < lines.length && /^[-*+] /.test(lines[i])) { items.push(lines[i].replace(/^[-*+] /, "")); i++; }
+      const k = key++;
+      els.push(
+        <ul key={k} style={{ paddingLeft: 22, margin: "6px 0", lineHeight: 1.75 }}>
+          {items.map((item, ii) => <li key={ii} style={{ color: t.text2 }}>{parseInline(item, t, `${k}ul${ii}`)}</li>)}
+        </ul>
+      );
+      continue;
+    }
+
+    // Ordered list
+    if (/^\d+\. /.test(line)) {
+      const items = [];
+      while (i < lines.length && /^\d+\. /.test(lines[i])) { items.push(lines[i].replace(/^\d+\. /, "")); i++; }
+      const k = key++;
+      els.push(
+        <ol key={k} style={{ paddingLeft: 22, margin: "6px 0", lineHeight: 1.75 }}>
+          {items.map((item, ii) => <li key={ii} style={{ color: t.text2 }}>{parseInline(item, t, `${k}ol${ii}`)}</li>)}
+        </ol>
+      );
+      continue;
+    }
+
+    // Blank line
+    if (line.trim() === "") { i++; continue; }
+
+    // Paragraph — collect consecutive non-special lines
+    const pLines = [];
+    while (
+      i < lines.length &&
+      lines[i].trim() !== "" &&
+      !/^#{1,6} /.test(lines[i]) &&
+      !lines[i].startsWith("> ") &&
+      !lines[i].startsWith("```") &&
+      !/^[-*+] /.test(lines[i]) &&
+      !/^\d+\. /.test(lines[i]) &&
+      !/^(-{3,}|\*{3,}|_{3,})$/.test(lines[i].trim())
+    ) { pLines.push(lines[i]); i++; }
+
+    if (pLines.length) {
+      const k = key++;
+      els.push(
+        <p key={k} style={{ margin: "0 0 10px", lineHeight: 1.85, color: t.text2 }}>
+          {pLines.flatMap((pl, pi) => [
+            ...parseInline(pl, t, `${k}p${pi}`),
+            pi < pLines.length - 1 ? <br key={`${k}br${pi}`} /> : null,
+          ]).filter(Boolean)}
+        </p>
+      );
+    }
+  }
+
+  return <div style={{ fontSize: 13 }}>{els}</div>;
+}
+
 // ── KBView ────────────────────────────────────────────────────────────────────
 
 export function KBView({ articles, users, currentUser, orgSettings = [], onCreateArticle, onUpdateArticle, onViewArticle }) {
@@ -107,9 +240,7 @@ export function KBView({ articles, users, currentUser, orgSettings = [], onCreat
               <span style={{ fontSize: 12, color: t.text3 }}>{fmtTs(viewing.createdAt)}</span>
               <span style={{ fontSize: 12, color: t.text3 }}>{viewing.views} views</span>
             </div>
-            <div style={{ fontSize: 13, color: t.text2, lineHeight: 1.85, whiteSpace: "pre-line" }}>
-              {viewing.content}
-            </div>
+            <MarkdownRenderer content={viewing.content} />
           </Card>
           <RenderModals
             addOpen={addOpen}
@@ -207,7 +338,27 @@ export function KBView({ articles, users, currentUser, orgSettings = [], onCreat
             );
           })}
           {filtered.length === 0 && (
-            <div style={{ gridColumn: "1/-1", textAlign: "center", padding: 48, color: t.text3, fontSize: 13 }}>No articles found.</div>
+            <div style={{ gridColumn: "1/-1", textAlign: "center", padding: "48px 24px" }}>
+              {articles.length === 0 ? (
+                <>
+                  <div style={{ color: t.text3, marginBottom: 12 }}><I name="kb" size={36} /></div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: t.text, marginBottom: 6 }}>No articles yet</div>
+                  <div style={{ fontSize: 13, color: t.text3, marginBottom: 16 }}>Create your first knowledge base article to share solutions with your team.</div>
+                  <button onClick={() => setAddOpen(true)} style={{ background: t.accent, color: "#0f0f0e", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: t.font }}>
+                    <I name="plus" size={12} /> New Article
+                  </button>
+                </>
+              ) : (
+                <>
+                  <div style={{ color: t.text3, marginBottom: 12 }}><I name="search" size={32} /></div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: t.text, marginBottom: 6 }}>No articles match</div>
+                  <div style={{ fontSize: 13, color: t.text3, marginBottom: 16 }}>Try a different search term or clear your filters.</div>
+                  <button onClick={() => { setSearch(""); setSelCat("All"); setSelFolder("All"); }} style={{ background: t.surface2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: t.font }}>
+                    Clear filters
+                  </button>
+                </>
+              )}
+            </div>
           )}
         </div>
       </div>

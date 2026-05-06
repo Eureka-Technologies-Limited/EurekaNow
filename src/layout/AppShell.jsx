@@ -2,7 +2,7 @@
 // LAYOUT: DesktopSidebar · MobileNav · Topbar · AppShell
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useTokens, useTheme, useBreakpoint } from "../core/hooks.js";
 import { VIEW_LABELS, VIEW_TO_TYPE, PRIORITIES, DEFAULT_URGENCIES } from "../core/constants.js";
 import {
@@ -27,7 +27,7 @@ import {
   updateTicketFields,
 } from "../core/api.js";
 import { Avatar, Btn, Modal } from "../ui/primitives.jsx";
-import { slaForPriority } from "../core/utils.js";
+import { slaForPriority, slaPct } from "../core/utils.js";
 import { I } from "../core/icons.jsx";
 import { ToastContainer, useToasts } from "../ui/Toast.jsx";
 import { DEFAULT_LAYOUT } from "../widgets/registry.js";
@@ -38,9 +38,15 @@ import { NewTicketModal }   from "../views/NewTicketModal.jsx";
 import { TeamsView }        from "../views/TeamsView.jsx";
 import { KBView }           from "../views/KBView.jsx";
 import { KanbanView }       from "../views/KanbanView.jsx";
+import { ReportsView }      from "../views/ReportsView.jsx";
+import { ProfileView }      from "../views/ProfileView.jsx";
+import { CommandPalette }  from "../ui/CommandPalette.jsx";
 
 const SIDEBAR_PREFS_KEY = (userId) => `sidebar_prefs_${userId || "global"}`;
-const DEFAULT_SIDEBAR_ITEMS = ["dashboard", "incidents", "requests", "changes", "problems", "tasks", "all_tickets", "kanban", "teams", "kb"];
+const NOTIF_PREFS_KEY  = (userId) => `notif_prefs_${userId || "global"}`;
+const NOTIF_READ_KEY   = (userId) => `notifs_read_${userId || "global"}`;
+const DEFAULT_SIDEBAR_ITEMS = ["dashboard", "incidents", "requests", "changes", "problems", "tasks", "all_tickets", "kanban", "teams", "kb", "reports", "profile"];
+const DEFAULT_NOTIF_PREFS = { slaBreaches: true, slaRisk: true, newAssignments: true, comments: true };
 
 function loadSidebarPrefs(userId) {
   try {
@@ -95,6 +101,8 @@ export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tic
     { id: "kanban",      label: "Kanban Board",     icon: "kanban" },
     { id: "teams",       label: "Teams & Orgs",     icon: "teams" },
     { id: "kb",          label: "Knowledge Base",   icon: "kb"    },
+    { id: "reports",     label: "Reports",          icon: "chart" },
+    { id: "profile",     label: "My Profile",       icon: "user-circle" },
   ].filter((item) => visibleNavItems.includes(item.id));
 
   return (
@@ -209,11 +217,13 @@ export function MobileNav({ view, setView, currentUser, tickets, onLogout, onNew
   ].filter((tab) => visibleNavItems.includes(tab.id));
 
   const drawerItems = [
-    { id: "requests", label: "Service Requests", icon: "request" },
-    { id: "changes",  label: "Change Requests",  icon: "change"  },
-    { id: "problems", label: "Problems",         icon: "problem" },
-    { id: "tasks",    label: "Tasks",            icon: "task"    },
-    { id: "teams",    label: "Teams & Orgs",     icon: "teams"   },
+    { id: "requests", label: "Service Requests",   icon: "request"     },
+    { id: "changes",  label: "Change Requests",    icon: "change"      },
+    { id: "problems", label: "Problems",           icon: "problem"     },
+    { id: "tasks",    label: "Tasks",              icon: "task"        },
+    { id: "teams",    label: "Teams & Orgs",       icon: "teams"       },
+    { id: "reports",  label: "Reports & Analytics",icon: "chart"       },
+    { id: "profile",  label: "My Profile",         icon: "user-circle" },
   ].filter((item) => visibleNavItems.includes(item.id));
 
   if (drawerItems.length > 0 && !tabs.some((tab) => tab.id === "__more")) {
@@ -306,12 +316,44 @@ export function MobileNav({ view, setView, currentUser, tickets, onLogout, onNew
 // TOPBAR
 // ═════════════════════════════════════════════════════════════════════════════
 
-export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile }) {
+function relTime(ms) {
+  const diff = Date.now() - ms;
+  if (diff < 60000)    return "just now";
+  if (diff < 3600000)  return `${Math.floor(diff / 60000)}m ago`;
+  if (diff < 86400000) return `${Math.floor(diff / 3600000)}h ago`;
+  return `${Math.floor(diff / 86400000)}d ago`;
+}
+
+const NOTIF_STYLES = {
+  sla_breach:  { icon: "incident",  colorKey: "red"    },
+  sla_risk:    { icon: "clock",     colorKey: "orange"  },
+  assigned:    { icon: "ticket",    colorKey: "blue"    },
+  comment:     { icon: "send",      colorKey: "purple"  },
+};
+
+export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile, notifications = [], unreadCount = 0, notifReadIds = new Set(), onMarkRead, onMarkAllRead, onOpenTicket, onOpenCommandPalette }) {
   const t = useTokens();
+  const [notifOpen, setNotifOpen] = useState(false);
+  const bellRef     = useRef(null);
+  const dropdownRef = useRef(null);
+
   const critCount = tickets.filter((tk) => tk.priority === "Critical" && !["Resolved","Closed"].includes(tk.status)).length;
 
+  // Close dropdown on outside click
+  useEffect(() => {
+    if (!notifOpen) return;
+    const handler = (e) => {
+      if (
+        bellRef.current     && !bellRef.current.contains(e.target) &&
+        dropdownRef.current && !dropdownRef.current.contains(e.target)
+      ) setNotifOpen(false);
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [notifOpen]);
+
   return (
-    <header style={{ background: t.surface, borderBottom: `1px solid ${t.border}`, height: 52, display: "flex", alignItems: "center", padding: "0 16px", gap: 12, flexShrink: 0 }}>
+    <header style={{ background: t.surface, borderBottom: `1px solid ${t.border}`, height: 52, display: "flex", alignItems: "center", padding: "0 16px", gap: 12, flexShrink: 0, position: "relative", zIndex: 50 }}>
       {!isMobile && (
         <button onClick={onToggle} style={{ background: "none", border: "none", cursor: "pointer", color: t.text2, display: "flex" }}>
           <I name="menu" size={17} />
@@ -326,6 +368,86 @@ export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile }) {
           <span style={{ fontSize: 11, fontWeight: 700, color: t.redText }}>{critCount} critical</span>
         </div>
       )}
+
+      {/* Command palette trigger */}
+      <button
+        onClick={onOpenCommandPalette}
+        title="Search (Ctrl+K)"
+        style={{ background: "none", border: `1px solid ${t.border}`, borderRadius: 8, cursor: "pointer", color: t.text2, display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", fontFamily: t.font }}
+      >
+        <I name="search" size={14} />
+        {!isMobile && <span style={{ fontSize: 10, color: t.text3, fontFamily: t.mono }}>Ctrl+K</span>}
+      </button>
+
+      {/* Notification bell */}
+      <div style={{ position: "relative" }}>
+        <button
+          ref={bellRef}
+          onClick={() => setNotifOpen((o) => !o)}
+          title="Notifications"
+          style={{ background: notifOpen ? t.accentBg : "none", border: `1px solid ${notifOpen ? t.accent + "44" : "transparent"}`, borderRadius: 8, cursor: "pointer", color: unreadCount > 0 ? t.accent : t.text2, display: "flex", alignItems: "center", justifyContent: "center", width: 34, height: 34, position: "relative" }}
+        >
+          <I name="bell" size={16} />
+          {unreadCount > 0 && (
+            <span style={{ position: "absolute", top: 2, right: 2, width: 16, height: 16, borderRadius: "50%", background: t.red, color: "#fff", fontSize: 9, fontWeight: 800, display: "flex", alignItems: "center", justifyContent: "center", border: `2px solid ${t.surface}` }}>
+              {unreadCount > 9 ? "9+" : unreadCount}
+            </span>
+          )}
+        </button>
+
+        {notifOpen && (
+          <div
+            ref={dropdownRef}
+            style={{ position: "absolute", top: "calc(100% + 8px)", right: 0, width: 340, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.25)", zIndex: 200, overflow: "hidden" }}
+          >
+            {/* Dropdown header */}
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "12px 14px 10px", borderBottom: `1px solid ${t.border}` }}>
+              <span style={{ fontSize: 13, fontWeight: 700, color: t.text }}>Notifications</span>
+              {unreadCount > 0 && (
+                <button onClick={onMarkAllRead} style={{ fontSize: 11, color: t.text3, background: "none", border: "none", cursor: "pointer", fontFamily: t.font, padding: "2px 6px", borderRadius: 6 }}>
+                  Mark all read
+                </button>
+              )}
+            </div>
+
+            {/* Notification list */}
+            <div style={{ maxHeight: 360, overflowY: "auto" }}>
+              {notifications.length === 0 ? (
+                <div style={{ padding: "32px 16px", textAlign: "center", color: t.text3, fontSize: 12 }}>
+                  <I name="bell" size={24} />
+                  <div style={{ marginTop: 8 }}>You're all caught up!</div>
+                </div>
+              ) : (
+                notifications.map((n) => {
+                  const style = NOTIF_STYLES[n.type] || NOTIF_STYLES.assigned;
+                  const color = t[style.colorKey] || t.accent;
+                  const isRead = notifReadIds.has(n.id);
+                  return (
+                    <div
+                      key={n.id}
+                      onClick={() => { onMarkRead(n.id); if (n.ticketId && onOpenTicket) { setNotifOpen(false); onOpenTicket(tickets.find((tk) => tk.id === n.ticketId)); } }}
+                      style={{ display: "flex", gap: 10, padding: "10px 14px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: isRead ? "transparent" : t.accentBg + "44", transition: "background 0.1s" }}
+                    >
+                      <div style={{ width: 30, height: 30, borderRadius: 8, background: color + "22", display: "flex", alignItems: "center", justifyContent: "center", color, flexShrink: 0, marginTop: 2 }}>
+                        <I name={style.icon} size={14} />
+                      </div>
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 6 }}>
+                          <span style={{ fontSize: 12, fontWeight: isRead ? 500 : 700, color: t.text, lineHeight: 1.3 }}>{n.title}</span>
+                          {!isRead && <span style={{ width: 6, height: 6, borderRadius: "50%", background: t.accent, flexShrink: 0, marginTop: 4 }} />}
+                        </div>
+                        <div style={{ fontSize: 11, color: t.text3, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.message}</div>
+                        <div style={{ fontSize: 10, color: t.text3, marginTop: 3 }}>{relTime(n.time)}</div>
+                      </div>
+                    </div>
+                  );
+                })
+              )}
+            </div>
+          </div>
+        )}
+      </div>
+
       {!isMobile && (
         <Btn variant="primary" size="sm" onClick={onNewTicket}>
           <I name="plus" size={12} /> New Ticket
@@ -365,8 +487,81 @@ export function AppShell({ currentUser, onLogout }) {
   const [dashLayout,   setDashLayout]   = useState(DEFAULT_LAYOUT);
   const [dashSizes,    setDashSizes]    = useState({});
   const [defaultType,  setDefaultType]  = useState(null);
+  const [cmdOpen,      setCmdOpen]      = useState(false);
   const { toasts, addToast, dismiss } = useToasts();
   const slaToastShown = useRef(false);
+
+  // ── Notification state ────────────────────────────────────────────────────
+  const [notifPrefs, setNotifPrefs] = useState(() => {
+    try { return { ...DEFAULT_NOTIF_PREFS, ...JSON.parse(localStorage.getItem(NOTIF_PREFS_KEY(currentUser?.id))) }; }
+    catch { return DEFAULT_NOTIF_PREFS; }
+  });
+  const [notifReadIds, setNotifReadIds] = useState(() => {
+    try { return new Set(JSON.parse(localStorage.getItem(NOTIF_READ_KEY(currentUser?.id))) || []); }
+    catch { return new Set(); }
+  });
+
+  const handleUpdateNotifPrefs = (next) => {
+    setNotifPrefs(next);
+    try { localStorage.setItem(NOTIF_PREFS_KEY(currentUser?.id), JSON.stringify(next)); } catch {}
+  };
+  const handleMarkRead = (id) => {
+    setNotifReadIds((prev) => {
+      const next = new Set(prev); next.add(id);
+      try { localStorage.setItem(NOTIF_READ_KEY(currentUser?.id), JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
+  const handleMarkAllRead = () => {
+    setNotifReadIds((prev) => {
+      const next = new Set([...prev, ...notifications.map((n) => n.id)]);
+      try { localStorage.setItem(NOTIF_READ_KEY(currentUser?.id), JSON.stringify([...next])); } catch {}
+      return next;
+    });
+  };
+
+  const notifications = useMemo(() => {
+    const result = [];
+    const now = Date.now();
+    tickets.forEach((tk) => {
+      if (["Resolved", "Closed"].includes(tk.status)) return;
+      const slaHours = slaForPriority(tk.priority);
+      const pct      = slaPct(tk.createdAt, slaHours);
+
+      if (tk.assignee === currentUser.id) {
+        if (notifPrefs.slaBreaches && pct >= 100) {
+          result.push({ id: `sla_breach_${tk.id}`, type: "sla_breach", ticketId: tk.id, title: "SLA Breached", message: `${tk.id}: ${(tk.title || "").slice(0, 55)}`, time: tk.createdAt + slaHours * 3600000, severity: "error" });
+        } else if (notifPrefs.slaRisk && pct >= 75) {
+          result.push({ id: `sla_risk_${tk.id}`, type: "sla_risk", ticketId: tk.id, title: "SLA At Risk", message: `${tk.id}: ${(tk.title || "").slice(0, 55)}`, time: now, severity: "warning" });
+        }
+        if (notifPrefs.newAssignments && now - tk.createdAt < 48 * 3600000) {
+          result.push({ id: `assigned_${tk.id}`, type: "assigned", ticketId: tk.id, title: "Ticket Assigned", message: `${tk.id}: ${(tk.title || "").slice(0, 55)}`, time: tk.createdAt, severity: "info" });
+        }
+      }
+      if (notifPrefs.comments && (tk.assignee === currentUser.id || tk.reporter === currentUser.id)) {
+        tk.comments?.forEach((c) => {
+          if (c.userId !== currentUser.id && now - c.createdAt < 24 * 3600000) {
+            result.push({ id: `comment_${c.id}`, type: "comment", ticketId: tk.id, title: "New Comment", message: `On ${tk.id}: ${(c.text || "").slice(0, 45)}`, time: c.createdAt, severity: "info" });
+          }
+        });
+      }
+    });
+    return result.sort((a, b) => b.time - a.time).slice(0, 30);
+  }, [tickets, currentUser.id, notifPrefs]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const unreadCount = useMemo(() => notifications.filter((n) => !notifReadIds.has(n.id)).length, [notifications, notifReadIds]);
+
+  useEffect(() => {
+    const handler = (e) => {
+      if ((e.ctrlKey || e.metaKey) && e.key === "k") {
+        e.preventDefault();
+        setCmdOpen(true);
+      }
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, []);
+
   const sidebarOptions = [
     { id: "dashboard", label: "Dashboard", icon: "grid" },
     { id: "incidents", label: "Incidents", icon: "incident" },
@@ -375,9 +570,11 @@ export function AppShell({ currentUser, onLogout }) {
     { id: "problems", label: "Problems", icon: "problem" },
     { id: "tasks", label: "Tasks", icon: "task" },
     { id: "all_tickets", label: "All Tickets", icon: "ticket" },
-    { id: "kanban", label: "Kanban Board", icon: "kanban" },
-    { id: "teams", label: "Teams & Orgs", icon: "teams" },
-    { id: "kb", label: "Knowledge Base", icon: "kb" },
+    { id: "kanban",   label: "Kanban Board",       icon: "kanban"      },
+    { id: "teams",    label: "Teams & Orgs",        icon: "teams"       },
+    { id: "kb",       label: "Knowledge Base",      icon: "kb"          },
+    { id: "reports",  label: "Reports & Analytics", icon: "chart"       },
+    { id: "profile",  label: "My Profile",          icon: "user-circle" },
   ];
 
   useEffect(() => {
@@ -643,6 +840,15 @@ export function AppShell({ currentUser, onLogout }) {
     }
   };
 
+  const handleBulkUpdate = async (updates) => {
+    const results = await Promise.all(updates.map(({ id, fields }) => updateTicketFields(id, fields)));
+    setTickets((rows) => {
+      const map = {};
+      results.forEach((tk) => { map[tk.id] = tk; });
+      return rows.map((row) => map[row.id] || row);
+    });
+  };
+
   const handleNew = (type) => { setDefaultType(type || null); setModal("new"); };
   const handleSetView = (v) => { setView(v); if (isMobile) window.scrollTo(0, 0); };
   const toggleSidebarItem = (id) => {
@@ -693,6 +899,13 @@ export function AppShell({ currentUser, onLogout }) {
           view={view} tickets={tickets}
           onNewTicket={() => handleNew(topbarType)}
           isMobile={isMobile}
+          notifications={notifications}
+          unreadCount={unreadCount}
+          notifReadIds={notifReadIds}
+          onMarkRead={handleMarkRead}
+          onMarkAllRead={handleMarkAllRead}
+          onOpenTicket={(tk) => tk && openTicket(tk)}
+          onOpenCommandPalette={() => setCmdOpen(true)}
         />
 
         <main style={{ flex: 1, overflowY: "auto", padding: isMobile ? "16px 14px" : "22px", paddingBottom: isMobile ? "80px" : "22px", WebkitOverflowScrolling: "touch" }}>
@@ -711,12 +924,12 @@ export function AppShell({ currentUser, onLogout }) {
           )}
 
           {/* Per-type ticket views */}
-          {view === "all_tickets" && <TicketListView typeFilter={null}             tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew()} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
-          {view === "incidents"   && <TicketListView typeFilter="Incident"         tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Incident")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
-          {view === "requests"    && <TicketListView typeFilter="Service Request"  tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Service Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
-          {view === "changes"     && <TicketListView typeFilter="Change Request"   tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Change Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
-          {view === "problems"    && <TicketListView typeFilter="Problem"          tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Problem")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
-          {view === "tasks"       && <TicketListView typeFilter="Task"             tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Task")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} />}
+          {view === "all_tickets" && <TicketListView typeFilter={null}             tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew()} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} />}
+          {view === "incidents"   && <TicketListView typeFilter="Incident"         tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Incident")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} />}
+          {view === "requests"    && <TicketListView typeFilter="Service Request"  tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Service Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} />}
+          {view === "changes"     && <TicketListView typeFilter="Change Request"   tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Change Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} />}
+          {view === "problems"    && <TicketListView typeFilter="Problem"          tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Problem")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} />}
+          {view === "tasks"       && <TicketListView typeFilter="Task"             tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Task")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} />}
 
           {view === "kanban" && (
             <KanbanView
@@ -758,10 +971,26 @@ export function AppShell({ currentUser, onLogout }) {
               articles={articles}
               users={users}
               currentUser={effectiveUser}
-                orgSettings={orgSettings}
+              orgSettings={orgSettings}
               onCreateArticle={handleCreateArticle}
-                onUpdateArticle={handleUpdateArticle}
+              onUpdateArticle={handleUpdateArticle}
               onViewArticle={handleViewArticle}
+            />
+          )}
+          {view === "reports" && (
+            <ReportsView
+              tickets={tickets}
+              users={users}
+              currentUser={effectiveUser}
+              priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)}
+            />
+          )}
+          {view === "profile" && (
+            <ProfileView
+              currentUser={effectiveUser}
+              tickets={tickets}
+              notifPrefs={notifPrefs}
+              onUpdateNotifPrefs={handleUpdateNotifPrefs}
             />
           )}
         </main>
@@ -856,6 +1085,15 @@ export function AppShell({ currentUser, onLogout }) {
         </Modal>
       )}
 
+      <CommandPalette
+        open={cmdOpen}
+        onClose={() => setCmdOpen(false)}
+        tickets={tickets}
+        articles={articles}
+        setView={handleSetView}
+        onOpenTicket={openTicket}
+        onNewTicket={() => handleNew()}
+      />
       <ToastContainer toasts={toasts} onDismiss={dismiss} />
     </div>
   );

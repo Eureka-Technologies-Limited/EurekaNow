@@ -74,6 +74,33 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
       return 0;
     });
 
+  const baseCount = tickets.filter((tk) => !typeFilter || tk.type === typeFilter).length;
+  const clearFilters = () => { setSearch(""); setFStatus("All"); setFPriority("All"); setFAssignee("All"); setActivePreset(null); setSortBy("newest"); };
+
+  const emptyState = (
+    <div style={{ textAlign: "center", padding: "48px 24px" }}>
+      {baseCount === 0 ? (
+        <>
+          <div style={{ color: t.text3, marginBottom: 12 }}><I name={TYPE_ICON[typeFilter] || "ticket"} size={36} /></div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: t.text, marginBottom: 6 }}>No {typeFilter ? (typeFilter.toLowerCase() + "s") : "tickets"} yet</div>
+          <div style={{ fontSize: 13, color: t.text3, marginBottom: 16 }}>Create your first ticket to start tracking issues.</div>
+          <button onClick={onNewTicket} style={{ background: t.accent, color: "#0f0f0e", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: t.font, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <I name="plus" size={12} /> New {typeFilter || "Ticket"}
+          </button>
+        </>
+      ) : (
+        <>
+          <div style={{ color: t.text3, marginBottom: 12 }}><I name="filter" size={32} /></div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: t.text, marginBottom: 6 }}>No matches</div>
+          <div style={{ fontSize: 13, color: t.text3, marginBottom: 16 }}>Try adjusting your search or clearing the filters.</div>
+          <button onClick={clearFilters} style={{ background: t.surface2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: t.font }}>
+            Clear filters
+          </button>
+        </>
+      )}
+    </div>
+  );
+
   const applyPreset = (id) => {
     const clear = () => { setFStatus("All"); setFPriority("All"); setFAssignee("All"); setSortBy("newest"); };
     if (activePreset === id) { setActivePreset(null); clear(); return; }
@@ -285,11 +312,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
       {/* ── MOBILE: card list ─────────────────────────────────────────────────── */}
       {isMobile ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {filtered.length === 0 && (
-            <div style={{ textAlign: "center", padding: "40px 0", color: t.text3, fontSize: 13 }}>
-              No tickets match your filters.
-            </div>
-          )}
+          {filtered.length === 0 && emptyState}
           {filtered.map((tk) => {
             const assignee = users.find((u) => u.id === tk.assignee);
             return (
@@ -350,11 +373,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
             ))}
           </div>
 
-          {filtered.length === 0 && (
-            <div style={{ textAlign: "center", padding: "40px 0", color: t.text3, fontSize: 13 }}>
-              No tickets match your filters.
-            </div>
-          )}
+          {filtered.length === 0 && emptyState}
 
           {filtered.map((tk, i) => {
             const agent = users.find((u) => u.id === tk.assignee);
