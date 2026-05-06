@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 import { useTokens, useTheme, useBreakpoint } from "../core/hooks.js";
-import { DEMO_CREDENTIALS } from "../core/api.js";
+import { DEMO_CREDENTIALS, loginWithGoogle } from "../core/api.js";
 import { Btn, Card, Input, Label } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 
@@ -120,10 +120,11 @@ export function LoginPage({ onLogin, onBack }) {
   const { dark, toggle } = useTheme();
   const { isMobile } = useBreakpoint();
 
-  const [email,    setEmail]    = useState("");
-  const [password, setPassword] = useState("");
-  const [error,    setError]    = useState("");
-  const [loading,  setLoading]  = useState(false);
+  const [email,         setEmail]         = useState("");
+  const [password,      setPassword]      = useState("");
+  const [error,         setError]         = useState("");
+  const [loading,       setLoading]       = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const attempt = async () => {
     setError("");
@@ -133,6 +134,18 @@ export function LoginPage({ onLogin, onBack }) {
     } catch (err) {
       setError(err?.message || "Unable to sign in.");
       setLoading(false);
+    }
+  };
+
+  const attemptGoogle = async () => {
+    setError("");
+    setGoogleLoading(true);
+    try {
+      await loginWithGoogle();
+      // Note: Google OAuth will redirect to callback URL
+    } catch (err) {
+      setError(err?.message || "Unable to sign in with Google.");
+      setGoogleLoading(false);
     }
   };
 
@@ -177,6 +190,57 @@ export function LoginPage({ onLogin, onBack }) {
               <Btn variant="primary" onClick={attempt} disabled={!email || !password || loading} full>
                 {loading ? "Signing in…" : "Sign in →"}
               </Btn>
+              
+              {/* Divider */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "8px 0 0" }}>
+                <div style={{ flex: 1, height: "1px", background: t.border }} />
+                <span style={{ fontSize: 11, color: t.text3, fontWeight: 500 }}>or</span>
+                <div style={{ flex: 1, height: "1px", background: t.border }} />
+              </div>
+              
+              {/* Google Sign-In Button */}
+              <button 
+                onClick={attemptGoogle} 
+                disabled={googleLoading}
+                style={{ 
+                  display: "flex", 
+                  alignItems: "center", 
+                  justifyContent: "center", 
+                  gap: 8,
+                  width: "100%",
+                  padding: "10px 12px",
+                  background: dark ? "#1f2937" : "#ffffff",
+                  border: `1px solid ${dark ? "#4b5563" : "#e5e7eb"}`,
+                  borderRadius: 8,
+                  color: dark ? "#f3f4f6" : "#1f2937",
+                  fontFamily: t.font,
+                  fontSize: 14,
+                  fontWeight: 500,
+                  cursor: googleLoading ? "not-allowed" : "pointer",
+                  transition: "all 0.2s ease",
+                  opacity: googleLoading ? 0.7 : 1,
+                  boxShadow: dark 
+                    ? "0 1px 3px rgba(0,0,0,0.3)" 
+                    : "0 1px 2px rgba(0,0,0,0.05)",
+                }}
+                onMouseEnter={(e) => {
+                  if (!googleLoading) {
+                    e.target.style.boxShadow = dark 
+                      ? "0 4px 12px rgba(0,0,0,0.4)" 
+                      : "0 4px 12px rgba(0,0,0,0.1)";
+                    e.target.style.transform = "translateY(-1px)";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.boxShadow = dark 
+                    ? "0 1px 3px rgba(0,0,0,0.3)" 
+                    : "0 1px 2px rgba(0,0,0,0.05)";
+                  e.target.style.transform = "translateY(0)";
+                }}
+              >
+                <I name="google" size={14} />
+                {googleLoading ? "Signing in…" : "Sign in with Google"}
+              </button>
             </div>
           </Card>
           <div style={{ fontSize: 11, color: t.text3, textAlign: "center", lineHeight: 1.6 }}>

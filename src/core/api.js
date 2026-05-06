@@ -486,6 +486,71 @@ export async function loginWithEmailPassword(email, password) {
   return toUser(data);
 }
 
+export async function loginWithGoogle() {
+  ensureSupabaseOrDemo();
+  
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo: window.location.origin,
+    },
+  });
+
+  fail(error, "Unable to sign in with Google.");
+  return data;
+}
+
+export async function getUserFromSession(session) {
+  const authUser = session?.user;
+
+  if (!authUser?.email) {
+    throw new Error("No session found.");
+  }
+
+  const { data: existingUser, error: fetchError } = await supabase
+    .from(TABLES.users)
+    .select("*")
+    .ilike("email", authUser.email)
+    .limit(1)
+    .maybeSingle();
+
+  if (fetchError && fetchError.code !== "PGRST116") {
+    throw new Error(fetchError.message);
+  }
+
+  if (existingUser) {
+    return toUser(existingUser);
+  }
+
+  const newUserData = {
+    id: uid(),
+    name: authUser.user_metadata?.full_name || authUser.email.split("@")[0] || "User",
+    email: authUser.email,
+    role: "End User",
+    org_id: null,
+    team_id: null,
+    title: "",
+  };
+
+  const { data: createdUser, error: createError } = await supabase
+    .from(TABLES.users)
+    .insert([newUserData])
+    .select()
+    .single();
+
+  fail(createError, "Unable to create user.");
+
+  return toUser(createdUser);
+}
+
+export async function handleAuthCallback() {
+  const { data, error } = await supabase.auth.getSession();
+
+  fail(error, "Unable to verify session.");
+
+  return getUserFromSession(data?.session);
+}
+
 export async function fetchAppData() {
   if (shouldUseDemoMode()) {
     return clone(getDemoState());

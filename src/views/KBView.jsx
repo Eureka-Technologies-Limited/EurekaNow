@@ -385,8 +385,6 @@ export function KBView({ articles, users, currentUser, orgSettings = [], onCreat
 // Render modals outside the viewing/grid conditional so they work from anywhere
 
 function RenderModals({ addOpen, setAddOpen, editing, setEditing, currentUser, folders, categories, users, folderList, orgCategories, onCreateArticle, onUpdateArticle, setViewing }) {
-  const t = useTokens();
-  
   return (
     <>
       {addOpen && (
