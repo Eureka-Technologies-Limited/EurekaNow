@@ -1,5 +1,5 @@
 import { DEFAULT_TEAM_ROLES, DEFAULT_URGENCIES, PRIORITIES, TICKET_PREFIX, CATEGORIES } from "./constants.js";
-import { uid } from "./utils.js";
+import { uid, slaForPriority } from "./utils.js";
 import { supabase } from "./supabase.js";
 
 const TABLES = {
@@ -152,6 +152,7 @@ const toArticle = (row) => ({
   category: row.category,
   folder: row.folder || "General",
   author: row.author,
+  editors: asArray(row.editors),
   createdAt: Number(row.created_at),
   views: row.views || 0,
   tags: asArray(row.tags),
@@ -485,6 +486,71 @@ export async function loginWithEmailPassword(email, password) {
   return toUser(data);
 }
 
+export async function loginWithGoogle() {
+  ensureSupabaseOrDemo();
+  
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo: window.location.origin,
+    },
+  });
+
+  fail(error, "Unable to sign in with Google.");
+  return data;
+}
+
+export async function getUserFromSession(session) {
+  const authUser = session?.user;
+
+  if (!authUser?.email) {
+    throw new Error("No session found.");
+  }
+
+  const { data: existingUser, error: fetchError } = await supabase
+    .from(TABLES.users)
+    .select("*")
+    .ilike("email", authUser.email)
+    .limit(1)
+    .maybeSingle();
+
+  if (fetchError && fetchError.code !== "PGRST116") {
+    throw new Error(fetchError.message);
+  }
+
+  if (existingUser) {
+    return toUser(existingUser);
+  }
+
+  const newUserData = {
+    id: uid(),
+    name: authUser.user_metadata?.full_name || authUser.email.split("@")[0] || "User",
+    email: authUser.email,
+    role: "End User",
+    org_id: null,
+    team_id: null,
+    title: "",
+  };
+
+  const { data: createdUser, error: createError } = await supabase
+    .from(TABLES.users)
+    .insert([newUserData])
+    .select()
+    .single();
+
+  fail(createError, "Unable to create user.");
+
+  return toUser(createdUser);
+}
+
+export async function handleAuthCallback() {
+  const { data, error } = await supabase.auth.getSession();
+
+  fail(error, "Unable to verify session.");
+
+  return getUserFromSession(data?.session);
+}
+
 export async function fetchAppData() {
   if (shouldUseDemoMode()) {
     return clone(getDemoState());
@@ -715,6 +781,7 @@ export async function createArticle(payload) {
       category: payload.category,
       folder: payload.folder || "General",
       author: payload.author,
+      editors: asArray(payload.editors),
       content: payload.content,
       views: 0,
       tags: asArray(payload.tags),
@@ -732,6 +799,7 @@ export async function createArticle(payload) {
     category: payload.category,
     folder: payload.folder || "General",
     author: payload.author,
+    editors: asArray(payload.editors),
     content: payload.content,
     views: 0,
     tags: asArray(payload.tags),
@@ -760,6 +828,7 @@ export async function updateArticle(articleId, payload) {
       folder: payload.folder || "General",
       content: payload.content,
       tags: asArray(payload.tags),
+      editors: asArray(payload.editors),
     };
     saveDemoState();
     return clone(state.articles[index]);
@@ -771,6 +840,7 @@ export async function updateArticle(articleId, payload) {
     folder: payload.folder || "General",
     content: payload.content,
     tags: asArray(payload.tags),
+    editors: asArray(payload.editors),
   };
 
   const { data, error } = await supabase
@@ -1449,7 +1519,8 @@ export function findSLABreachers(tickets, priorityCatalog = {}) {
   return tickets
     .filter((tk) => !["Resolved", "Closed"].includes(tk.status))
     .map((tk) => {
-      const slaHours = priorityCatalog[tk.priority]?.sla || 24;
+      const cfg = priorityCatalog[tk.priority];
+      const slaHours = cfg && Number(cfg.sla) > 0 ? Number(cfg.sla) : slaForPriority(tk.priority);
       const status = checkSLAStatus(tk, slaHours);
       return { ticket: tk, slaStatus: status };
     })
@@ -1460,7 +1531,8 @@ export function findSLAAtRisk(tickets, priorityCatalog = {}) {
   return tickets
     .filter((tk) => !["Resolved", "Closed"].includes(tk.status))
     .map((tk) => {
-      const slaHours = priorityCatalog[tk.priority]?.sla || 24;
+      const cfg = priorityCatalog[tk.priority];
+      const slaHours = cfg && Number(cfg.sla) > 0 ? Number(cfg.sla) : slaForPriority(tk.priority);
       const status = checkSLAStatus(tk, slaHours);
       return { ticket: tk, slaStatus: status };
     })

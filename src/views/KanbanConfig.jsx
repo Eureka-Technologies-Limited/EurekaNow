@@ -3,7 +3,7 @@ import { useTokens } from "../core/hooks.js";
 import { Btn, Modal } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 
-const SWATCH_COLORS = [
+export const SWATCH_COLORS = [
   "#3182ce", "#805ad5", "#d69e2e", "#e53e3e",
   "#38a169", "#718096", "#dd6b20", "#319795",
   "#d53f8c", "#2c7a7b", "#744210", "#1a365d",
@@ -19,25 +19,29 @@ const CARD_FIELD_OPTIONS = [
 
 // ── ColorSwatch ───────────────────────────────────────────────────────────────
 
-function ColorSwatch({ value, onChange, colors }) {
+export function ColorSwatch({ value, onChange, colors }) {
+  const t = useTokens();
   const [open, setOpen] = useState(false);
+  const defaultColor = (colors && colors.length) ? (value || colors[0]) : (value || "#3182ce");
   return (
     <div style={{ position: "relative" }}>
       <button
         onClick={() => setOpen((o) => !o)}
         style={{
-          width: 24, height: 24, borderRadius: 6, background: value,
-          border: "none", cursor: "pointer", flexShrink: 0,
-          boxShadow: "inset 0 0 0 1.5px rgba(0,0,0,0.15)",
+          width: 24, height: 24, borderRadius: 6, background: defaultColor,
+          border: `1px solid ${t.border}`, cursor: "pointer", flexShrink: 0,
+          boxShadow: "inset 0 0 0 1px rgba(0,0,0,0.06)",
         }}
+        aria-label={"Select column color"}
+        title="Click to pick a color"
       />
       {open && (
         <>
           <div onClick={() => setOpen(false)} style={{ position: "fixed", inset: 0, zIndex: 10 }} />
           <div style={{
-            position: "absolute", top: 30, left: 0, zIndex: 20,
-            background: "white", border: "1px solid #e2e8f0", borderRadius: 10,
-            padding: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
+            position: "absolute", top: 30, left: 0, zIndex: 999,
+            background: t.surface, border: `1px solid ${t.border}`, borderRadius: 10,
+            padding: 8, boxShadow: "0 8px 24px rgba(0,0,0,0.12)",
             display: "grid", gridTemplateColumns: "repeat(4, 24px)", gap: 5,
           }}>
             {colors.map((c) => (
@@ -46,8 +50,10 @@ function ColorSwatch({ value, onChange, colors }) {
                 onClick={() => { onChange(c); setOpen(false); }}
                 style={{
                   width: 24, height: 24, borderRadius: 5, background: c, border: "none", cursor: "pointer",
-                  outline: c === value ? "2px solid #1a202c" : "none", outlineOffset: 1,
+                  outline: (value ? c === value : c === defaultColor) ? `2px solid ${t.accent}` : "none",
+                  outlineOffset: 1,
                 }}
+                aria-label={`Choose color ${c}`}
               />
             ))}
           </div>
@@ -65,7 +71,7 @@ function ColumnRow({ col, statuses, isFirst, isLast, onChange, onToggleStatus, o
   return (
     <div style={{
       border: `1px solid ${t.border}`, borderRadius: 10,
-      background: t.surface2, overflow: "hidden",
+      background: t.surface2, overflow: "visible", position: "relative",
     }}>
       {/* Collapsed row */}
       <div style={{ display: "flex", alignItems: "center", gap: 8, padding: "9px 12px" }}>

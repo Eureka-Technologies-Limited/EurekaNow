@@ -7,7 +7,7 @@
 import { useEffect, useState } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { PRIORITIES, STATUSES } from "../core/constants.js";
-import { fmtTs } from "../core/utils.js";
+import { fmtTs, slaForPriority, findPriorityCfg } from "../core/utils.js";
 import { Avatar, Btn, TypeBadge, SLABar, StatusBadge } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 
@@ -233,7 +233,7 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
 
         {/* ── Header ─────────────────────────────────────────────────────────── */}
         <div style={{
-          borderLeft: `4px solid ${catalog[tk.priority]?.color || "#888"}`,
+          borderLeft: `4px solid ${((findPriorityCfg(catalog, tk.priority) || {}).color) || "#888"}`,
           padding: p(["14px 16px", "18px 22px"]),
           borderBottom: `1px solid ${t.border}`, flexShrink: 0, background: t.surface,
         }}>
@@ -300,9 +300,13 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
             </div>
             <div style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 4 }}>
-                SLA — {catalog[tk.priority]?.sla || 24}h target
+                {(() => {
+                  const cfg = findPriorityCfg(catalog, tk.priority);
+                  const slaDisplay = cfg && Number(cfg.sla) > 0 ? Number(cfg.sla) : slaForPriority(tk.priority);
+                  return `SLA — ${slaDisplay}h target`;
+                })()}
               </div>
-              <SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={catalog[tk.priority]?.sla} />
+              <SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={(findPriorityCfg(catalog, tk.priority) && Number(findPriorityCfg(catalog, tk.priority).sla) > 0) ? Number(findPriorityCfg(catalog, tk.priority).sla) : slaForPriority(tk.priority)} />
             </div>
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
               {reporter && (

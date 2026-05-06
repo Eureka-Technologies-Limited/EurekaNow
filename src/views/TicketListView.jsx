@@ -8,7 +8,7 @@
 import { useState } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { PRIORITIES, STATUSES } from "../core/constants.js";
-import { slaPct } from "../core/utils.js";
+import { slaPct, slaForPriority, findPriorityCfg } from "../core/utils.js";
 import { Avatar, Btn, Card, PriorityBadge, StatusBadge, TypeBadge, SLABar } from "../ui/primitives.jsx";
 import { BulkActionsBar } from "../ui/BulkActionsBar.jsx";
 import { I } from "../core/icons.jsx";
@@ -64,9 +64,42 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
       if (sortBy === "newest")   return b.createdAt - a.createdAt;
       if (sortBy === "oldest")   return a.createdAt - b.createdAt;
       if (sortBy === "priority") return priorityOrder.indexOf(a.priority) - priorityOrder.indexOf(b.priority);
-      if (sortBy === "sla")      return slaPct(b.createdAt, catalog[b.priority]?.sla ?? 24) - slaPct(a.createdAt, catalog[a.priority]?.sla ?? 24);
+      if (sortBy === "sla") {
+        const cfgB = findPriorityCfg(catalog, b.priority);
+        const cfgA = findPriorityCfg(catalog, a.priority);
+        const slaB = cfgB && Number(cfgB.sla) > 0 ? Number(cfgB.sla) : slaForPriority(b.priority);
+        const slaA = cfgA && Number(cfgA.sla) > 0 ? Number(cfgA.sla) : slaForPriority(a.priority);
+        return slaPct(b.createdAt, slaB) - slaPct(a.createdAt, slaA);
+      }
       return 0;
     });
+
+  const baseCount = tickets.filter((tk) => !typeFilter || tk.type === typeFilter).length;
+  const clearFilters = () => { setSearch(""); setFStatus("All"); setFPriority("All"); setFAssignee("All"); setActivePreset(null); setSortBy("newest"); };
+
+  const emptyState = (
+    <div style={{ textAlign: "center", padding: "48px 24px" }}>
+      {baseCount === 0 ? (
+        <>
+          <div style={{ color: t.text3, marginBottom: 12 }}><I name={TYPE_ICON[typeFilter] || "ticket"} size={36} /></div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: t.text, marginBottom: 6 }}>No {typeFilter ? (typeFilter.toLowerCase() + "s") : "tickets"} yet</div>
+          <div style={{ fontSize: 13, color: t.text3, marginBottom: 16 }}>Create your first ticket to start tracking issues.</div>
+          <button onClick={onNewTicket} style={{ background: t.accent, color: "#0f0f0e", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: t.font, display: "inline-flex", alignItems: "center", gap: 6 }}>
+            <I name="plus" size={12} /> New {typeFilter || "Ticket"}
+          </button>
+        </>
+      ) : (
+        <>
+          <div style={{ color: t.text3, marginBottom: 12 }}><I name="filter" size={32} /></div>
+          <div style={{ fontSize: 15, fontWeight: 700, color: t.text, marginBottom: 6 }}>No matches</div>
+          <div style={{ fontSize: 13, color: t.text3, marginBottom: 16 }}>Try adjusting your search or clearing the filters.</div>
+          <button onClick={clearFilters} style={{ background: t.surface2, color: t.text, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 600, cursor: "pointer", fontFamily: t.font }}>
+            Clear filters
+          </button>
+        </>
+      )}
+    </div>
+  );
 
   const applyPreset = (id) => {
     const clear = () => { setFStatus("All"); setFPriority("All"); setFAssignee("All"); setSortBy("newest"); };
@@ -279,11 +312,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
       {/* ── MOBILE: card list ─────────────────────────────────────────────────── */}
       {isMobile ? (
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {filtered.length === 0 && (
-            <div style={{ textAlign: "center", padding: "40px 0", color: t.text3, fontSize: 13 }}>
-              No tickets match your filters.
-            </div>
-          )}
+          {filtered.length === 0 && emptyState}
           {filtered.map((tk) => {
             const assignee = users.find((u) => u.id === tk.assignee);
             return (
@@ -307,7 +336,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
                   <TypeBadge type={tk.type} />
-                  <PriorityBadge priority={tk.priority} />
+                  <PriorityBadge priority={tk.priority} catalog={catalog} />
                   <StatusBadge status={tk.status} />
                 </div>
                 <div style={{ marginTop: 8 }}>
@@ -344,11 +373,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
             ))}
           </div>
 
-          {filtered.length === 0 && (
-            <div style={{ textAlign: "center", padding: "40px 0", color: t.text3, fontSize: 13 }}>
-              No tickets match your filters.
-            </div>
-          )}
+          {filtered.length === 0 && emptyState}
 
           {filtered.map((tk, i) => {
             const agent = users.find((u) => u.id === tk.assignee);
@@ -387,7 +412,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                   onClick={(e) => e.stopPropagation()}
                   style={{ cursor: "pointer", width: 18, height: 18 }}
                 />
-                <div style={{ width: 8, height: 20, borderRadius: 4, background: catalog[tk.priority]?.color || "#888", display: "block", alignSelf: "center" }} />
+                <div style={{ width: 8, height: 20, borderRadius: 4, background: (findPriorityCfg(catalog, tk.priority)?.color) || "#888", display: "block", alignSelf: "center" }} />
                 <div style={{ paddingRight: 0, overflow: "hidden", minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {tk.title}
@@ -397,10 +422,10 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                   </div>
                 </div>
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><TypeBadge type={tk.type} /></div>
-                <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><PriorityBadge priority={tk.priority} /></div>
+                <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><PriorityBadge priority={tk.priority} catalog={catalog} /></div>
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><StatusBadge status={tk.status} /></div>
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}>{agent ? <Avatar name={agent.name} size={24} fs={8} /> : <span style={{ color: t.text3 }}>—</span>}</div>
-                <div style={{ minWidth: 0 }}><SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={catalog[tk.priority]?.sla} /></div>
+                <div style={{ minWidth: 0 }}><SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={(findPriorityCfg(catalog, tk.priority) && Number(findPriorityCfg(catalog, tk.priority).sla) > 0) ? Number(findPriorityCfg(catalog, tk.priority).sla) : slaForPriority(tk.priority)} /></div>
               </button>
             );
           })}

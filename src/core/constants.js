@@ -77,6 +77,9 @@ export const VIEW_LABELS = {
   problems:   "Problems",
   tasks:      "Tasks",
   all_tickets:"All Tickets",
+  kanban:     "Kanban Board",
   teams:      "Teams & Orgs",
   kb:         "Knowledge Base",
+  reports:    "Reports & Analytics",
+  profile:    "My Profile",
 };

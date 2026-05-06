@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { useTokens, useTheme } from "../core/hooks.js";
 import { useBreakpoint } from "../core/hooks.js";
 import { PRIORITIES } from "../core/constants.js";
-import { slaPct, slaLeft, slaColor, slaForPriority } from "../core/utils.js";
+import { slaPct, slaLeft, slaColor, slaForPriority, findPriorityCfg } from "../core/utils.js";
 
 // ── Avatar ────────────────────────────────────────────────────────────────────
 const AVATAR_PALETTES = [
@@ -49,11 +49,12 @@ export function Badge({ label, color, bg, size = 11 }) {
 
 // ── Semantic Badges ───────────────────────────────────────────────────────────
 
-export function PriorityBadge({ priority }) {
+export function PriorityBadge({ priority, catalog }) {
   const { dark } = useTheme();
-  const cfg = PRIORITIES[priority] || {};
+  const cfg = findPriorityCfg(catalog, priority) || PRIORITIES[priority] || {};
   const col = cfg.color || "#888";
-  return <Badge label={priority} color={col} bg={dark ? col + "22" : col + "18"} />;
+  const bg = cfg.bg || (dark ? col + "22" : col + "18");
+  return <Badge label={priority} color={col} bg={bg} />;
 }
 
 export function StatusBadge({ status }) {
