@@ -50,15 +50,20 @@ function Root() {
   useEffect(() => {
     let alive = true;
 
-    const finishAuth = async (session) => {
+    const finishAuth = (session) => {
       try {
         if (session?.user) {
-          const user = await getUserFromSession(session);
-          if (!alive) {
-            return;
-          }
-          setCurrentUser(user);
-          setPage("app");
+          getUserFromSession(session)
+            .then((user) => {
+              if (alive) {
+                setCurrentUser(user);
+                setPage("app");
+              }
+            })
+            .catch((err) => {
+              // eslint-disable-next-line no-console
+              console.debug("Failed to get user from session:", err.message);
+            });
         }
       } catch (err) {
         if (alive) {
@@ -76,26 +81,40 @@ function Root() {
     };
 
     const bootstrapSession = async () => {
-      const { data, error } = await supabase.auth.getSession();
-      if (error) {
+      try {
+        const { data, error } = await supabase.auth.getSession();
+        if (error) {
+          // eslint-disable-next-line no-console
+          console.debug("Unable to read auth session:", error.message);
+        }
+        finishAuth(data?.session || null);
+      } catch (err) {
         // eslint-disable-next-line no-console
-        console.debug("Unable to read auth session:", error.message);
+        console.debug("Bootstrap error:", err.message);
+        if (alive) {
+          setAuthReady(true);
+        }
       }
-      await finishAuth(data?.session || null);
     };
 
     bootstrapSession();
 
-    const {
-      data: { subscription },
-    } = supabase.auth.onAuthStateChange(async (_event, session) => {
-      await finishAuth(session);
-    });
+    try {
+      const authSubscription = supabase.auth.onAuthStateChange((_event, session) => {
+        finishAuth(session);
+      });
 
-    return () => {
-      alive = false;
-      subscription.unsubscribe();
-    };
+      return () => {
+        alive = false;
+        authSubscription.data?.subscription?.unsubscribe();
+      };
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.debug("Auth subscription setup error:", err.message);
+      return () => {
+        alive = false;
+      };
+    }
   }, []);
 
   // Sync body background with the active theme
@@ -131,7 +150,7 @@ function Root() {
 
         {!authReady && (
           <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", color: t.text2, fontFamily: t.font }}>
-            Signing you in…
+            Loading…
           </div>
         )}
         {authReady && page === "landing" && <LandingPage onLogin={() => setPage("login")} />}
