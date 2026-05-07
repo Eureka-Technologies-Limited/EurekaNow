@@ -86,9 +86,13 @@ export function PlansModal({ currentPlan, onClose, onSelectPlan }) {
                   <I name="zap" size={12} /> Upgrade to {plan.label}
                 </Btn>
               ) : (
-                <div style={{ fontSize: 11, color: t.text3, textAlign: "center", padding: "8px 0" }}>
-                  Downgrade available
-                </div>
+                <Btn
+                  variant="secondary"
+                  size="sm"
+                  onClick={() => onSelectPlan?.(key)}
+                >
+                  Downgrade to {plan.label}
+                </Btn>
               )}
             </div>
           );
@@ -96,7 +100,7 @@ export function PlansModal({ currentPlan, onClose, onSelectPlan }) {
       </div>
 
       <div style={{ marginTop: 18, padding: "12px 14px", background: t.surface3, borderRadius: 10, fontSize: 12, color: t.text3, lineHeight: 1.6 }}>
-        To change your organization's plan, go to <strong style={{ color: t.text }}>Teams &amp; Orgs</strong> and edit your organization settings. Contact support for enterprise pricing and custom contracts.
+        Contact support for enterprise pricing and custom contracts.
       </div>
     </Modal>
   );

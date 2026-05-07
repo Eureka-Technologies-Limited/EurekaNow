@@ -9,6 +9,7 @@ import {
   createArticle,
   createMember,
   createOrganisation,
+  updateOrgPlan,
   createTeamRole,
   createTeam,
   createTicket,
@@ -758,6 +759,12 @@ export function AppShell({ currentUser, onLogout }) {
     return created;
   };
 
+  const handleUpdateOrgPlan = async (orgId, plan) => {
+    const updated = await updateOrgPlan(orgId, plan);
+    setOrgs((rows) => rows.map((o) => o.id === orgId ? updated : o));
+    return updated;
+  };
+
   const handleCreateTeam = async (payload) => {
     const created = await createTeam(payload);
     setTeams((rows) => [...rows, created]);
@@ -996,6 +1003,7 @@ export function AppShell({ currentUser, onLogout }) {
               onDeleteClosingTemplate={handleDeleteClosingTemplate}
               onUpsertPirFieldConfig={handleUpsertPirFieldConfig}
               onUpgrade={() => setShowPlansModal(true)}
+              onUpgradePlan={handleUpdateOrgPlan}
             />
           )}
           {view === "kb" && (

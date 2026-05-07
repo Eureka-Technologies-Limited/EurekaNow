@@ -922,6 +922,27 @@ export async function createOrganisation(payload) {
   return toOrg(data);
 }
 
+export async function updateOrgPlan(orgId, plan) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const org = state.orgs.find((o) => o.id === orgId);
+    if (!org) throw new Error("Organisation not found.");
+    org.plan = plan;
+    saveDemoState();
+    return clone(toOrg(org));
+  }
+
+  const { data, error } = await supabase
+    .from(TABLES.orgs)
+    .update({ plan })
+    .eq("id", orgId)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to update plan.");
+  return toOrg(data);
+}
+
 export async function createTeam(payload) {
   if (shouldUseDemoMode()) {
     const state = getDemoState();

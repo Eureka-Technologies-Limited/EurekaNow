@@ -3,6 +3,8 @@ import { DEFAULT_URGENCIES, PRIORITIES, TICKET_TYPES } from "../core/constants.j
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { Avatar, Badge, Btn, Card, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
+import { PlansModal, PlanBadge } from "../ui/UpgradeGate.jsx";
+import { normalizePlan } from "../core/subscriptions.js";
 
 const TEAM_ICONS = ["IT","ENG","OPS","APP","NET","SEC","DATA","QA","PM","UX","HR","FIN"];
 const FALLBACK_ROLES = ["Admin", "Agent", "End User"];
@@ -57,6 +59,7 @@ export function TeamsView({
   closingTemplates = [],
   pirFieldConfigs = [],
   teamRoles,
+  plan,
   onCreateOrg,
   onCreateTeam,
   onCreateMember,
@@ -68,6 +71,7 @@ export function TeamsView({
   onUpdateClosingTemplate,
   onDeleteClosingTemplate,
   onUpsertPirFieldConfig,
+  onUpgradePlan,
 }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
@@ -82,6 +86,7 @@ export function TeamsView({
   const [settingsTab, setSettingsTab] = useState("sla");
   const [templateEditor, setTemplateEditor] = useState(null); // { orgId, teamId, template }
   const [addRoleTeamId, setAddRoleTeamId] = useState(null);
+  const [plansOpen, setPlansOpen] = useState(false);
 
   useEffect(() => {
     if (!orgs.length) {
@@ -165,14 +170,17 @@ export function TeamsView({
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
                   <div>
                     <h2 style={{ fontSize: isMobile ? 16 : 18, fontWeight: 800, margin: "0 0 6px", color: t.text }}>{org.name}</h2>
-                    <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center" }}>
                       <Badge label={org.industry} color={t.accentText} bg={t.accentBg} />
-                      <Badge label={org.plan} color={t.blueText} bg={t.blueBg} />
+                      <PlanBadge plan={org.plan} onClick={() => setPlansOpen(true)} />
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <Btn variant="secondary" size="sm" onClick={() => setSettingsOrgOpen(true)}>
                       <I name="settings" size={12} /> SLA & Priority
+                    </Btn>
+                    <Btn variant="secondary" size="sm" onClick={() => setPlansOpen(true)}>
+                      <I name="zap" size={12} /> Upgrade
                     </Btn>
                     <Btn variant="secondary" size="sm" onClick={() => setAddTeamOpen(true)}>
                       <I name="plus" size={12} /> Team
@@ -527,6 +535,17 @@ export function TeamsView({
           onClose={() => setTemplateEditor(null)}
           onCreate={onCreateClosingTemplate}
           onUpdate={onUpdateClosingTemplate}
+        />
+      )}
+
+      {plansOpen && org && (
+        <PlansModal
+          currentPlan={org.plan}
+          onClose={() => setPlansOpen(false)}
+          onSelectPlan={async (planKey) => {
+            await onUpgradePlan?.(org.id, planKey);
+            setPlansOpen(false);
+          }}
         />
       )}
     </div>
