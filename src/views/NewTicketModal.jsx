@@ -2,8 +2,10 @@ import { useEffect, useMemo, useState } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { PRIORITIES, DEFAULT_URGENCIES, TICKET_TYPES } from "../core/constants.js";
 import { Btn, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
+import { getTicketTypes } from "../core/subscriptions.js";
+import { I } from "../core/icons.jsx";
 
-export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCreate, defaultType, priorityCatalog, urgencyLevels, orgSettings = [], teamSettings = [], allTickets = [] }) {
+export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCreate, defaultType, priorityCatalog, urgencyLevels, orgSettings = [], teamSettings = [], allTickets = [], plan = "Free" }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
 
@@ -172,23 +174,39 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
         <div>
           <Label>Ticket Type</Label>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(3,1fr)", gap: 7 }}>
-            {TICKET_TYPES.map((tp) => (
-              <button
-                key={tp}
-                onClick={() => set("type", tp)}
-                style={{
-                  border: `1.5px solid ${form.type === tp ? t.accent : t.border}`,
-                  borderRadius: 9, padding: "8px 6px",
-                  background: form.type === tp ? t.accentBg : t.surface2,
-                  cursor: "pointer", fontFamily: t.font, textAlign: "center",
-                }}
-              >
-                <div style={{ fontSize: 12, fontWeight: 700, color: form.type === tp ? t.accentText : t.text2 }}>
-                  {tp.split(" ")[0]}
-                </div>
-              </button>
-            ))}
+            {TICKET_TYPES.map((tp) => {
+              const allowed = getTicketTypes(plan);
+              const locked = !allowed.includes(tp);
+              return (
+                <button
+                  key={tp}
+                  onClick={() => !locked && set("type", tp)}
+                  title={locked ? "Requires Basic plan" : ""}
+                  style={{
+                    border: `1.5px solid ${form.type === tp ? t.accent : locked ? t.border : t.border}`,
+                    borderRadius: 9, padding: "8px 6px",
+                    background: form.type === tp ? t.accentBg : locked ? t.surface3 : t.surface2,
+                    cursor: locked ? "not-allowed" : "pointer",
+                    fontFamily: t.font, textAlign: "center", position: "relative", opacity: locked ? 0.55 : 1,
+                  }}
+                >
+                  <div style={{ fontSize: 12, fontWeight: 700, color: form.type === tp ? t.accentText : t.text2 }}>
+                    {tp.split(" ")[0]}
+                  </div>
+                  {locked && (
+                    <span style={{ position: "absolute", top: 4, right: 5, color: t.text3 }}>
+                      <I name="lock" size={9} />
+                    </span>
+                  )}
+                </button>
+              );
+            })}
           </div>
+          {getTicketTypes(plan).length < TICKET_TYPES.length && (
+            <div style={{ fontSize: 11, color: t.text3, marginTop: 6 }}>
+              <I name="lock" size={10} /> Change Requests, Problems &amp; Tasks require the <strong>Basic</strong> plan.
+            </div>
+          )}
         </div>
 
         {/* Category + Priority */}

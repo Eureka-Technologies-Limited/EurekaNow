@@ -10,8 +10,9 @@ import { PRIORITIES, STATUSES } from "../core/constants.js";
 import { fmtTs, slaForPriority, findPriorityCfg } from "../core/utils.js";
 import { Avatar, Btn, TypeBadge, SLABar, StatusBadge } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
+import { canFeature } from "../core/subscriptions.js";
 
-export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch, onComment, priorityCatalog, urgencyLevels, review, onSaveReview, closingTemplates = [], pirFieldConfig = null, allTickets = [], onOpenTicket }) {
+export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch, onComment, priorityCatalog, urgencyLevels, review, onSaveReview, closingTemplates = [], pirFieldConfig = null, allTickets = [], onOpenTicket, plan = "Free", onUpgrade }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
   const catalog = (priorityCatalog && Object.keys(priorityCatalog).length) ? priorityCatalog : PRIORITIES;
@@ -488,7 +489,21 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
             )}
 
             {/* ── PIR tab (Closed Incidents only) ───────────────────────────── */}
-            {tab === "pir" && showPIR && (
+            {tab === "pir" && showPIR && !canFeature(plan, "pir") && (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", minHeight: 260, gap: 14, textAlign: "center", padding: 24 }}>
+                <div style={{ width: 52, height: 52, borderRadius: 14, background: "#9f7aea22", display: "flex", alignItems: "center", justifyContent: "center" }}>
+                  <I name="lock" size={22} />
+                </div>
+                <div>
+                  <div style={{ fontSize: 15, fontWeight: 700, color: t.text, marginBottom: 6 }}>Post-Incident Reviews require Pro</div>
+                  <div style={{ fontSize: 12, color: t.text3, lineHeight: 1.6 }}>Upgrade to the Pro plan to document root causes and corrective actions.</div>
+                </div>
+                <Btn variant="primary" size="sm" onClick={onUpgrade}>
+                  <I name="zap" size={12} /> Upgrade to Pro
+                </Btn>
+              </div>
+            )}
+            {tab === "pir" && showPIR && canFeature(plan, "pir") && (
               <div>
                 <p style={{ fontSize: 12, color: t.text2, marginTop: 0, marginBottom: 16, lineHeight: 1.5 }}>
                   Document what happened, the root cause, and corrective actions for this incident.

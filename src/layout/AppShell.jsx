@@ -30,6 +30,8 @@ import { Avatar, Btn, Modal } from "../ui/primitives.jsx";
 import { slaForPriority, slaPct } from "../core/utils.js";
 import { I } from "../core/icons.jsx";
 import { ToastContainer, useToasts } from "../ui/Toast.jsx";
+import { UpgradeGate, PlansModal, PlanBadge } from "../ui/UpgradeGate.jsx";
+import { normalizePlan, canFeature } from "../core/subscriptions.js";
 import { DEFAULT_LAYOUT } from "../widgets/registry.js";
 import { DashboardView, DashCustomiser } from "../widgets/DashboardView.jsx";
 import { TicketListView }   from "../views/TicketListView.jsx";
@@ -71,7 +73,7 @@ function saveSidebarPrefs(userId, items) {
 // DESKTOP SIDEBAR
 // ═════════════════════════════════════════════════════════════════════════════
 
-export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tickets, onLogout, visibleNavItems = DEFAULT_SIDEBAR_ITEMS, onCustomizeSidebar }) {
+export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tickets, onLogout, visibleNavItems = DEFAULT_SIDEBAR_ITEMS, onCustomizeSidebar, plan = "Free", onShowPlans }) {
     const currentUserRoles = Array.isArray(currentUser.roles) && currentUser.roles.length
       ? currentUser.roles
       : [currentUser.role].filter(Boolean);
@@ -83,6 +85,9 @@ export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tic
   const { dark, toggle } = useTheme();
 
   const openCount = tickets.filter((tk) => !["Resolved","Closed"].includes(tk.status)).length;
+
+  const FREE_LOCKED = new Set(["kanban", "kb", "reports"]);
+  const lockedForPlan = (id) => normalizePlan(plan) === "Free" && FREE_LOCKED.has(id);
 
   const navItems = [
     { id: "dashboard",   label: "Dashboard",       icon: "grid" },
@@ -125,27 +130,33 @@ export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tic
       <nav style={{ flex: 1, padding: "8px 5px", display: "flex", flexDirection: "column", gap: 1, overflowY: "auto" }}>
         {navItems.map((item) => {
           const active = view === item.id;
+          const locked = lockedForPlan(item.id);
           return (
             <div key={item.id}>
               {item.id === "teams" && <div style={{ height: 1, background: t.border, margin: "7px 3px" }} />}
               <button
                 onClick={() => setView(item.id)}
-                title={!open ? item.label : ""}
+                title={!open ? (locked ? `${item.label} — Basic plan required` : item.label) : ""}
                 style={{
                   background: active ? t.accentBg : "none",
                   border: `1px solid ${active ? t.accent + "44" : "transparent"}`,
                   borderRadius: 8, padding: open ? "8px 10px" : "8px 0",
                   cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
-                  color: active ? t.accentText : t.text2,
+                  color: active ? t.accentText : locked ? t.text3 : t.text2,
                   width: "100%", justifyContent: open ? "flex-start" : "center",
                   fontFamily: t.font, transition: "background .1s",
                 }}
               >
                 <span style={{ flexShrink: 0 }}><I name={item.icon} size={14} /></span>
                 {open && <span style={{ fontSize: 12, fontWeight: active ? 700 : 400, flex: 1, textAlign: "left", whiteSpace: "nowrap" }}>{item.label}</span>}
-                {open && item.count > 0 && (
+                {open && !locked && item.count > 0 && (
                   <span style={{ fontSize: 9, fontWeight: 800, padding: "1px 5px", borderRadius: 99, background: item.alert ? t.red : t.surface3, color: item.alert ? "#fff" : t.text3 }}>
                     {item.count}
+                  </span>
+                )}
+                {open && locked && (
+                  <span style={{ color: t.text3, display: "flex", alignItems: "center" }}>
+                    <I name="lock" size={10} />
                   </span>
                 )}
               </button>
@@ -156,6 +167,16 @@ export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tic
 
       {/* Footer */}
       <div style={{ padding: "9px 5px", borderTop: `1px solid ${t.border}`, display: "flex", flexDirection: "column", gap: 2 }}>
+        {open && (
+          <button
+            onClick={onShowPlans}
+            style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, color: t.text2, padding: "7px 10px", borderRadius: 8, width: "100%", justifyContent: "flex-start", fontFamily: t.font }}
+          >
+            <I name="zap" size={13} />
+            <span style={{ fontSize: 12, flex: 1, textAlign: "left" }}>Plans &amp; Billing</span>
+            <PlanBadge plan={plan} />
+          </button>
+        )}
         {open && (
           <button
             onClick={onCustomizeSidebar}
@@ -482,6 +503,7 @@ export function AppShell({ currentUser, onLogout }) {
   const [sidebarOpen,  setSidebarOpen]  = useState(true);
   const [sidebarItems, setSidebarItems] = useState(() => loadSidebarPrefs(currentUser?.id));
   const [showSidebarPrefs, setShowSidebarPrefs] = useState(false);
+  const [showPlansModal,   setShowPlansModal]   = useState(false);
   const [modal,        setModal]        = useState(null);   // "detail" | "new" | "customise"
   const [activeTicket, setActiveTicket] = useState(null);
   const [dashLayout,   setDashLayout]   = useState(DEFAULT_LAYOUT);
@@ -651,6 +673,8 @@ export function AppShell({ currentUser, onLogout }) {
   }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const effectiveUser = users.find((u) => u.id === currentUser.id) || currentUser;
+  const currentOrg = orgs.find((o) => o.id === effectiveUser.orgId);
+  const plan = normalizePlan(currentOrg?.plan);
 
   const isDefaultPriorityMap = (priorityMap = {}) => {
     const defaultEntries = Object.entries(PRIORITIES);
@@ -890,6 +914,8 @@ export function AppShell({ currentUser, onLogout }) {
           currentUser={effectiveUser} tickets={tickets} onLogout={onLogout}
           visibleNavItems={sidebarItems}
           onCustomizeSidebar={() => setShowSidebarPrefs(true)}
+          plan={plan}
+          onShowPlans={() => setShowPlansModal(true)}
         />
       )}
 
@@ -924,22 +950,26 @@ export function AppShell({ currentUser, onLogout }) {
           )}
 
           {/* Per-type ticket views */}
-          {view === "all_tickets" && <TicketListView typeFilter={null}             tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew()} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} />}
-          {view === "incidents"   && <TicketListView typeFilter="Incident"         tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Incident")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} />}
-          {view === "requests"    && <TicketListView typeFilter="Service Request"  tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Service Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} />}
-          {view === "changes"     && <TicketListView typeFilter="Change Request"   tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Change Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} />}
-          {view === "problems"    && <TicketListView typeFilter="Problem"          tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Problem")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} />}
-          {view === "tasks"       && <TicketListView typeFilter="Task"             tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Task")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} />}
+          {view === "all_tickets" && <TicketListView typeFilter={null}             tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew()} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
+          {view === "incidents"   && <TicketListView typeFilter="Incident"         tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Incident")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
+          {view === "requests"    && <TicketListView typeFilter="Service Request"  tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Service Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
+          {view === "changes"     && <TicketListView typeFilter="Change Request"   tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Change Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
+          {view === "problems"    && <TicketListView typeFilter="Problem"          tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Problem")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
+          {view === "tasks"       && <TicketListView typeFilter="Task"             tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Task")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
 
           {view === "kanban" && (
-            <KanbanView
-              tickets={tickets}
-              users={users}
-              currentUser={effectiveUser}
-              priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)}
-              onOpenTicket={openTicket}
-              onPatchTicket={handlePatchTicket}
-            />
+            canFeature(plan, "kanban") ? (
+              <KanbanView
+                tickets={tickets}
+                users={users}
+                currentUser={effectiveUser}
+                priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)}
+                onOpenTicket={openTicket}
+                onPatchTicket={handlePatchTicket}
+              />
+            ) : (
+              <UpgradeGate plan={plan} requiredPlan="Basic" featureName="Kanban Board" fullPage onUpgrade={() => setShowPlansModal(true)} />
+            )
           )}
 
           {view === "teams" && (
@@ -953,6 +983,7 @@ export function AppShell({ currentUser, onLogout }) {
               closingTemplates={closingTemplates}
               pirFieldConfigs={pirFieldConfigs}
               teamRoles={teamRoles}
+              plan={plan}
               onCreateOrg={handleCreateOrg}
               onCreateTeam={handleCreateTeam}
               onCreateMember={handleCreateMember}
@@ -964,26 +995,37 @@ export function AppShell({ currentUser, onLogout }) {
               onUpdateClosingTemplate={handleUpdateClosingTemplate}
               onDeleteClosingTemplate={handleDeleteClosingTemplate}
               onUpsertPirFieldConfig={handleUpsertPirFieldConfig}
+              onUpgrade={() => setShowPlansModal(true)}
             />
           )}
           {view === "kb" && (
-            <KBView
-              articles={articles}
-              users={users}
-              currentUser={effectiveUser}
-              orgSettings={orgSettings}
-              onCreateArticle={handleCreateArticle}
-              onUpdateArticle={handleUpdateArticle}
-              onViewArticle={handleViewArticle}
-            />
+            canFeature(plan, "kb") ? (
+              <KBView
+                articles={articles}
+                users={users}
+                currentUser={effectiveUser}
+                orgSettings={orgSettings}
+                plan={plan}
+                onCreateArticle={handleCreateArticle}
+                onUpdateArticle={handleUpdateArticle}
+                onViewArticle={handleViewArticle}
+                onUpgrade={() => setShowPlansModal(true)}
+              />
+            ) : (
+              <UpgradeGate plan={plan} requiredPlan="Basic" featureName="Knowledge Base" fullPage onUpgrade={() => setShowPlansModal(true)} />
+            )
           )}
           {view === "reports" && (
-            <ReportsView
-              tickets={tickets}
-              users={users}
-              currentUser={effectiveUser}
-              priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)}
-            />
+            canFeature(plan, "reports") ? (
+              <ReportsView
+                tickets={tickets}
+                users={users}
+                currentUser={effectiveUser}
+                priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)}
+              />
+            ) : (
+              <UpgradeGate plan={plan} requiredPlan="Basic" featureName="Reports & Analytics" fullPage onUpgrade={() => setShowPlansModal(true)} />
+            )
           )}
           {view === "profile" && (
             <ProfileView
@@ -991,6 +1033,8 @@ export function AppShell({ currentUser, onLogout }) {
               tickets={tickets}
               notifPrefs={notifPrefs}
               onUpdateNotifPrefs={handleUpdateNotifPrefs}
+              plan={plan}
+              onShowPlans={() => setShowPlansModal(true)}
             />
           )}
         </main>
@@ -1023,6 +1067,8 @@ export function AppShell({ currentUser, onLogout }) {
           pirFieldConfig={pirFieldConfigs.find((cfg) => cfg.orgId === activeTicket.orgId && (!cfg.teamId || cfg.teamId === activeTicket.teamId)) || null}
           allTickets={tickets}
           onOpenTicket={openTicket}
+          plan={plan}
+          onUpgrade={() => setShowPlansModal(true)}
         />
       )}
       {modal === "new" && (
@@ -1039,10 +1085,11 @@ export function AppShell({ currentUser, onLogout }) {
           orgSettings={orgSettings}
           teamSettings={teamSettings}
           allTickets={tickets}
+          plan={plan}
         />
       )}
       {modal === "customise" && (
-        <DashCustomiser layout={dashLayout} onSave={setDashLayout} onClose={() => setModal(null)} />
+        <DashCustomiser layout={dashLayout} onSave={setDashLayout} onClose={() => setModal(null)} plan={plan} onUpgrade={() => setShowPlansModal(true)} />
       )}
 
       {showSidebarPrefs && (
@@ -1095,6 +1142,14 @@ export function AppShell({ currentUser, onLogout }) {
         onNewTicket={() => handleNew()}
       />
       <ToastContainer toasts={toasts} onDismiss={dismiss} />
+
+      {showPlansModal && (
+        <PlansModal
+          currentPlan={plan}
+          onClose={() => setShowPlansModal(false)}
+          onSelectPlan={() => { setShowPlansModal(false); handleSetView("teams"); }}
+        />
+      )}
     </div>
   );
 }

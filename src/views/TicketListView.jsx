@@ -12,6 +12,7 @@ import { slaPct, slaForPriority, findPriorityCfg } from "../core/utils.js";
 import { Avatar, Btn, Card, PriorityBadge, StatusBadge, TypeBadge, SLABar } from "../ui/primitives.jsx";
 import { BulkActionsBar } from "../ui/BulkActionsBar.jsx";
 import { I } from "../core/icons.jsx";
+import { canFeature } from "../core/subscriptions.js";
 
 const TYPE_ICON = {
   Incident:        "incident",
@@ -21,7 +22,7 @@ const TYPE_ICON = {
   Task:             "task",
 };
 
-export function TicketListView({ typeFilter, tickets, users, currentUser, onOpenTicket, onNewTicket, priorityCatalog, onBulkUpdate }) {
+export function TicketListView({ typeFilter, tickets, users, currentUser, onOpenTicket, onNewTicket, priorityCatalog, onBulkUpdate, plan = "Free", onUpgrade }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
   const catalog = (priorityCatalog && Object.keys(priorityCatalog).length) ? priorityCatalog : PRIORITIES;
@@ -200,9 +201,14 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
               <I name="filter" size={12} />
             </Btn>
           )}
-          {!isMobile && filtered.length > 0 && (
+          {!isMobile && filtered.length > 0 && canFeature(plan, "csvExport") && (
             <Btn variant="secondary" size="sm" onClick={exportCSV} title="Export current view as CSV">
               <I name="download" size={12} /> Export
+            </Btn>
+          )}
+          {!isMobile && filtered.length > 0 && !canFeature(plan, "csvExport") && (
+            <Btn variant="secondary" size="sm" onClick={onUpgrade} title="Upgrade to Basic to export CSV">
+              <I name="lock" size={12} /> Export
             </Btn>
           )}
           <Btn variant="primary" size="sm" onClick={onNewTicket}>
