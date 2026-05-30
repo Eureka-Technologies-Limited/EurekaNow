@@ -3,7 +3,8 @@
     "allow": [
       "Bash(Get-ChildItem -Path \"h:\\\\eurekanow\" -Recurse -Directory -Depth 2)",
       "Bash(Select-Object FullName)",
-      "Bash(npx react-scripts *)"
+      "Bash(npx react-scripts *)",
+      "Bash(dir \"h:\\\\eurekanow\\\\src\\\\views\")"
     ]
   }
 }

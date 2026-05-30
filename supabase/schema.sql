@@ -73,12 +73,24 @@ create table if not exists tickets (
   -- Unix milliseconds — matches Date.now() in the application layer
   created_at  bigint not null,
   tags        jsonb  not null default '[]'::jsonb,
-  parent_id   text
+    parent_id   text,
+    due_date    bigint,
+    estimate_hours numeric,
+    spent_hours  numeric not null default 0
 );
 
 -- Migration guards (safe no-ops if columns already exist)
 alter table tickets add column if not exists urgency   text  not null default 'Medium';
 alter table tickets add column if not exists parent_id text;
+  alter table tickets add column if not exists due_date bigint;
+  alter table tickets add column if not exists estimate_hours numeric;
+  alter table tickets add column if not exists spent_hours numeric not null default 0;
+
+-- Ensure `category` has a safe default and backfill any existing NULLs so
+-- inserting rows without an explicit category doesn't fail with a NOT NULL
+-- constraint violation (useful for older deployments or demo imports).
+alter table tickets alter column category set default 'General';
+update tickets set category = 'General' where category is null;
 
 create table if not exists ticket_comments (
   id         text   primary key,
@@ -111,6 +123,8 @@ create table if not exists org_settings (
   priorities jsonb  not null default '[{"name":"Critical","color":"#e53e3e","sla":4},{"name":"High","color":"#dd6b20","sla":8},{"name":"Medium","color":"#d69e2e","sla":24},{"name":"Low","color":"#3182ce","sla":72}]'::jsonb,
   urgencies  jsonb  not null default '["Critical","High","Medium","Low"]'::jsonb,
   categories jsonb  not null default '["Network","Software","Hardware","Security","Access Management","Onboarding","Facilities","Healthcare","Engineering","Finance","Legal","Other"]'::jsonb,
+  role_permissions jsonb not null default '{}',
+  require_approvals boolean not null default false,
   updated_at bigint not null default 0
 );
 
@@ -180,6 +194,47 @@ create table if not exists pir_field_configs (
   updated_at bigint not null
 );
 
+create table if not exists service_catalog_items (
+  id                text   primary key,
+  org_id            text   not null,
+  team_id           text,
+  name              text   not null,
+  description       text   not null default '',
+  category          text   not null default 'General',
+  icon              text   not null default 'request',
+  default_type      text   not null default 'Service Request',
+  default_priority  text   not null default 'Medium',
+  default_urgency   text   not null default 'Medium',
+  requires_approval boolean not null default false,
+  approver_role     text   not null default 'Admin',
+  approver_id       text,
+  approver_mode     text   not null default 'role', -- 'role' | 'user' | 'team'
+  approver_team_id  text,
+  active            boolean not null default true,
+  created_at        bigint not null,
+  updated_at        bigint not null
+);
+
+create table if not exists approvals (
+  id             text   primary key,
+  org_id         text   not null,
+  team_id        text,
+  ticket_id      text   not null,
+  catalog_item_id text,
+  requested_by   text   not null,
+  requested_for  text   not null,
+  approver_id    text,
+  approver_role  text   not null default 'Admin',
+  approver_mode  text   not null default 'role',
+  approver_team_id text,
+  status         text   not null default 'Pending',
+  decision       text   not null default '',
+  comments       text   not null default '',
+  due_at         bigint,
+  created_at     bigint not null,
+  decided_at     bigint
+);
+
 create table if not exists activity_log (
   id         text   primary key,
   ticket_id  text   not null,
@@ -214,6 +269,26 @@ create index if not exists idx_closing_templates_org_id  on closing_templates(or
 create index if not exists idx_closing_templates_team_id on closing_templates(team_id);
 create index if not exists idx_pir_field_configs_org_id  on pir_field_configs(org_id);
 create index if not exists idx_pir_field_configs_team_id on pir_field_configs(team_id);
+create index if not exists idx_catalog_items_org_id      on service_catalog_items(org_id);
+create index if not exists idx_catalog_items_team_id     on service_catalog_items(team_id);
+create index if not exists idx_catalog_items_active      on service_catalog_items(active);
+-- Migration guards: ensure approver and related columns exist before creating indexes
+alter table service_catalog_items add column if not exists approver_id text;
+alter table service_catalog_items add column if not exists approver_mode text not null default 'role';
+alter table service_catalog_items add column if not exists approver_team_id text;
+
+alter table approvals add column if not exists approver_id text;
+alter table approvals add column if not exists approver_mode text not null default 'role';
+alter table approvals add column if not exists approver_team_id text;
+
+alter table org_settings add column if not exists role_permissions jsonb not null default '{}';
+alter table org_settings add column if not exists require_approvals boolean not null default false;
+
+create index if not exists idx_catalog_items_approver_id on service_catalog_items(approver_id);
+create index if not exists idx_approvals_org_id          on approvals(org_id);
+create index if not exists idx_approvals_team_id         on approvals(team_id);
+create index if not exists idx_approvals_ticket_id       on approvals(ticket_id);
+create index if not exists idx_approvals_status          on approvals(status);
 create index if not exists idx_activity_log_ticket_id    on activity_log(ticket_id);
 create index if not exists idx_activity_log_org_id       on activity_log(org_id);
 
@@ -236,6 +311,8 @@ alter table team_roles            enable row level security;
 alter table post_incident_reviews enable row level security;
 alter table closing_templates     enable row level security;
 alter table pir_field_configs     enable row level security;
+alter table service_catalog_items  enable row level security;
+alter table approvals             enable row level security;
 alter table activity_log          enable row level security;
 
 -- Drop all existing policies on every table, then create a single open policy.
@@ -249,6 +326,7 @@ begin
     'organizations', 'teams', 'users', 'tickets', 'ticket_comments',
     'articles', 'org_settings', 'team_settings', 'team_roles',
     'post_incident_reviews', 'closing_templates', 'pir_field_configs',
+    'service_catalog_items', 'approvals',
     'activity_log'
   ] loop
     for pol in
@@ -331,7 +409,7 @@ begin
   -- ── Sample tickets ─────────────────────────────────────────────────────
   insert into tickets
     (id, title, description, type, category, org_id, team_id, assignee,
-     reporter, priority, urgency, status, created_at, tags)
+     reporter, priority, urgency, status, created_at, tags, parent_id, due_date, estimate_hours, spent_hours)
   values
     ('INC-0001',
      'Authentication service degradation',
@@ -339,63 +417,88 @@ begin
      'Incident', 'Security', 'o_root', 't_it', 'u_agent1', 'u_admin',
      'Critical', 'Critical', 'In Progress',
      now_ms - 18000000,
-     '["major-incident","auth"]'::jsonb),
-
+    '["major-incident","auth"]'::jsonb,
+     null,
+     now_ms + 7200000,
+     6,
+     4),
     ('INC-0002',
      'VPN login failures from remote networks',
      'Users reporting VPN authentication failures when connecting from home.',
      'Incident', 'Network', 'o_root', 't_it', 'u_agent1', 'u_user1',
      'High', 'High', 'In Progress',
      now_ms - 14400000,
-     '["vpn","auth"]'::jsonb),
-
+    '["vpn","auth"]'::jsonb,
+     'INC-0001',
+     now_ms + 1440000,
+     3,
+     1.5),
     ('INC-0003',
      'SSO portal returning 503 for external users',
      'Single sign-on portal unreachable from outside the corporate network.',
      'Incident', 'Security', 'o_root', 't_it', null, 'u_user1',
      'High', 'High', 'Open',
      now_ms - 10800000,
-     '["sso","auth"]'::jsonb),
-
+    '["sso","auth"]'::jsonb,
+     'INC-0001',
+     now_ms + 3600000,
+     2,
+     0.5),
     ('REQ-0001',
      'New Figma access for design contractors',
      'Request Figma Pro licenses for 5 contractors joining the design team.',
      'Service Request', 'Access Management', 'o_root', 't_it', 'u_agent1', 'u_user1',
      'Medium', 'Medium', 'Open',
      now_ms - 36000000,
-     '["access","design"]'::jsonb),
-
+    '["access","design"]'::jsonb,
+     null,
+     now_ms - 86400000,
+     2,
+     0),
     ('CHG-0001',
      'Scheduled server patch window — this weekend',
      'Maintenance window to apply OS and security patches to all app servers.',
      'Change Request', 'Software', 'o_root', 't_ops', 'u_agent2', 'u_admin',
      'Low', 'Low', 'Open',
      now_ms - 86400000,
-     '["maintenance","patching"]'::jsonb),
-
+    '["maintenance","patching"]'::jsonb,
+     null,
+     now_ms - 43200000,
+     8,
+     0),
     ('PRB-0001',
      'Recurring auth certificate expiry — root cause',
      'Investigating recurring outages caused by expired identity provider certificates.',
      'Problem', 'Security', 'o_root', 't_it', 'u_admin', 'u_admin',
      'High', 'High', 'Open',
      now_ms - 172800000,
-     '["root-cause","certs"]'::jsonb),
-
+    '["root-cause","certs"]'::jsonb,
+     null,
+     now_ms - 86400000,
+     5,
+     2),
     ('TSK-0001',
      'Update on-call runbook for auth incidents',
      'Runbook needs updating following last weeks cert expiry incident.',
      'Task', 'Security', 'o_root', 't_it', 'u_agent1', 'u_admin',
      'Medium', 'Medium', 'Open',
      now_ms - 43200000,
-     '["runbook","docs"]'::jsonb),
-
+    '["runbook","docs"]'::jsonb,
+     null,
+     now_ms - 21600000,
+     1,
+     0),
     ('INC-0004',
      'Database connection pool exhausted',
      'Production database hitting max connection limit causing request timeouts.',
      'Incident', 'Software', 'o_root', 't_ops', 'u_agent2', 'u_admin',
      'Critical', 'Critical', 'Resolved',
      now_ms - 259200000,
-     '["database","performance"]'::jsonb)
+    '["database","performance"]'::jsonb,
+     null,
+     now_ms - 172800000,
+     10,
+     10)
   on conflict (id) do nothing;
 
   -- Parent-child link: INC-0002 and INC-0003 are children of INC-0001
@@ -450,6 +553,21 @@ begin
     ]'::jsonb,
     now_ms, now_ms
   )
+  on conflict (id) do nothing;
+
+  -- ── Service catalog items ───────────────────────────────────────────
+  insert into service_catalog_items (id, org_id, team_id, name, description, category, icon, default_type, default_priority, default_urgency, requires_approval, approver_role, active, created_at, updated_at)
+  values
+    ('cat-0001', 'o_root', 't_it', 'Software Access Request', 'Request access to approved business software and tools.', 'Access Management', 'request', 'Service Request', 'Medium', 'Medium', true, 'Admin', true, now_ms - 259200000, now_ms - 259200000),
+    ('cat-0002', 'o_root', 't_it', 'Hardware Replacement', 'Replace a damaged or aged laptop, monitor, or accessory.', 'Hardware', 'device-laptop', 'Service Request', 'Low', 'Low', false, 'Admin', true, now_ms - 259200000, now_ms - 259200000),
+    ('cat-0003', 'o_root', 't_ops', 'Emergency Change', 'Fast-track a high-impact production change for an incident.', 'Software', 'change', 'Change Request', 'High', 'High', true, 'Admin', true, now_ms - 259200000, now_ms - 259200000)
+  on conflict (id) do nothing;
+
+  -- ── Approvals ────────────────────────────────────────────────────────
+  insert into approvals (id, org_id, team_id, ticket_id, catalog_item_id, requested_by, requested_for, approver_id, approver_role, status, decision, comments, due_at, created_at, decided_at)
+  values
+    ('appr-0001', 'o_root', 't_it', 'REQ-0001', 'cat-0001', 'u_user1', 'u_user1', 'u_admin', 'Admin', 'Pending', '', '', now_ms - 86400000, now_ms - 21600000, null),
+    ('appr-0002', 'o_root', 't_ops', 'CHG-0001', 'cat-0003', 'u_admin', 'u_admin', 'u_agent2', 'Admin', 'Approved', 'Approved', 'Approved for maintenance window.', now_ms - 86400000, now_ms - 86400000, now_ms - 72000000)
   on conflict (id) do nothing;
 
   -- ── Closing template ───────────────────────────────────────────────────

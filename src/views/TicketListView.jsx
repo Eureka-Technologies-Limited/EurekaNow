@@ -12,6 +12,7 @@ import { slaPct, slaForPriority, findPriorityCfg } from "../core/utils.js";
 import { Avatar, Btn, Card, PriorityBadge, StatusBadge, TypeBadge, SLABar } from "../ui/primitives.jsx";
 import { BulkActionsBar } from "../ui/BulkActionsBar.jsx";
 import { I } from "../core/icons.jsx";
+import { canFeature } from "../core/subscriptions.js";
 
 const TYPE_ICON = {
   Incident:        "incident",
@@ -21,12 +22,18 @@ const TYPE_ICON = {
   Task:             "task",
 };
 
-export function TicketListView({ typeFilter, tickets, users, currentUser, onOpenTicket, onNewTicket, priorityCatalog, onBulkUpdate }) {
+function formatDueLabel(dueDate) {
+  if (!dueDate) return "";
+  return new Date(dueDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+}
+
+export function TicketListView({ typeFilter, tickets, users, currentUser, onOpenTicket, onNewTicket, priorityCatalog, onBulkUpdate, plan = "Free", onUpgrade }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
   const catalog = (priorityCatalog && Object.keys(priorityCatalog).length) ? priorityCatalog : PRIORITIES;
   const priorityOrder = Object.keys(catalog);
   const highestPriority = Object.entries(catalog).sort((a, b) => a[1].sla - b[1].sla)[0]?.[0] || "Critical";
+  const now = Date.now();
 
   const [search,       setSearch]       = useState("");
   const [searchMode,   setSearchMode]   = useState("smart");
@@ -200,9 +207,14 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
               <I name="filter" size={12} />
             </Btn>
           )}
-          {!isMobile && filtered.length > 0 && (
+          {!isMobile && filtered.length > 0 && canFeature(plan, "csvExport") && (
             <Btn variant="secondary" size="sm" onClick={exportCSV} title="Export current view as CSV">
               <I name="download" size={12} /> Export
+            </Btn>
+          )}
+          {!isMobile && filtered.length > 0 && !canFeature(plan, "csvExport") && (
+            <Btn variant="secondary" size="sm" onClick={onUpgrade} title="Upgrade to Basic to export CSV">
+              <I name="lock" size={12} /> Export
             </Btn>
           )}
           <Btn variant="primary" size="sm" onClick={onNewTicket}>
@@ -338,7 +350,19 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                   <TypeBadge type={tk.type} />
                   <PriorityBadge priority={tk.priority} catalog={catalog} />
                   <StatusBadge status={tk.status} />
+                  {tk.dueDate && (
+                    <span style={{ fontSize: 10, fontWeight: 700, borderRadius: 99, padding: "2px 7px", background: tk.dueDate < now && !["Resolved", "Closed"].includes(tk.status) ? t.redBg : t.surface3, color: tk.dueDate < now && !["Resolved", "Closed"].includes(tk.status) ? t.redText : t.text3 }}>
+                      {tk.dueDate < now && !["Resolved", "Closed"].includes(tk.status) ? "Overdue" : `Due ${formatDueLabel(tk.dueDate)}`}
+                    </span>
+                  )}
                 </div>
+                {(tk.estimateHours != null || tk.spentHours > 0) && (
+                  <div style={{ marginTop: 6, fontSize: 11, color: t.text3 }}>
+                    {tk.estimateHours != null ? `Est ${tk.estimateHours}h` : ""}
+                    {tk.estimateHours != null && tk.spentHours > 0 ? " · " : ""}
+                    {tk.spentHours > 0 ? `Spent ${tk.spentHours}h` : ""}
+                  </div>
+                )}
                 <div style={{ marginTop: 8 }}>
                   <SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={catalog[tk.priority]?.sla} />
                 </div>
@@ -420,6 +444,17 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                   <div style={{ fontSize: 10, color: t.text3, fontFamily: t.mono, marginTop: 1 }}>
                     {tk.id}
                   </div>
+                  {(tk.dueDate != null || tk.estimateHours != null || tk.spentHours > 0) && (
+                    <div style={{ fontSize: 10, color: t.text3, marginTop: 4, display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {tk.dueDate != null && (
+                        <span style={{ fontWeight: 700, color: tk.dueDate < now && !["Resolved", "Closed"].includes(tk.status) ? t.redText : t.text3 }}>
+                          {tk.dueDate < now && !["Resolved", "Closed"].includes(tk.status) ? "Overdue" : `Due ${formatDueLabel(tk.dueDate)}`}
+                        </span>
+                      )}
+                      {tk.estimateHours != null && <span>Est {tk.estimateHours}h</span>}
+                      {tk.spentHours > 0 && <span>Spent {tk.spentHours}h</span>}
+                    </div>
+                  )}
                 </div>
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><TypeBadge type={tk.type} /></div>
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><PriorityBadge priority={tk.priority} catalog={catalog} /></div>

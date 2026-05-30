@@ -15,6 +15,8 @@ const TABLES = {
   postIncidentReviews: "post_incident_reviews",
   closingTemplates: "closing_templates",
   pirFieldConfigs: "pir_field_configs",
+  catalogItems: "service_catalog_items",
+  approvals: "approvals",
   activityLog: "activity_log",
 };
 
@@ -142,6 +144,9 @@ const toTicket = (row, commentsByTicketId = {}) => ({
   createdAt: Number(row.created_at),
   tags: asArray(row.tags),
   parentId: row.parent_id || null,
+  dueDate: row.due_date ? Number(row.due_date) : null,
+  estimateHours: row.estimate_hours != null ? Number(row.estimate_hours) : null,
+  spentHours: row.spent_hours != null ? Number(row.spent_hours) : 0,
   comments: commentsByTicketId[row.id] || [],
 });
 
@@ -169,6 +174,8 @@ const toOrgSettings = (row) => {
     priorityMap: prioritiesToMap(priorities),
     urgencies,
     categories,
+    rolePermissions: row?.role_permissions || {},
+    requireApprovals: Boolean(row?.require_approvals),
     updatedAt: Number(row?.updated_at || 0),
   };
 };
@@ -229,6 +236,76 @@ const toPirFieldConfig = (row) => ({
   updatedAt: Number(row.updated_at),
 });
 
+const toCatalogItem = (row) => ({
+  id: row.id,
+  orgId: row.org_id,
+  teamId: row.team_id || "",
+  name: row.name,
+  description: row.description || "",
+  category: row.category || "General",
+  icon: row.icon || "request",
+  defaultType: row.default_type || "Service Request",
+  defaultPriority: row.default_priority || "Medium",
+  defaultUrgency: row.default_urgency || "Medium",
+  requiresApproval: Boolean(row.requires_approval),
+  approverRole: row.approver_role || "Admin",
+  approverId: row.approver_id || "",
+  approverMode: row.approver_mode || "role", // 'role' | 'user' | 'team'
+  approverTeamId: row.approver_team_id || "",
+  active: row.active !== false,
+  createdAt: Number(row.created_at),
+  updatedAt: Number(row.updated_at),
+});
+
+export async function updateCatalogItem(itemId, payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const index = (state.catalogItems || []).findIndex((row) => row.id === itemId);
+    if (index < 0) throw new Error("Catalog item not found.");
+    const next = { ...state.catalogItems[index], ...payload, updatedAt: Date.now() };
+    state.catalogItems[index] = next;
+    saveDemoState();
+    return clone(next);
+  }
+
+  const patch = {};
+  if ("approverRole" in payload) patch.approver_role = payload.approverRole;
+  if ("approverId" in payload) patch.approver_id = payload.approverId || null;
+  if ("approverMode" in payload) patch.approver_mode = payload.approverMode || "role";
+  if ("approverTeamId" in payload) patch.approver_team_id = payload.approverTeamId || null;
+  if ("active" in payload) patch.active = !!payload.active;
+
+  if (!Object.keys(patch).length) {
+    const { data, error } = await supabase.from(TABLES.catalogItems).select("*").eq("id", itemId).single();
+    fail(error, "Failed to load catalog item.");
+    return toCatalogItem(data);
+  }
+
+  const { data, error } = await supabase.from(TABLES.catalogItems).update(patch).eq("id", itemId).select("*").single();
+  fail(error, "Failed to update catalog item.");
+  return toCatalogItem(data);
+}
+
+const toApproval = (row) => ({
+  id: row.id,
+  orgId: row.org_id,
+  teamId: row.team_id || "",
+  ticketId: row.ticket_id,
+  catalogItemId: row.catalog_item_id || "",
+  requestedBy: row.requested_by,
+  requestedFor: row.requested_for || row.requested_by,
+  approverId: row.approver_id || "",
+  approverRole: row.approver_role || "Admin",
+  approverMode: row.approver_mode || "role",
+  approverTeamId: row.approver_team_id || "",
+  status: row.status || "Pending",
+  decision: row.decision || "",
+  comments: row.comments || "",
+  dueAt: row.due_at ? Number(row.due_at) : null,
+  createdAt: Number(row.created_at),
+  decidedAt: row.decided_at ? Number(row.decided_at) : null,
+});
+
 const fail = (error, fallback) => {
   if (error) {
     throw new Error(error.message || fallback);
@@ -273,6 +350,9 @@ const makeDemoSeed = () => {
         createdAt: ago(5),
         tags: ["major-incident", "auth"],
         parentId: null,
+        dueDate: ago(1),
+        estimateHours: 6,
+        spentHours: 4,
         comments: [],
       },
       {
@@ -291,6 +371,9 @@ const makeDemoSeed = () => {
         createdAt: ago(4),
         tags: ["vpn", "auth"],
         parentId: "INC-9000",
+        dueDate: ago(2),
+        estimateHours: 3,
+        spentHours: 1.5,
         comments,
       },
       {
@@ -309,6 +392,9 @@ const makeDemoSeed = () => {
         createdAt: ago(3),
         tags: ["sso", "auth"],
         parentId: "INC-9000",
+        dueDate: ago(0.5),
+        estimateHours: 2,
+        spentHours: 0.5,
         comments: [],
       },
       {
@@ -327,6 +413,9 @@ const makeDemoSeed = () => {
         createdAt: ago(10),
         tags: ["access"],
         parentId: null,
+        dueDate: ago(-24),
+        estimateHours: 2,
+        spentHours: 0,
         comments: [],
       },
     ],
@@ -394,6 +483,95 @@ const makeDemoSeed = () => {
         ],
         createdAt: ago(100),
         updatedAt: ago(100),
+      },
+    ],
+    catalogItems: [
+      {
+        id: "cat_demo_1",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        name: "Software Access Request",
+        description: "Request access to approved business software and tools.",
+        category: "Access Management",
+        icon: "request",
+        defaultType: "Service Request",
+        defaultPriority: "Medium",
+        defaultUrgency: "Medium",
+        requiresApproval: true,
+        approverRole: "Admin",
+        active: true,
+        createdAt: ago(120),
+        updatedAt: ago(120),
+      },
+      {
+        id: "cat_demo_2",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        name: "Hardware Replacement",
+        description: "Replace a damaged or aged laptop, monitor, or accessory.",
+        category: "Hardware",
+        icon: "device-laptop",
+        defaultType: "Service Request",
+        defaultPriority: "Low",
+        defaultUrgency: "Low",
+        requiresApproval: false,
+        approverRole: "Admin",
+        active: true,
+        createdAt: ago(120),
+        updatedAt: ago(120),
+      },
+      {
+        id: "cat_demo_3",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        name: "Emergency Change",
+        description: "Fast-track a high-impact production change for an incident.",
+        category: "Software",
+        icon: "change",
+        defaultType: "Change Request",
+        defaultPriority: "High",
+        defaultUrgency: "High",
+        requiresApproval: true,
+        approverRole: "Admin",
+        active: true,
+        createdAt: ago(120),
+        updatedAt: ago(120),
+      },
+    ],
+    approvals: [
+      {
+        id: "appr_demo_1",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        ticketId: "REQ-9002",
+        catalogItemId: "cat_demo_1",
+        requestedBy: "u_demo",
+        requestedFor: "u_demo",
+        approverId: "u_demo",
+        approverRole: "Admin",
+        status: "Pending",
+        decision: "",
+        comments: "",
+        dueAt: ago(-12),
+        createdAt: ago(6),
+        decidedAt: null,
+      },
+      {
+        id: "appr_demo_2",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        ticketId: "CHG-0001",
+        catalogItemId: "cat_demo_3",
+        requestedBy: "u_admin",
+        requestedFor: "u_admin",
+        approverId: "u_demo_agent",
+        approverRole: "Admin",
+        status: "Approved",
+        decision: "Approved",
+        comments: "Approved for maintenance window.",
+        dueAt: ago(-24),
+        createdAt: ago(24),
+        decidedAt: ago(20),
       },
     ],
   };
@@ -522,13 +700,42 @@ export async function getUserFromSession(session) {
     return toUser(existingUser);
   }
 
+  const { data: orgs, error: orgsError } = await supabase
+    .from(TABLES.orgs)
+    .select("id")
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (orgsError) {
+    throw new Error(orgsError.message);
+  }
+
+  const defaultOrgId = orgs?.[0]?.id || null;
+
+  const { data: teams, error: teamsError } = await supabase
+    .from(TABLES.teams)
+    .select("id")
+    .eq("org_id", defaultOrgId)
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (teamsError) {
+    throw new Error(teamsError.message);
+  }
+
+  const defaultTeamId = teams?.[0]?.id || null;
+
+  if (!defaultOrgId) {
+    throw new Error("No organization is configured for this workspace.");
+  }
+
   const newUserData = {
     id: uid(),
     name: authUser.user_metadata?.full_name || authUser.email.split("@")[0] || "User",
     email: authUser.email,
     role: "End User",
-    org_id: null,
-    team_id: null,
+    org_id: defaultOrgId,
+    team_id: defaultTeamId,
     title: "",
   };
 
@@ -570,6 +777,8 @@ export async function fetchAppData() {
       reviewsRes,
       templatesRes,
       pirConfigsRes,
+      catalogRes,
+      approvalsRes,
     ] = await Promise.all([
       supabase.from(TABLES.orgs).select("*").order("name", { ascending: true }),
       supabase.from(TABLES.teams).select("*").order("name", { ascending: true }),
@@ -583,6 +792,8 @@ export async function fetchAppData() {
       supabase.from(TABLES.postIncidentReviews).select("*").order("updated_at", { ascending: false }),
       supabase.from(TABLES.closingTemplates).select("*").order("created_at", { ascending: true }),
       supabase.from(TABLES.pirFieldConfigs).select("*"),
+      supabase.from(TABLES.catalogItems).select("*").order("created_at", { ascending: true }),
+      supabase.from(TABLES.approvals).select("*").order("created_at", { ascending: false }),
     ]);
 
     fail(orgsRes.error, "Failed to load organizations.");
@@ -597,6 +808,8 @@ export async function fetchAppData() {
     fail(reviewsRes.error, "Failed to load post-incident reviews.");
     fail(templatesRes.error, "Failed to load templates.");
     fail(pirConfigsRes.error, "Failed to load PIR field configs.");
+    fail(catalogRes.error, "Failed to load service catalog items.");
+    fail(approvalsRes.error, "Failed to load approvals.");
 
     const commentsByTicketId = {};
     for (const row of commentsRes.data || []) {
@@ -616,6 +829,8 @@ export async function fetchAppData() {
       postIncidentReviews: (reviewsRes.data || []).map(toPostIncidentReview),
       closingTemplates: (templatesRes.data || []).map(toClosingTemplate),
       pirFieldConfigs: (pirConfigsRes.data || []).map(toPirFieldConfig),
+      catalogItems: (catalogRes.data || []).map(toCatalogItem),
+      approvals: (approvalsRes.data || []).map(toApproval),
     };
   } catch (error) {
     if (isFetchFailure(error)) {
@@ -645,6 +860,9 @@ export async function createTicket(payload) {
       createdAt: Date.now(),
       tags: asArray(payload.tags),
       parentId: payload.parentId || null,
+      dueDate: payload.dueDate || null,
+      estimateHours: payload.estimateHours != null && payload.estimateHours !== "" ? Number(payload.estimateHours) : null,
+      spentHours: payload.spentHours != null && payload.spentHours !== "" ? Number(payload.spentHours) : 0,
       comments: [],
     };
     state.tickets.unshift(created);
@@ -668,6 +886,9 @@ export async function createTicket(payload) {
     created_at: Date.now(),
     tags: asArray(payload.tags),
     parent_id: payload.parentId || null,
+    due_date: payload.dueDate || null,
+    estimate_hours: payload.estimateHours != null && payload.estimateHours !== "" ? Number(payload.estimateHours) : null,
+    spent_hours: payload.spentHours != null && payload.spentHours !== "" ? Number(payload.spentHours) : 0,
   };
 
   const { data, error } = await supabase
@@ -697,6 +918,9 @@ export async function updateTicketFields(ticketId, fields) {
   if (typeof fields.urgency === "string") patch.urgency = fields.urgency;
   if (typeof fields.assignee === "string") patch.assignee = fields.assignee;
   if ("parentId" in fields) patch.parent_id = fields.parentId ?? null;
+  if ("dueDate" in fields) patch.due_date = fields.dueDate || null;
+  if ("estimateHours" in fields) patch.estimate_hours = fields.estimateHours == null || fields.estimateHours === "" ? null : Number(fields.estimateHours);
+  if ("spentHours" in fields) patch.spent_hours = fields.spentHours == null || fields.spentHours === "" ? 0 : Number(fields.spentHours);
 
   if (!Object.keys(patch).length) {
     const { data, error } = await supabase
@@ -769,6 +993,98 @@ export async function createTicketComment(ticketId, payload) {
 
   fail(error, "Failed to post comment.");
   return toComment(data);
+}
+
+export async function createApproval(payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const approval = {
+      id: `appr_${uid()}`,
+      orgId: payload.orgId,
+      teamId: payload.teamId || "",
+      ticketId: payload.ticketId,
+      catalogItemId: payload.catalogItemId || "",
+      requestedBy: payload.requestedBy,
+      requestedFor: payload.requestedFor || payload.requestedBy,
+      approverId: payload.approverId || "",
+      approverRole: payload.approverRole || "Admin",
+      approverMode: payload.approverMode || "role",
+      approverTeamId: payload.approverTeamId || "",
+      status: payload.status || "Pending",
+      decision: payload.decision || "",
+      comments: payload.comments || "",
+      dueAt: payload.dueAt || null,
+      createdAt: Date.now(),
+      decidedAt: payload.decidedAt || null,
+    };
+    state.approvals = [...(state.approvals || []), approval];
+    saveDemoState();
+    return clone(approval);
+  }
+
+  const row = {
+    id: `appr_${uid()}`,
+    org_id: payload.orgId,
+    team_id: payload.teamId || "",
+    ticket_id: payload.ticketId,
+    catalog_item_id: payload.catalogItemId || "",
+    requested_by: payload.requestedBy,
+    requested_for: payload.requestedFor || payload.requestedBy,
+    approver_id: payload.approverId || "",
+      approver_role: payload.approverRole || "Admin",
+      approver_mode: payload.approverMode || "role",
+      approver_team_id: payload.approverTeamId || null,
+    status: payload.status || "Pending",
+    decision: payload.decision || "",
+    comments: payload.comments || "",
+    due_at: payload.dueAt || null,
+    created_at: Date.now(),
+    decided_at: payload.decidedAt || null,
+  };
+
+  const { data, error } = await supabase
+    .from(TABLES.approvals)
+    .insert(row)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to create approval.");
+  return toApproval(data);
+}
+
+export async function resolveApproval(approvalId, payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const index = (state.approvals || []).findIndex((row) => row.id === approvalId);
+    if (index < 0) throw new Error("Approval not found.");
+    const next = {
+      ...state.approvals[index],
+      status: payload.status,
+      decision: payload.decision || payload.status,
+      comments: payload.comments || "",
+      approverId: payload.approverId || state.approvals[index].approverId,
+      decidedAt: Date.now(),
+    };
+    state.approvals[index] = next;
+    saveDemoState();
+    return clone(next);
+  }
+
+  const { data, error } = await supabase
+    .from(TABLES.approvals)
+    .update({
+      status: payload.status,
+      decision: payload.decision || payload.status,
+      comments: payload.comments || "",
+      approver_id: payload.approverId || undefined,
+      decided_at: Date.now(),
+    })
+    .eq("id", approvalId)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to update approval.");
+  return toApproval(data);
 }
 
 export async function createArticle(payload) {
@@ -919,6 +1235,27 @@ export async function createOrganisation(payload) {
     urgencies: DEFAULT_URGENCIES,
   });
 
+  return toOrg(data);
+}
+
+export async function updateOrgPlan(orgId, plan) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const org = state.orgs.find((o) => o.id === orgId);
+    if (!org) throw new Error("Organisation not found.");
+    org.plan = plan;
+    saveDemoState();
+    return clone(toOrg(org));
+  }
+
+  const { data, error } = await supabase
+    .from(TABLES.orgs)
+    .update({ plan })
+    .eq("id", orgId)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to update plan.");
   return toOrg(data);
 }
 
@@ -1101,6 +1438,8 @@ export async function upsertOrgSettings(payload) {
       priorityMap: prioritiesToMap(priorities),
       urgencies: normalizeUrgencies(payload.urgencies),
       categories: Array.isArray(payload.categories) && payload.categories.length ? payload.categories.map((c) => String(c)) : CATEGORIES,
+      rolePermissions: payload.rolePermissions || {},
+      requireApprovals: !!payload.requireApprovals,
       updatedAt: Date.now(),
     };
     const index = state.orgSettings.findIndex((row) => row.orgId === payload.orgId);
@@ -1115,6 +1454,8 @@ export async function upsertOrgSettings(payload) {
     priorities: normalizePriorities(payload.priorities),
     urgencies: normalizeUrgencies(payload.urgencies),
     categories: Array.isArray(payload.categories) && payload.categories.length ? payload.categories.map((c) => String(c)) : CATEGORIES,
+    role_permissions: payload.rolePermissions || {},
+    require_approvals: !!payload.requireApprovals,
     updated_at: Date.now(),
   };
 
