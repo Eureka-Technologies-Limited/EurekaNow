@@ -43,6 +43,8 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
     assignee: "",
     tags: "",
     parentId: null,
+    dueDate: "",
+    estimateHours: "",
   });
 
   const [parentQuery, setParentQuery] = useState("");
@@ -138,6 +140,7 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
       : [];
 
     try {
+      const dueDateMs = form.dueDate ? new Date(`${form.dueDate}T23:59:59`).getTime() : null;
       await onCreate({
         title: form.title.trim(),
         description: form.description.trim(),
@@ -151,6 +154,9 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
         status: "Open",
         tags,
         parentId: form.parentId || null,
+        dueDate: dueDateMs,
+        estimateHours: form.estimateHours === "" ? null : Number(form.estimateHours),
+        spentHours: 0,
       });
       onClose();
     } catch (err) {
@@ -274,6 +280,27 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
                 </button>
               ))}
             </div>
+          </div>
+        </div>
+
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
+          <div>
+            <Label>Due Date</Label>
+            <Input
+              type="date"
+              value={form.dueDate}
+              onChange={(e) => set("dueDate", e.target.value)}
+              placeholder="Optional deadline"
+            />
+          </div>
+          <div>
+            <Label>Estimate (hours)</Label>
+            <Input
+              type="number"
+              value={form.estimateHours}
+              onChange={(e) => set("estimateHours", e.target.value)}
+              placeholder="How long should this take?"
+            />
           </div>
         </div>
 

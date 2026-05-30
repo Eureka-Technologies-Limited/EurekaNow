@@ -6,13 +6,13 @@ import { useEffect, useRef, useState } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { Card, Btn, Modal } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
-import { ALL_WIDGETS } from "./registry.js";
+import { ALL_WIDGETS, DEFAULT_LAYOUT } from "./registry.js";
 import { DashWidget } from "./DashWidget.jsx";
 
 // ── DashCustomiser ────────────────────────────────────────────────────────────
 // Modal that lets users toggle which widgets appear on their dashboard.
 
-export function DashCustomiser({ layout, onSave, onClose }) {
+export function DashCustomiser({ layout, onSave, onClose, onReset }) {
   const t = useTokens();
   const [selected, setSelected] = useState(new Set(layout));
   const categories = [...new Set(ALL_WIDGETS.map((w) => w.cat))];
@@ -73,6 +73,7 @@ export function DashCustomiser({ layout, onSave, onClose }) {
       ))}
 
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, paddingTop: 4 }}>
+        <Btn variant="secondary" onClick={() => { if (onReset) onReset(); else onSave(DEFAULT_LAYOUT); onClose(); }}>Reset to defaults</Btn>
         <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
         <Btn variant="primary" onClick={() => { onSave([...selected]); onClose(); }}>Save Layout</Btn>
       </div>
@@ -170,7 +171,7 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, s
   }, [baseRowHeight, cols, gridGap, isMobile, onSizeChange, resizing]);
 
   return (
-    <div>
+    <div style={{ overflowX: "hidden", paddingLeft: "env(safe-area-inset-left, 0px)", paddingRight: "env(safe-area-inset-right, 0px)" }}>
       {/* Page header */}
       <div style={{
         display: "flex", alignItems: isMobile ? "flex-start" : "flex-end",
@@ -205,7 +206,7 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, s
           display: "grid",
           gridTemplateColumns: `repeat(${cols}, 1fr)`,
           gridAutoFlow: "row dense",
-          gridAutoRows: `${baseRowHeight}px`,
+          gridAutoRows: isMobile ? "auto" : `${baseRowHeight}px`,
           gap: 12,
           border: `1px solid ${t.border}`,
           borderRadius: 12,
@@ -239,16 +240,17 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, s
                 setOverId(null);
               }}
               style={{
-                position: "relative",
-                display: "flex",
-                flexDirection: "column",
-                gridColumn: `span ${sizing.colSpan}`,
-                gridRow: `span ${sizing.rowSpan}`,
-                opacity: arrangeMode && dragId === id ? 0.55 : 1,
-                transform: isDragTarget ? "scale(1.01)" : "scale(1)",
-                transition: "opacity 0.12s ease, transform 0.12s ease",
-                cursor: arrangeMode ? "grab" : "default",
-              }}
+                  position: "relative",
+                  display: "flex",
+                  flexDirection: "column",
+                  gridColumn: `span ${sizing.colSpan}`,
+                  gridRow: `span ${sizing.rowSpan}`,
+                  opacity: arrangeMode && dragId === id ? 0.55 : 1,
+                  transform: isDragTarget ? "scale(1.01)" : "scale(1)",
+                  transition: "opacity 0.12s ease, transform 0.12s ease",
+                  cursor: arrangeMode ? "grab" : "default",
+                  minWidth: 0,
+                }}
             >
               <Card style={{
                 height: "100%",

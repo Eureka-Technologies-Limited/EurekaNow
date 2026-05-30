@@ -221,7 +221,6 @@ export function UpgradeGate({ plan, requiredPlan = "Basic", featureName, childre
 // Small inline badge showing the current plan
 
 export function PlanBadge({ plan, onClick }) {
-  const t = useTokens();
   const normalized = normalizePlan(plan);
   const cfg = PLANS[normalized] || PLANS.Free;
 

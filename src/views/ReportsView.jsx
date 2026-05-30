@@ -76,6 +76,7 @@ function LineChart({ data, color, height = 120 }) {
 
 function HBarChart({ items, color }) {
   const t = useTokens();
+  const { isMobile } = useBreakpoint();
   const maxVal = Math.max(...items.map((i) => i.value), 1);
   if (items.length === 0) {
     return <div style={{ color: t.text3, fontSize: 12, textAlign: "center", padding: "20px 0" }}>No data for selected range</div>;
@@ -84,7 +85,7 @@ function HBarChart({ items, color }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 7 }}>
       {items.map((item) => (
         <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span style={{ width: 110, fontSize: 11, color: t.text2, textAlign: "right", flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+          <span style={{ width: isMobile ? 80 : 110, fontSize: 11, color: t.text2, textAlign: "right", flexShrink: 0, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
             {item.label}
           </span>
           <div style={{ flex: 1, height: 18, background: t.surface3, borderRadius: 4, overflow: "hidden" }}>
@@ -316,20 +317,20 @@ export function ReportsView({ tickets, users }) {
       {/* Distribution charts */}
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 16 }}>
         <Section title="By Status">
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <DonutChart segments={statusSegs} size={90} />
+          <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", gap: 12 }}>
+            <DonutChart segments={statusSegs} size={isMobile ? 72 : 90} />
             <Legend items={statusSegs} />
           </div>
         </Section>
         <Section title="By Priority">
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <DonutChart segments={prioritySegs} size={90} />
+          <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", gap: 12 }}>
+            <DonutChart segments={prioritySegs} size={isMobile ? 72 : 90} />
             <Legend items={prioritySegs} />
           </div>
         </Section>
         <Section title="By Type">
-          <div style={{ display: "flex", alignItems: "center", gap: 16 }}>
-            <DonutChart segments={typeSegs} size={90} />
+          <div style={{ display: "flex", flexDirection: isMobile ? "column" : "row", alignItems: isMobile ? "stretch" : "center", gap: 12 }}>
+            <DonutChart segments={typeSegs} size={isMobile ? 72 : 90} />
             <Legend items={typeSegs} />
           </div>
         </Section>

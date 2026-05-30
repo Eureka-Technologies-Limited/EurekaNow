@@ -35,7 +35,7 @@ export function LandingPage({ onLogin }) {
           <div style={{ width: 28, height: 28, borderRadius: 8, background: t.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <span style={{ fontWeight: 900, fontSize: 14, color: "#0f0f0e" }}>E</span>
           </div>
-          <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.4px", color: t.text }}>EureakNow</span>
+          <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.4px", color: t.text }}>EurekaNow</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={toggle} style={{ background: "none", border: "none", cursor: "pointer", color: t.text2, display: "flex", padding: 6 }}>
@@ -54,14 +54,14 @@ export function LandingPage({ onLogin }) {
         </div>
         <h1 style={{ fontSize: isMobile ? "clamp(28px,8vw,40px)" : "clamp(36px,5vw,64px)", fontWeight: 800, margin: "0 0 16px", letterSpacing: "-1.5px", lineHeight: 1.1, color: t.text }}>
           The service desk that<br />
-          <span style={{ color: t.accent }}>works for everyone.</span>
+          <span style={{ color: t.accent }}>adapts to every workflow.</span>
         </h1>
         <p style={{ fontSize: isMobile ? 14 : 17, color: t.text2, maxWidth: 480, margin: "0 auto 32px", lineHeight: 1.7 }}>
-          IT, clinical ops, engineering, HR — one platform, customised for each person.
+          One platform for IT, clinical ops, engineering, and HR. Each workspace stays personal, clear, and easy to tailor.
         </p>
         <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
-          <Btn variant="primary" size={isMobile ? "md" : "lg"} onClick={onLogin}>Start free trial →</Btn>
-          <Btn variant="secondary" size={isMobile ? "md" : "lg"} onClick={onLogin}>View demo</Btn>
+          <Btn variant="primary" size={isMobile ? "md" : "lg"} onClick={onLogin}>Open the app →</Btn>
+          <Btn variant="secondary" size={isMobile ? "md" : "lg"} onClick={onLogin}>Use the demo</Btn>
         </div>
       </div>
 
@@ -105,7 +105,7 @@ export function LandingPage({ onLogin }) {
       </div>
 
       <footer style={{ borderTop: `1px solid ${t.border}`, padding: "16px 20px", textAlign: "center" }}>
-        <span style={{ fontSize: 11, color: t.text3 }}>© 2025 EureakNow — Eureka Technologies Ltd</span>
+        <span style={{ fontSize: 11, color: t.text3 }}>© {new Date().getFullYear()} EurekaNow — Eureka Technologies Ltd</span>
       </footer>
     </div>
   );
@@ -167,7 +167,7 @@ export function LoginPage({ onLogin, onBack }) {
             <div style={{ width: 44, height: 44, borderRadius: 13, background: t.accent, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
               <span style={{ fontWeight: 900, fontSize: 20, color: "#0f0f0e" }}>E</span>
             </div>
-            <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.5px", margin: 0, color: t.text }}>EureakNow</h1>
+            <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.5px", margin: 0, color: t.text }}>EurekaNow</h1>
             <p style={{ fontSize: 13, color: t.text2, marginTop: 5 }}>Sign in to your workspace</p>
           </div>
 

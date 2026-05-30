@@ -8,7 +8,7 @@ import { useEffect, useState } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { PRIORITIES, STATUSES } from "../core/constants.js";
 import { fmtTs, slaForPriority, findPriorityCfg } from "../core/utils.js";
-import { Avatar, Btn, TypeBadge, SLABar, StatusBadge } from "../ui/primitives.jsx";
+import { Avatar, Btn, Input, TypeBadge, SLABar, StatusBadge } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 import { canFeature } from "../core/subscriptions.js";
 
@@ -37,6 +37,10 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
   });
   const [reviewSaving, setReviewSaving] = useState(false);
   const [saving, setSaving] = useState(false);
+
+  const now = Date.now();
+  const isOverdue = !!tk.dueDate && tk.dueDate < now && !["Resolved", "Closed"].includes(tk.status);
+  const remainingHours = tk.dueDate ? Math.ceil((tk.dueDate - now) / 3600000) : null;
 
   // PIR is only accessible when the ticket is a Closed Incident
   const showPIR = tk.type === "Incident" && (tk.status === "Closed" || tk.status === "Resolved");
@@ -177,6 +181,14 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
     : { background: t.surface, width: "min(580px,100vw)", height: "100vh", display: "flex", flexDirection: "column", borderLeft: `1px solid ${t.border2}`, boxShadow: "-16px 0 64px rgba(0,0,0,0.4)" };
 
   const p = (v) => isMobile ? v[0] : v[1];
+  const formatDateInput = (ms) => {
+    if (!ms) return "";
+    const date = new Date(ms);
+    const year = date.getFullYear();
+    const month = String(date.getMonth() + 1).padStart(2, "0");
+    const day = String(date.getDate()).padStart(2, "0");
+    return `${year}-${month}-${day}`;
+  };
 
   // ── Shared search dropdown ─────────────────────────────────────────────────
   const SearchDropdown = ({ results, onSelect }) => results.length === 0 ? null : (
@@ -266,7 +278,7 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
 
           {/* ── Controls ───────────────────────────────────────────────────────── */}
           <div style={{ padding: p(["12px 16px", "14px 22px"]), borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 }}>
               <div>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 4 }}>Status</div>
                 <select value={tk.status} onChange={(e) => update({ status: e.target.value })} disabled={saving}
@@ -282,7 +294,7 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                 </select>
               </div>
             </div>
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10, marginBottom: 10 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 }}>
               <div>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 4 }}>Urgency</div>
                 <select value={tk.urgency || urgencyOptions[0]} onChange={(e) => update({ urgency: e.target.value })} disabled={saving}
@@ -297,6 +309,36 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                   <option value="">Unassigned</option>
                   {agents.map((u) => <option key={u.id} value={u.id}>{u.name} ({roleLabel(u)})</option>)}
                 </select>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 }}>
+              <div>
+                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 4 }}>Due Date</div>
+                <Input
+                  type="date"
+                  value={formatDateInput(tk.dueDate)}
+                  onChange={(e) => update({ dueDate: e.target.value ? new Date(`${e.target.value}T23:59:59`).getTime() : null })}
+                  style={{ padding: "7px 10px", fontSize: 12 }}
+                />
+              </div>
+              <div>
+                <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 4 }}>Estimate / Spent</div>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
+                  <Input
+                    type="number"
+                    value={tk.estimateHours ?? ""}
+                    onChange={(e) => update({ estimateHours: e.target.value === "" ? null : Number(e.target.value) })}
+                    placeholder="Estimate"
+                    style={{ padding: "7px 10px", fontSize: 12 }}
+                  />
+                  <Input
+                    type="number"
+                    value={tk.spentHours ?? 0}
+                    onChange={(e) => update({ spentHours: e.target.value === "" ? 0 : Number(e.target.value) })}
+                    placeholder="Spent"
+                    style={{ padding: "7px 10px", fontSize: 12 }}
+                  />
+                </div>
               </div>
             </div>
             <div style={{ marginBottom: 8 }}>
@@ -316,6 +358,14 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                   <div>
                     <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: t.text3 }}>Reporter</div>
                     <div style={{ fontSize: 11, color: t.text2 }}>{reporter.name}</div>
+                  </div>
+                </div>
+              )}
+              {tk.dueDate && (
+                <div>
+                  <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: t.text3 }}>Deadline</div>
+                  <div style={{ fontSize: 11, color: isOverdue ? t.redText : t.text2, marginTop: 2 }}>
+                    {isOverdue ? `Overdue by ${Math.max(1, Math.abs(remainingHours || 0))}h` : remainingHours !== null ? `${remainingHours}h left` : fmtTs(tk.dueDate)}
                   </div>
                 </div>
               )}

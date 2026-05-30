@@ -5,6 +5,7 @@
 import { useTokens, useTheme } from "../core/hooks.js";
 import { useBreakpoint } from "../core/hooks.js";
 import { I } from "../core/icons.jsx";
+import { Btn, Sel } from "../ui/primitives.jsx";
 
 const AVATAR_PALETTES = [
   ["#3b1d8a","#c4b5fd"], ["#065f46","#6ee7b7"], ["#7c2d12","#fb923c"],
@@ -70,9 +71,21 @@ function Toggle({ checked, onChange }) {
 // MAIN VIEW
 // ═════════════════════════════════════════════════════════════════════════════
 
-export function ProfileView({ currentUser, tickets, notifPrefs, onUpdateNotifPrefs }) {
+export function ProfileView({
+  currentUser,
+  tickets,
+  notifPrefs,
+  onUpdateNotifPrefs,
+  launchView,
+  onUpdateLaunchView,
+  restoreLastView,
+  onToggleRestoreLastView,
+  sidebarOpen,
+  onUpdateSidebarOpen,
+  onResetWorkspacePrefs,
+}) {
   const t = useTokens();
-  const { dark, toggle } = useTheme();
+  const { dark, mode, setMode } = useTheme();
   const { isMobile } = useBreakpoint();
 
   const myTickets      = tickets.filter((tk) => tk.assignee === currentUser.id);
@@ -152,18 +165,87 @@ export function ProfileView({ currentUser, tickets, notifPrefs, onUpdateNotifPre
       </Section>
 
       {/* Appearance */}
-      <Section title="Appearance" sub="Customize how the app looks.">
-        <button
-          onClick={toggle}
-          style={{
-            display: "flex", alignItems: "center", gap: 10, padding: "10px 14px",
-            background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8,
-            cursor: "pointer", fontFamily: t.font, color: t.text,
-          }}
-        >
-          <I name={dark ? "sun" : "moon"} size={16} />
-          <span style={{ fontSize: 13, fontWeight: 600 }}>{dark ? "Switch to Light Mode" : "Switch to Dark Mode"}</span>
-        </button>
+      <Section title="Workspace Preferences" sub="Choose how the app opens and how the shell behaves.">
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: t.text3, marginBottom: 5 }}>Start on sign-in</div>
+            <Btn
+              variant={restoreLastView ? "primary" : "secondary"}
+              size="sm"
+              onClick={() => onToggleRestoreLastView?.()}
+              full
+            >
+              <I name="clock" size={12} /> {restoreLastView ? "Restore my last page" : "Use a fixed start page"}
+            </Btn>
+            <Sel value={launchView} onChange={(e) => onUpdateLaunchView?.(e.target.value)} style={{ marginTop: 8, opacity: restoreLastView ? 0.5 : 1 }}>
+              <option value="dashboard">Dashboard</option>
+              <option value="all_tickets">All Tickets</option>
+              <option value="kanban">Kanban Board</option>
+              <option value="profile">My Profile</option>
+            </Sel>
+            <div style={{ fontSize: 11, color: t.text3, marginTop: 6 }}>Turn restore off to force a specific first page when you sign in.</div>
+          </div>
+
+          <div>
+            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: t.text3, marginBottom: 5 }}>Sidebar</div>
+            <Btn
+              variant={sidebarOpen ? "primary" : "secondary"}
+              size="sm"
+              onClick={() => onUpdateSidebarOpen?.(!sidebarOpen)}
+              full
+            >
+              <I name="menu" size={12} /> {sidebarOpen ? "Keep sidebar open" : "Start with sidebar collapsed"}
+            </Btn>
+            <div style={{ fontSize: 11, color: t.text3, marginTop: 6 }}>You can still collapse or expand it at any time from the shell.</div>
+          </div>
+        </div>
+
+        <div style={{ marginTop: 16 }}>
+          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.09em", textTransform: "uppercase", color: t.text3, marginBottom: 5 }}>Theme mode</div>
+          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(3, 1fr)", gap: 8 }}>
+            {[
+              { value: "system", label: "System", desc: "Follow your device theme" },
+              { value: "light", label: "Light", desc: "Use the light palette" },
+              { value: "dark", label: "Dark", desc: "Use the dark palette" },
+            ].map((option) => {
+              const active = mode === option.value;
+              return (
+                <button
+                  key={option.value}
+                  onClick={() => setMode(option.value)}
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 10,
+                    padding: "11px 12px",
+                    background: active ? t.accentBg : t.surface2,
+                    border: `1px solid ${active ? t.accent : t.border}`,
+                    borderRadius: 10,
+                    cursor: "pointer",
+                    fontFamily: t.font,
+                    textAlign: "left",
+                  }}
+                >
+                  <div style={{ width: 16, height: 16, borderRadius: 4, background: active ? t.accent : t.surface3, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
+                    {active && <I name="check" size={10} />}
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 13, fontWeight: 700, color: active ? t.accentText : t.text }}>{option.label}</div>
+                    <div style={{ fontSize: 11, color: t.text3, marginTop: 2 }}>{option.desc}</div>
+                  </div>
+                </button>
+              );
+            })}
+          </div>
+          <div style={{ fontSize: 11, color: t.text3, marginTop: 6 }}>Current mode: {dark ? "dark" : "light"}.</div>
+        </div>
+
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 10, marginTop: 16, flexWrap: "wrap" }}>
+          <div style={{ fontSize: 12, color: t.text3, alignSelf: "center" }}>Reset layout, sidebar, and launch preferences if you want a clean slate.</div>
+          <Btn variant="secondary" size="sm" onClick={() => onResetWorkspacePrefs?.()}>
+            Reset workspace preferences
+          </Btn>
+        </div>
       </Section>
 
     </div>

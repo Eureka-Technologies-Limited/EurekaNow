@@ -9,6 +9,8 @@ import {
   createArticle,
   createMember,
   createOrganisation,
+  createApproval,
+  updateCatalogItem,
   updateOrgPlan,
   createTeamRole,
   createTeam,
@@ -22,6 +24,7 @@ import {
   incrementArticleViews,
   savePostIncidentReview,
   updateMemberRoles,
+  resolveApproval,
   upsertOrgSettings,
   upsertTeamSettings,
   upsertPirFieldConfig,
@@ -38,18 +41,65 @@ import { DashboardView, DashCustomiser } from "../widgets/DashboardView.jsx";
 import { TicketListView }   from "../views/TicketListView.jsx";
 import { TicketDetailPanel } from "../views/TicketDetailPanel.jsx";
 import { NewTicketModal }   from "../views/NewTicketModal.jsx";
+import { ServiceCatalogView, ApprovalsView } from "../views/ServiceNowViews.jsx";
 import { TeamsView }        from "../views/TeamsView.jsx";
 import { KBView }           from "../views/KBView.jsx";
 import { KanbanView }       from "../views/KanbanView.jsx";
 import { ReportsView }      from "../views/ReportsView.jsx";
 import { ProfileView }      from "../views/ProfileView.jsx";
 import { CommandPalette }  from "../ui/CommandPalette.jsx";
+import { OnboardingTutorial, useOnboardingStatus } from "../ui/OnboardingTutorial.jsx";
 
 const SIDEBAR_PREFS_KEY = (userId) => `sidebar_prefs_${userId || "global"}`;
 const NOTIF_PREFS_KEY  = (userId) => `notif_prefs_${userId || "global"}`;
 const NOTIF_READ_KEY   = (userId) => `notifs_read_${userId || "global"}`;
-const DEFAULT_SIDEBAR_ITEMS = ["dashboard", "incidents", "requests", "changes", "problems", "tasks", "all_tickets", "kanban", "teams", "kb", "reports", "profile"];
+const SHELL_PREFS_KEY  = (userId) => `shell_prefs_${userId || "global"}`;
+const DASH_LAYOUT_KEY  = (userId) => `dash_layout_${userId || "global"}`;
+const DASH_SIZES_KEY   = (userId) => `dash_sizes_${userId || "global"}`;
+const DEFAULT_SIDEBAR_ITEMS = ["dashboard", "incidents", "requests", "catalog", "approvals", "changes", "problems", "tasks", "all_tickets", "kanban", "teams", "kb", "reports", "profile"];
 const DEFAULT_NOTIF_PREFS = { slaBreaches: true, slaRisk: true, newAssignments: true, comments: true };
+const DEFAULT_SHELL_PREFS = { defaultView: "dashboard", restoreLastView: true, sidebarOpen: true, lastView: "dashboard" };
+
+function safeParseJSON(raw, fallback) {
+  if (!raw) return fallback;
+  try {
+    return JSON.parse(raw);
+  } catch {
+    return fallback;
+  }
+}
+
+function loadShellPrefs(userId) {
+  return { ...DEFAULT_SHELL_PREFS, ...safeParseJSON(localStorage.getItem(SHELL_PREFS_KEY(userId)), {}) };
+}
+
+function saveShellPrefs(userId, prefs) {
+  try {
+    localStorage.setItem(SHELL_PREFS_KEY(userId), JSON.stringify(prefs));
+  } catch {}
+}
+
+function loadDashLayout(userId) {
+  const raw = safeParseJSON(localStorage.getItem(DASH_LAYOUT_KEY(userId)), null);
+  return Array.isArray(raw) && raw.length ? raw : DEFAULT_LAYOUT;
+}
+
+function saveDashLayout(userId, layout) {
+  try {
+    localStorage.setItem(DASH_LAYOUT_KEY(userId), JSON.stringify(layout));
+  } catch {}
+}
+
+function loadDashSizes(userId) {
+  const raw = safeParseJSON(localStorage.getItem(DASH_SIZES_KEY(userId)), {});
+  return raw && typeof raw === "object" && !Array.isArray(raw) ? raw : {};
+}
+
+function saveDashSizes(userId, sizes) {
+  try {
+    localStorage.setItem(DASH_SIZES_KEY(userId), JSON.stringify(sizes));
+  } catch {}
+}
 
 function loadSidebarPrefs(userId) {
   try {
@@ -68,6 +118,12 @@ function saveSidebarPrefs(userId, items) {
   try {
     localStorage.setItem(SIDEBAR_PREFS_KEY(userId), JSON.stringify(items));
   } catch {}
+}
+
+function userHasRole(user, roleName) {
+  if (!user) return false;
+  const roles = Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role].filter(Boolean);
+  return roles.some((role) => String(role).toLowerCase() === String(roleName).toLowerCase());
 }
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -97,6 +153,8 @@ export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tic
       alert: tickets.some((tk) => tk.type === "Incident" && tk.priority === "Critical" && !["Resolved","Closed"].includes(tk.status)) },
     { id: "requests",    label: "Requests",         icon: "request",
       count: tickets.filter((tk) => tk.type === "Service Request" && !["Resolved","Closed"].includes(tk.status)).length },
+    { id: "catalog",     label: "Service Catalog",  icon: "clipboard" },
+    { id: "approvals",   label: "Approvals",        icon: "check" },
     { id: "changes",     label: "Changes",          icon: "change",
       count: tickets.filter((tk) => tk.type === "Change Request" && !["Resolved","Closed"].includes(tk.status)).length },
     { id: "problems",    label: "Problems",         icon: "problem",
@@ -124,7 +182,7 @@ export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tic
         <div style={{ width: 27, height: 27, borderRadius: 8, background: t.accent, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
           <span style={{ fontWeight: 900, fontSize: 13, color: "#0a0a09" }}>E</span>
         </div>
-        {open && <span style={{ fontWeight: 800, fontSize: 14, color: t.text, letterSpacing: "-0.3px", whiteSpace: "nowrap" }}>EureakNow</span>}
+        {open && <span style={{ fontWeight: 800, fontSize: 14, color: t.text, letterSpacing: "-0.3px", whiteSpace: "nowrap" }}>EurekaNow</span>}
       </div>
 
       {/* Nav */}
@@ -240,6 +298,8 @@ export function MobileNav({ view, setView, currentUser, tickets, onLogout, onNew
 
   const drawerItems = [
     { id: "requests", label: "Service Requests",   icon: "request"     },
+    { id: "catalog",  label: "Service Catalog",    icon: "clipboard"   },
+    { id: "approvals",label: "Approvals",          icon: "check"       },
     { id: "changes",  label: "Change Requests",    icon: "change"      },
     { id: "problems", label: "Problems",           icon: "problem"     },
     { id: "tasks",    label: "Tasks",              icon: "task"        },
@@ -261,11 +321,25 @@ export function MobileNav({ view, setView, currentUser, tickets, onLogout, onNew
           style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)", zIndex: 200 }}
         >
           <div
-            onClick={(e) => e.stopPropagation()}
-            style={{ position: "absolute", bottom: 64, left: 0, right: 0, background: t.surface, borderTop: `1px solid ${t.border}`, borderRadius: "20px 20px 0 0", padding: "16px 16px 8px" }}
-          >
+              onClick={(e) => e.stopPropagation()}
+              style={{
+                position: "absolute",
+                bottom: 64,
+                left: 0,
+                right: 0,
+                background: t.surface,
+                borderTop: `1px solid ${t.border}`,
+                borderRadius: "20px 20px 0 0",
+                padding: "12px 12px",
+                boxSizing: "border-box",
+                maxHeight: "calc(100vh - 64px - env(safe-area-inset-top,0px))",
+                overflowY: "auto",
+                WebkitOverflowScrolling: "touch",
+                paddingBottom: "calc(env(safe-area-inset-bottom, 12px) + 8px)",
+              }}
+            >
             <div style={{ width: 36, height: 4, borderRadius: 99, background: t.border2, margin: "0 auto 16px" }} />
-            <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 2, wordBreak: "break-word" }}>
               {drawerItems.map((item) => (
                 <button
                   key={item.id}
@@ -498,20 +572,27 @@ export function AppShell({ currentUser, onLogout }) {
   const [postReviews,  setPostReviews]  = useState([]);
   const [closingTemplates, setClosingTemplates] = useState([]);
   const [pirFieldConfigs,  setPirFieldConfigs]  = useState([]);
+  const [catalogItems, setCatalogItems] = useState([]);
+  const [approvals,    setApprovals]    = useState([]);
   const [loading,      setLoading]      = useState(true);
   const [loadError,    setLoadError]    = useState("");
-  const [view,         setView]         = useState("dashboard");
-  const [sidebarOpen,  setSidebarOpen]  = useState(true);
+  const [shellPrefs,   setShellPrefs]   = useState(() => loadShellPrefs(currentUser?.id));
+  const [view,         setView]         = useState(() => {
+    const prefs = loadShellPrefs(currentUser?.id);
+    return prefs.restoreLastView ? (prefs.lastView || prefs.defaultView || "dashboard") : (prefs.defaultView || "dashboard");
+  });
   const [sidebarItems, setSidebarItems] = useState(() => loadSidebarPrefs(currentUser?.id));
   const [showSidebarPrefs, setShowSidebarPrefs] = useState(false);
   const [showPlansModal,   setShowPlansModal]   = useState(false);
   const [modal,        setModal]        = useState(null);   // "detail" | "new" | "customise"
   const [activeTicket, setActiveTicket] = useState(null);
-  const [dashLayout,   setDashLayout]   = useState(DEFAULT_LAYOUT);
-  const [dashSizes,    setDashSizes]    = useState({});
+  const [dashLayout,   setDashLayout]   = useState(() => loadDashLayout(currentUser?.id));
+  const [dashSizes,    setDashSizes]    = useState(() => loadDashSizes(currentUser?.id));
   const [defaultType,  setDefaultType]  = useState(null);
   const [cmdOpen,      setCmdOpen]      = useState(false);
+  const [showTutorial, setShowTutorial] = useState(false);
   const { toasts, addToast, dismiss } = useToasts();
+  const { isCompleted: isTutorialCompleted } = useOnboardingStatus(currentUser?.id);
   const slaToastShown = useRef(false);
 
   // ── Notification state ────────────────────────────────────────────────────
@@ -523,6 +604,27 @@ export function AppShell({ currentUser, onLogout }) {
     try { return new Set(JSON.parse(localStorage.getItem(NOTIF_READ_KEY(currentUser?.id))) || []); }
     catch { return new Set(); }
   });
+
+  useEffect(() => {
+    const nextPrefs = loadShellPrefs(currentUser?.id);
+    setShellPrefs(nextPrefs);
+    setSidebarItems(loadSidebarPrefs(currentUser?.id));
+    setView(nextPrefs.restoreLastView ? (nextPrefs.lastView || nextPrefs.defaultView || "dashboard") : (nextPrefs.defaultView || "dashboard"));
+    setDashLayout(loadDashLayout(currentUser?.id));
+    setDashSizes(loadDashSizes(currentUser?.id));
+  }, [currentUser?.id]);
+
+  useEffect(() => {
+    saveShellPrefs(currentUser?.id, shellPrefs);
+  }, [currentUser?.id, shellPrefs]);
+
+  useEffect(() => {
+    saveDashLayout(currentUser?.id, dashLayout);
+  }, [currentUser?.id, dashLayout]);
+
+  useEffect(() => {
+    saveDashSizes(currentUser?.id, dashSizes);
+  }, [currentUser?.id, dashSizes]);
 
   const handleUpdateNotifPrefs = (next) => {
     setNotifPrefs(next);
@@ -573,6 +675,7 @@ export function AppShell({ currentUser, onLogout }) {
   }, [tickets, currentUser.id, notifPrefs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const unreadCount = useMemo(() => notifications.filter((n) => !notifReadIds.has(n.id)).length, [notifications, notifReadIds]);
+  const sidebarOpen = shellPrefs.sidebarOpen;
 
   useEffect(() => {
     const handler = (e) => {
@@ -589,6 +692,8 @@ export function AppShell({ currentUser, onLogout }) {
     { id: "dashboard", label: "Dashboard", icon: "grid" },
     { id: "incidents", label: "Incidents", icon: "incident" },
     { id: "requests", label: "Requests", icon: "request" },
+    { id: "catalog", label: "Service Catalog", icon: "clipboard" },
+    { id: "approvals", label: "Approvals", icon: "check" },
     { id: "changes", label: "Changes", icon: "change" },
     { id: "problems", label: "Problems", icon: "problem" },
     { id: "tasks", label: "Tasks", icon: "task" },
@@ -639,6 +744,8 @@ export function AppShell({ currentUser, onLogout }) {
         setPostReviews(data.postIncidentReviews);
         setClosingTemplates(data.closingTemplates || []);
         setPirFieldConfigs(data.pirFieldConfigs || []);
+        setCatalogItems(data.catalogItems || []);
+        setApprovals(data.approvals || []);
       } catch (err) {
         if (!mounted) return;
         setLoadError(err?.message || "Failed to load workspace data.");
@@ -650,6 +757,14 @@ export function AppShell({ currentUser, onLogout }) {
     load();
     return () => { mounted = false; };
   }, []);
+
+  // Show tutorial on first login if not completed
+  useEffect(() => {
+    if (loading) return;
+    if (!isTutorialCompleted()) {
+      setShowTutorial(true);
+    }
+  }, [loading, isTutorialCompleted]);
 
   // SLA breach toast — shown once after initial load
   useEffect(() => {
@@ -881,7 +996,137 @@ export function AppShell({ currentUser, onLogout }) {
   };
 
   const handleNew = (type) => { setDefaultType(type || null); setModal("new"); };
-  const handleSetView = (v) => { setView(v); if (isMobile) window.scrollTo(0, 0); };
+  const handleRequestCatalogItem = async (item, payload) => {
+    const requesterId = payload.requestedFor || currentUser.id;
+    const ticketTitle = String(payload.title || item?.name || "Service Request").trim() || "Service Request";
+    const ticketDescription = String(payload.description || item?.description || "").trim();
+    const createdTicket = await createTicket({
+      type: payload.type || item.defaultType || "Service Request",
+      title: ticketTitle,
+      description: ticketDescription,
+      orgId: payload.orgId,
+      teamId: payload.teamId || "",
+      reporter: requesterId,
+      assignee: "",
+      priority: payload.priority || item.defaultPriority || "Medium",
+      urgency: payload.urgency || item.defaultUrgency || "Medium",
+      status: item.requiresApproval ? "Pending" : "Open",
+      dueDate: payload.dueDate || null,
+      estimateHours: payload.estimateHours || null,
+      spentHours: 0,
+      tags: ["catalog", item.id].filter(Boolean),
+    });
+
+    setTickets((rows) => [createdTicket, ...rows]);
+
+    if (item.requiresApproval) {
+      // Build approval payload depending on approverMode: 'role'|'user'|'team'
+      let approverId = "";
+      let approverTeamId = "";
+      let approverRole = item.approverRole || "Admin";
+
+      if (item.approverMode === "user" && item.approverId) {
+        const explicit = users.find((u) => u.id === item.approverId && u.orgId === payload.orgId);
+        if (explicit) approverId = explicit.id;
+      }
+
+      if (item.approverMode === "team" && item.approverTeamId) {
+        approverTeamId = item.approverTeamId;
+      }
+
+      if (!approverId && !approverTeamId) {
+        // fallback: find a user by role within org/team or any org admin
+        const approver = users.find((user) =>
+          user.orgId === payload.orgId &&
+          (payload.teamId ? user.teamId === payload.teamId : true) &&
+          (userHasRole(user, item.approverRole) || userHasRole(user, "Admin"))
+        ) || users.find((user) => user.orgId === payload.orgId && userHasRole(user, "Admin"));
+        if (approver) approverId = approver.id;
+      }
+
+      const createdApproval = await createApproval({
+        orgId: payload.orgId,
+        teamId: payload.teamId || "",
+        ticketId: createdTicket.id,
+        catalogItemId: item.id,
+        requestedBy: currentUser.id,
+        requestedFor: requesterId,
+        approverId: approverId || "",
+        approverRole,
+        approverMode: item.approverMode || "role",
+        approverTeamId: approverTeamId || "",
+        status: "Pending",
+        dueAt: payload.dueDate || null,
+      });
+
+      setApprovals((rows) => [createdApproval, ...rows]);
+
+      addToast({
+        type: "info",
+        title: "Request submitted",
+        message: `${item.name} is waiting for approval.`,
+        duration: 4500,
+      });
+      return { ticket: createdTicket, approval: createdApproval };
+    }
+
+    addToast({
+      type: "success",
+      title: "Request submitted",
+      message: `${item.name} has been created as ${createdTicket.id}.`,
+      duration: 4500,
+    });
+    return { ticket: createdTicket, approval: null };
+  };
+  const handleUpdateCatalogItem = async (itemId, updates) => {
+    const saved = await updateCatalogItem(itemId, updates);
+    setCatalogItems((rows) => rows.map((r) => r.id === saved.id ? saved : r));
+    return saved;
+  };
+  const handleResolveApproval = async (approvalId, decision, comments) => {
+    const approval = approvals.find((row) => row.id === approvalId);
+    if (!approval) throw new Error("Approval not found.");
+
+    const resolved = await resolveApproval(approvalId, {
+      status: decision === "Approved" ? "Approved" : "Rejected",
+      decision,
+      comments,
+      approverId: currentUser.id,
+    });
+
+    setApprovals((rows) => rows.map((row) => row.id === resolved.id ? resolved : row));
+
+    const nextStatus = decision === "Approved" ? "Open" : "Closed";
+    const updatedTicket = await updateTicketFields(approval.ticketId, { status: nextStatus });
+    setTickets((rows) => rows.map((row) => row.id === updatedTicket.id ? updatedTicket : row));
+
+    addToast({
+      type: decision === "Approved" ? "success" : "warning",
+      title: `Approval ${decision.toLowerCase()}`,
+      message: `${approval.ticketId} is now ${nextStatus.toLowerCase()}.`,
+      duration: 4500,
+    });
+
+    return resolved;
+  };
+  const handleSetView = (nextView) => {
+    setView(nextView);
+    setShellPrefs((current) => ({ ...current, lastView: nextView }));
+    if (isMobile) window.scrollTo(0, 0);
+  };
+  const handleToggleSidebar = () => {
+    setShellPrefs((current) => ({ ...current, sidebarOpen: !current.sidebarOpen }));
+  };
+  const handleUpdateWorkspacePrefs = (patch) => {
+    setShellPrefs((current) => ({ ...current, ...patch }));
+  };
+  const resetWorkspacePrefs = () => {
+    setShellPrefs({ ...DEFAULT_SHELL_PREFS });
+    setSidebarItems(DEFAULT_SIDEBAR_ITEMS);
+    setDashLayout(DEFAULT_LAYOUT);
+    setDashSizes({});
+    setView("dashboard");
+  };
   const toggleSidebarItem = (id) => {
     updateSidebarItems(
       sidebarItems.includes(id)
@@ -917,7 +1162,7 @@ export function AppShell({ currentUser, onLogout }) {
       {!isMobile && (
         <DesktopSidebar
           view={view} setView={handleSetView}
-          open={sidebarOpen} onToggle={() => setSidebarOpen((o) => !o)}
+          open={sidebarOpen} onToggle={handleToggleSidebar}
           currentUser={effectiveUser} tickets={tickets} onLogout={onLogout}
           visibleNavItems={sidebarItems}
           onCustomizeSidebar={() => setShowSidebarPrefs(true)}
@@ -928,7 +1173,7 @@ export function AppShell({ currentUser, onLogout }) {
 
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         <Topbar
-          onToggle={() => setSidebarOpen((o) => !o)}
+          onToggle={handleToggleSidebar}
           view={view} tickets={tickets}
           onNewTicket={() => handleNew(topbarType)}
           isMobile={isMobile}
@@ -953,6 +1198,34 @@ export function AppShell({ currentUser, onLogout }) {
               onCustomise={() => setModal("customise")}
               onOpenTicket={openTicket} onNewTicket={() => handleNew()}
               priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)}
+            />
+          )}
+
+          {view === "catalog" && (
+            <ServiceCatalogView
+              items={catalogItems}
+              currentUser={effectiveUser}
+              users={users}
+              teams={teams}
+              orgs={orgs}
+                orgSettings={orgSettings}
+              tickets={tickets}
+              onRequestItem={handleRequestCatalogItem}
+              onUpdateCatalogItem={handleUpdateCatalogItem}
+            />
+          )}
+
+          {view === "approvals" && (
+            <ApprovalsView
+              approvals={approvals}
+              catalogItems={catalogItems}
+              tickets={tickets}
+              currentUser={effectiveUser}
+              users={users}
+              orgSettings={orgSettings}
+              teams={teams}
+              onResolveApproval={handleResolveApproval}
+              onOpenTicket={openTicket}
             />
           )}
 
@@ -1041,6 +1314,13 @@ export function AppShell({ currentUser, onLogout }) {
               tickets={tickets}
               notifPrefs={notifPrefs}
               onUpdateNotifPrefs={handleUpdateNotifPrefs}
+              launchView={shellPrefs.defaultView}
+              onUpdateLaunchView={(nextView) => handleUpdateWorkspacePrefs({ defaultView: nextView })}
+              restoreLastView={shellPrefs.restoreLastView}
+              onToggleRestoreLastView={() => handleUpdateWorkspacePrefs({ restoreLastView: !shellPrefs.restoreLastView })}
+              sidebarOpen={sidebarOpen}
+              onUpdateSidebarOpen={(nextOpen) => handleUpdateWorkspacePrefs({ sidebarOpen: nextOpen })}
+              onResetWorkspacePrefs={resetWorkspacePrefs}
               plan={plan}
               onShowPlans={() => setShowPlansModal(true)}
             />
@@ -1097,7 +1377,17 @@ export function AppShell({ currentUser, onLogout }) {
         />
       )}
       {modal === "customise" && (
-        <DashCustomiser layout={dashLayout} onSave={setDashLayout} onClose={() => setModal(null)} plan={plan} onUpgrade={() => setShowPlansModal(true)} />
+        <DashCustomiser
+          layout={dashLayout}
+          onSave={setDashLayout}
+          onReset={() => {
+            setDashLayout(DEFAULT_LAYOUT);
+            setDashSizes({});
+          }}
+          onClose={() => setModal(null)}
+          plan={plan}
+          onUpgrade={() => setShowPlansModal(true)}
+        />
       )}
 
       {showSidebarPrefs && (
@@ -1150,6 +1440,13 @@ export function AppShell({ currentUser, onLogout }) {
         onNewTicket={() => handleNew()}
       />
       <ToastContainer toasts={toasts} onDismiss={dismiss} />
+
+      {showTutorial && (
+        <OnboardingTutorial
+          userId={currentUser?.id}
+          onClose={() => setShowTutorial(false)}
+        />
+      )}
 
       {showPlansModal && (
         <PlansModal

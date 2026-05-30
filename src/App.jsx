@@ -122,7 +122,9 @@ function Root() {
     document.body.style.margin     = "0";
     document.body.style.padding    = "0";
     document.body.style.background = t.bg;
-  }, [t.bg]);
+    document.body.style.color      = t.text;
+    document.documentElement.style.colorScheme = t.dark ? "dark" : "light";
+  }, [t.bg, t.text, t.dark]);
 
   const handleLogin = async ({ email, password }) => {
     const user = await loginWithEmailPassword(email, password);
@@ -143,6 +145,14 @@ function Root() {
           ::-webkit-scrollbar-thumb { background: #3a3835; border-radius: 99px; }
           button { -webkit-tap-highlight-color: transparent; }
           input, textarea, select { -webkit-appearance: none; }
+          @media (prefers-reduced-motion: reduce) {
+            *, *::before, *::after {
+              animation-duration: 0.01ms !important;
+              animation-iteration-count: 1 !important;
+              transition-duration: 0.01ms !important;
+              scroll-behavior: auto !important;
+            }
+          }
           @media (max-width: 767px) {
             input, textarea, select { font-size: 16px !important; }
           }
