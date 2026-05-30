@@ -1,5 +1,5 @@
-import { DEFAULT_TEAM_ROLES, DEFAULT_URGENCIES, PRIORITIES, TICKET_PREFIX } from "./constants.js";
-import { uid } from "./utils.js";
+import { DEFAULT_TEAM_ROLES, DEFAULT_URGENCIES, PRIORITIES, TICKET_PREFIX, CATEGORIES } from "./constants.js";
+import { uid, slaForPriority } from "./utils.js";
 import { supabase } from "./supabase.js";
 
 const TABLES = {
@@ -13,6 +13,11 @@ const TABLES = {
   teamSettings: "team_settings",
   teamRoles: "team_roles",
   postIncidentReviews: "post_incident_reviews",
+  closingTemplates: "closing_templates",
+  pirFieldConfigs: "pir_field_configs",
+  catalogItems: "service_catalog_items",
+  approvals: "approvals",
+  activityLog: "activity_log",
 };
 
 const DEMO_STORAGE_KEY = "eurekanow_demo_state_v1";
@@ -39,13 +44,36 @@ const defaultPrioritiesArray = () => Object.entries(PRIORITIES).map(([name, cfg]
   sla: cfg.sla,
 }));
 
+const isValidHexColor = (color) => {
+  const hex = String(color || "").trim();
+  return /^#[0-9A-Fa-f]{6}$/.test(hex);
+};
+
 const normalizePriorities = (value) => {
   const rows = asArray(value)
-    .map((item) => ({
-      name: String(item?.name || "").trim(),
-      color: String(item?.color || "").trim() || "#888888",
-      sla: Number(item?.sla || 0),
-    }))
+    .map((item) => {
+      const rawColor = item?.color;
+      const name = String(item?.name || "").trim();
+      
+      // Try to preserve the color if it's a valid hex color
+      let color = isValidHexColor(rawColor) ? String(rawColor).trim() : null;
+      
+      // If no valid color, try to recover from PRIORITIES constant
+      if (!color && PRIORITIES[name]) {
+        color = PRIORITIES[name].color;
+      }
+      
+      // Fall back to a neutral color if still no valid color
+      if (!color) {
+        color = "#888888";
+      }
+      
+      return {
+        name,
+        color,
+        sla: Number(item?.sla || 0),
+      };
+    })
     .filter((item) => item.name && item.sla > 0);
 
   return rows.length ? rows : defaultPrioritiesArray();
@@ -115,6 +143,10 @@ const toTicket = (row, commentsByTicketId = {}) => ({
   status: row.status,
   createdAt: Number(row.created_at),
   tags: asArray(row.tags),
+  parentId: row.parent_id || null,
+  dueDate: row.due_date ? Number(row.due_date) : null,
+  estimateHours: row.estimate_hours != null ? Number(row.estimate_hours) : null,
+  spentHours: row.spent_hours != null ? Number(row.spent_hours) : 0,
   comments: commentsByTicketId[row.id] || [],
 });
 
@@ -123,7 +155,9 @@ const toArticle = (row) => ({
   title: row.title,
   orgId: row.org_id,
   category: row.category,
+  folder: row.folder || "General",
   author: row.author,
+  editors: asArray(row.editors),
   createdAt: Number(row.created_at),
   views: row.views || 0,
   tags: asArray(row.tags),
@@ -133,11 +167,15 @@ const toArticle = (row) => ({
 const toOrgSettings = (row) => {
   const priorities = normalizePriorities(row?.priorities);
   const urgencies = normalizeUrgencies(row?.urgencies);
+  const categories = Array.isArray(row?.categories) && row.categories.length ? row.categories.map((c) => String(c)) : CATEGORIES;
   return {
     orgId: row?.org_id,
     priorities,
     priorityMap: prioritiesToMap(priorities),
     urgencies,
+    categories,
+    rolePermissions: row?.role_permissions || {},
+    requireApprovals: Boolean(row?.require_approvals),
     updatedAt: Number(row?.updated_at || 0),
   };
 };
@@ -172,8 +210,100 @@ const toPostIncidentReview = (row) => ({
   timeline: row.timeline || "",
   actionItems: asArray(row.action_items),
   owner: row.owner || "",
+  customData: row.data || {},
   createdAt: Number(row.created_at),
   updatedAt: Number(row.updated_at),
+});
+
+const toClosingTemplate = (row) => ({
+  id: row.id,
+  orgId: row.org_id,
+  teamId: row.team_id || "",
+  name: row.name,
+  description: row.description || "",
+  content: row.content,
+  applyToTypes: asArray(row.apply_to_types),
+  createdAt: Number(row.created_at),
+  updatedAt: Number(row.updated_at),
+});
+
+const toPirFieldConfig = (row) => ({
+  id: row.id,
+  orgId: row.org_id,
+  teamId: row.team_id || "",
+  fields: asArray(row.fields),
+  createdAt: Number(row.created_at),
+  updatedAt: Number(row.updated_at),
+});
+
+const toCatalogItem = (row) => ({
+  id: row.id,
+  orgId: row.org_id,
+  teamId: row.team_id || "",
+  name: row.name,
+  description: row.description || "",
+  category: row.category || "General",
+  icon: row.icon || "request",
+  defaultType: row.default_type || "Service Request",
+  defaultPriority: row.default_priority || "Medium",
+  defaultUrgency: row.default_urgency || "Medium",
+  requiresApproval: Boolean(row.requires_approval),
+  approverRole: row.approver_role || "Admin",
+  approverId: row.approver_id || "",
+  approverMode: row.approver_mode || "role", // 'role' | 'user' | 'team'
+  approverTeamId: row.approver_team_id || "",
+  active: row.active !== false,
+  createdAt: Number(row.created_at),
+  updatedAt: Number(row.updated_at),
+});
+
+export async function updateCatalogItem(itemId, payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const index = (state.catalogItems || []).findIndex((row) => row.id === itemId);
+    if (index < 0) throw new Error("Catalog item not found.");
+    const next = { ...state.catalogItems[index], ...payload, updatedAt: Date.now() };
+    state.catalogItems[index] = next;
+    saveDemoState();
+    return clone(next);
+  }
+
+  const patch = {};
+  if ("approverRole" in payload) patch.approver_role = payload.approverRole;
+  if ("approverId" in payload) patch.approver_id = payload.approverId || null;
+  if ("approverMode" in payload) patch.approver_mode = payload.approverMode || "role";
+  if ("approverTeamId" in payload) patch.approver_team_id = payload.approverTeamId || null;
+  if ("active" in payload) patch.active = !!payload.active;
+
+  if (!Object.keys(patch).length) {
+    const { data, error } = await supabase.from(TABLES.catalogItems).select("*").eq("id", itemId).single();
+    fail(error, "Failed to load catalog item.");
+    return toCatalogItem(data);
+  }
+
+  const { data, error } = await supabase.from(TABLES.catalogItems).update(patch).eq("id", itemId).select("*").single();
+  fail(error, "Failed to update catalog item.");
+  return toCatalogItem(data);
+}
+
+const toApproval = (row) => ({
+  id: row.id,
+  orgId: row.org_id,
+  teamId: row.team_id || "",
+  ticketId: row.ticket_id,
+  catalogItemId: row.catalog_item_id || "",
+  requestedBy: row.requested_by,
+  requestedFor: row.requested_for || row.requested_by,
+  approverId: row.approver_id || "",
+  approverRole: row.approver_role || "Admin",
+  approverMode: row.approver_mode || "role",
+  approverTeamId: row.approver_team_id || "",
+  status: row.status || "Pending",
+  decision: row.decision || "",
+  comments: row.comments || "",
+  dueAt: row.due_at ? Number(row.due_at) : null,
+  createdAt: Number(row.created_at),
+  decidedAt: row.decided_at ? Number(row.decided_at) : null,
 });
 
 const fail = (error, fallback) => {
@@ -205,6 +335,27 @@ const makeDemoSeed = () => {
     users: [demoUser, agentUser],
     tickets: [
       {
+        id: "INC-9000",
+        title: "Major Incident: Authentication service degradation",
+        description: "Widespread authentication failures affecting multiple services across the organisation.",
+        type: "Incident",
+        category: "Security",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        assignee: "u_demo_agent",
+        reporter: "u_demo",
+        priority: "Critical",
+        urgency: "Critical",
+        status: "In Progress",
+        createdAt: ago(5),
+        tags: ["major-incident", "auth"],
+        parentId: null,
+        dueDate: ago(1),
+        estimateHours: 6,
+        spentHours: 4,
+        comments: [],
+      },
+      {
         id: "INC-9001",
         title: "Demo incident: VPN login failures",
         description: "Users report VPN auth failures from remote network.",
@@ -219,7 +370,32 @@ const makeDemoSeed = () => {
         status: "In Progress",
         createdAt: ago(4),
         tags: ["vpn", "auth"],
+        parentId: "INC-9000",
+        dueDate: ago(2),
+        estimateHours: 3,
+        spentHours: 1.5,
         comments,
+      },
+      {
+        id: "INC-9003",
+        title: "Demo incident: SSO portal unreachable",
+        description: "Single sign-on portal returning 503 for external users.",
+        type: "Incident",
+        category: "Security",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        assignee: "",
+        reporter: "u_demo",
+        priority: "High",
+        urgency: "High",
+        status: "Open",
+        createdAt: ago(3),
+        tags: ["sso", "auth"],
+        parentId: "INC-9000",
+        dueDate: ago(0.5),
+        estimateHours: 2,
+        spentHours: 0.5,
+        comments: [],
       },
       {
         id: "REQ-9002",
@@ -236,6 +412,10 @@ const makeDemoSeed = () => {
         status: "Open",
         createdAt: ago(10),
         tags: ["access"],
+        parentId: null,
+        dueDate: ago(-24),
+        estimateHours: 2,
+        spentHours: 0,
         comments: [],
       },
     ],
@@ -245,6 +425,7 @@ const makeDemoSeed = () => {
         title: "How to reset VPN credentials",
         orgId: "o_demo",
         category: "Network",
+        folder: "Access",
         author: "u_demo_agent",
         createdAt: ago(100),
         views: 15,
@@ -252,7 +433,7 @@ const makeDemoSeed = () => {
         content: "1. Open the VPN portal.\n2. Click reset password.\n3. Complete MFA verification.",
       },
     ],
-    orgSettings: [{ orgId: "o_demo", priorities, priorityMap: prioritiesToMap(priorities), urgencies: DEFAULT_URGENCIES, updatedAt: Date.now() }],
+    orgSettings: [{ orgId: "o_demo", priorities, priorityMap: prioritiesToMap(priorities), urgencies: DEFAULT_URGENCIES, categories: CATEGORIES, updatedAt: Date.now() }],
     teamSettings: [{ teamId: "t_demo", priorities, priorityMap: prioritiesToMap(priorities), urgencies: DEFAULT_URGENCIES, updatedAt: Date.now() }],
     teamRoles: [
       { id: "role_demo_admin", teamId: "t_demo", name: "Admin", description: "Full access", createdAt: ago(200) },
@@ -270,8 +451,127 @@ const makeDemoSeed = () => {
         timeline: "09:00 detection, 09:25 cert rolled, 09:35 validation complete.",
         actionItems: ["Add cert expiry alert", "Document runbook"],
         owner: "u_demo_agent",
+        customData: {},
         createdAt: ago(3),
         updatedAt: ago(2),
+      },
+    ],
+    closingTemplates: [
+      {
+        id: "tmpl_demo_1",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        name: "Standard Incident Close",
+        description: "Template for closing standard incidents",
+        content: "Incident resolved and verified. Root cause: [ROOT_CAUSE]. All affected systems are operational.",
+        applyToTypes: ["Incident"],
+        createdAt: ago(50),
+        updatedAt: ago(50),
+      },
+    ],
+    pirFieldConfigs: [
+      {
+        id: "pir_cfg_demo_1",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        fields: [
+          { name: "summary", label: "Summary", type: "text", required: true },
+          { name: "rootCause", label: "Root Cause", type: "text", required: true },
+          { name: "timeline", label: "Timeline", type: "text", required: false },
+          { name: "actionItems", label: "Action Items", type: "list", required: false },
+          { name: "owner", label: "Owner", type: "user", required: true },
+        ],
+        createdAt: ago(100),
+        updatedAt: ago(100),
+      },
+    ],
+    catalogItems: [
+      {
+        id: "cat_demo_1",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        name: "Software Access Request",
+        description: "Request access to approved business software and tools.",
+        category: "Access Management",
+        icon: "request",
+        defaultType: "Service Request",
+        defaultPriority: "Medium",
+        defaultUrgency: "Medium",
+        requiresApproval: true,
+        approverRole: "Admin",
+        active: true,
+        createdAt: ago(120),
+        updatedAt: ago(120),
+      },
+      {
+        id: "cat_demo_2",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        name: "Hardware Replacement",
+        description: "Replace a damaged or aged laptop, monitor, or accessory.",
+        category: "Hardware",
+        icon: "device-laptop",
+        defaultType: "Service Request",
+        defaultPriority: "Low",
+        defaultUrgency: "Low",
+        requiresApproval: false,
+        approverRole: "Admin",
+        active: true,
+        createdAt: ago(120),
+        updatedAt: ago(120),
+      },
+      {
+        id: "cat_demo_3",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        name: "Emergency Change",
+        description: "Fast-track a high-impact production change for an incident.",
+        category: "Software",
+        icon: "change",
+        defaultType: "Change Request",
+        defaultPriority: "High",
+        defaultUrgency: "High",
+        requiresApproval: true,
+        approverRole: "Admin",
+        active: true,
+        createdAt: ago(120),
+        updatedAt: ago(120),
+      },
+    ],
+    approvals: [
+      {
+        id: "appr_demo_1",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        ticketId: "REQ-9002",
+        catalogItemId: "cat_demo_1",
+        requestedBy: "u_demo",
+        requestedFor: "u_demo",
+        approverId: "u_demo",
+        approverRole: "Admin",
+        status: "Pending",
+        decision: "",
+        comments: "",
+        dueAt: ago(-12),
+        createdAt: ago(6),
+        decidedAt: null,
+      },
+      {
+        id: "appr_demo_2",
+        orgId: "o_demo",
+        teamId: "t_demo",
+        ticketId: "CHG-0001",
+        catalogItemId: "cat_demo_3",
+        requestedBy: "u_admin",
+        requestedFor: "u_admin",
+        approverId: "u_demo_agent",
+        approverRole: "Admin",
+        status: "Approved",
+        decision: "Approved",
+        comments: "Approved for maintenance window.",
+        dueAt: ago(-24),
+        createdAt: ago(24),
+        decidedAt: ago(20),
       },
     ],
   };
@@ -364,6 +664,100 @@ export async function loginWithEmailPassword(email, password) {
   return toUser(data);
 }
 
+export async function loginWithGoogle() {
+  ensureSupabaseOrDemo();
+  
+  const { data, error } = await supabase.auth.signInWithOAuth({
+    provider: 'google',
+    options: {
+      redirectTo: window.location.origin,
+    },
+  });
+
+  fail(error, "Unable to sign in with Google.");
+  return data;
+}
+
+export async function getUserFromSession(session) {
+  const authUser = session?.user;
+
+  if (!authUser?.email) {
+    throw new Error("No session found.");
+  }
+
+  const { data: existingUser, error: fetchError } = await supabase
+    .from(TABLES.users)
+    .select("*")
+    .ilike("email", authUser.email)
+    .limit(1)
+    .maybeSingle();
+
+  if (fetchError && fetchError.code !== "PGRST116") {
+    throw new Error(fetchError.message);
+  }
+
+  if (existingUser) {
+    return toUser(existingUser);
+  }
+
+  const { data: orgs, error: orgsError } = await supabase
+    .from(TABLES.orgs)
+    .select("id")
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (orgsError) {
+    throw new Error(orgsError.message);
+  }
+
+  const defaultOrgId = orgs?.[0]?.id || null;
+
+  const { data: teams, error: teamsError } = await supabase
+    .from(TABLES.teams)
+    .select("id")
+    .eq("org_id", defaultOrgId)
+    .order("created_at", { ascending: true })
+    .limit(1);
+
+  if (teamsError) {
+    throw new Error(teamsError.message);
+  }
+
+  const defaultTeamId = teams?.[0]?.id || null;
+
+  if (!defaultOrgId) {
+    throw new Error("No organization is configured for this workspace.");
+  }
+
+  const newUserData = {
+    id: uid(),
+    name: authUser.user_metadata?.full_name || authUser.email.split("@")[0] || "User",
+    email: authUser.email,
+    role: "End User",
+    org_id: defaultOrgId,
+    team_id: defaultTeamId,
+    title: "",
+  };
+
+  const { data: createdUser, error: createError } = await supabase
+    .from(TABLES.users)
+    .insert([newUserData])
+    .select()
+    .single();
+
+  fail(createError, "Unable to create user.");
+
+  return toUser(createdUser);
+}
+
+export async function handleAuthCallback() {
+  const { data, error } = await supabase.auth.getSession();
+
+  fail(error, "Unable to verify session.");
+
+  return getUserFromSession(data?.session);
+}
+
 export async function fetchAppData() {
   if (shouldUseDemoMode()) {
     return clone(getDemoState());
@@ -381,6 +775,10 @@ export async function fetchAppData() {
       teamSettingsRes,
       teamRolesRes,
       reviewsRes,
+      templatesRes,
+      pirConfigsRes,
+      catalogRes,
+      approvalsRes,
     ] = await Promise.all([
       supabase.from(TABLES.orgs).select("*").order("name", { ascending: true }),
       supabase.from(TABLES.teams).select("*").order("name", { ascending: true }),
@@ -392,6 +790,10 @@ export async function fetchAppData() {
       supabase.from(TABLES.teamSettings).select("*"),
       supabase.from(TABLES.teamRoles).select("*").order("created_at", { ascending: true }),
       supabase.from(TABLES.postIncidentReviews).select("*").order("updated_at", { ascending: false }),
+      supabase.from(TABLES.closingTemplates).select("*").order("created_at", { ascending: true }),
+      supabase.from(TABLES.pirFieldConfigs).select("*"),
+      supabase.from(TABLES.catalogItems).select("*").order("created_at", { ascending: true }),
+      supabase.from(TABLES.approvals).select("*").order("created_at", { ascending: false }),
     ]);
 
     fail(orgsRes.error, "Failed to load organizations.");
@@ -404,6 +806,10 @@ export async function fetchAppData() {
     fail(teamSettingsRes.error, "Failed to load team settings.");
     fail(teamRolesRes.error, "Failed to load team roles.");
     fail(reviewsRes.error, "Failed to load post-incident reviews.");
+    fail(templatesRes.error, "Failed to load templates.");
+    fail(pirConfigsRes.error, "Failed to load PIR field configs.");
+    fail(catalogRes.error, "Failed to load service catalog items.");
+    fail(approvalsRes.error, "Failed to load approvals.");
 
     const commentsByTicketId = {};
     for (const row of commentsRes.data || []) {
@@ -421,6 +827,10 @@ export async function fetchAppData() {
       teamSettings: (teamSettingsRes.data || []).map(toTeamSettings),
       teamRoles: (teamRolesRes.data || []).map(toTeamRole),
       postIncidentReviews: (reviewsRes.data || []).map(toPostIncidentReview),
+      closingTemplates: (templatesRes.data || []).map(toClosingTemplate),
+      pirFieldConfigs: (pirConfigsRes.data || []).map(toPirFieldConfig),
+      catalogItems: (catalogRes.data || []).map(toCatalogItem),
+      approvals: (approvalsRes.data || []).map(toApproval),
     };
   } catch (error) {
     if (isFetchFailure(error)) {
@@ -449,6 +859,10 @@ export async function createTicket(payload) {
       status: payload.status || "Open",
       createdAt: Date.now(),
       tags: asArray(payload.tags),
+      parentId: payload.parentId || null,
+      dueDate: payload.dueDate || null,
+      estimateHours: payload.estimateHours != null && payload.estimateHours !== "" ? Number(payload.estimateHours) : null,
+      spentHours: payload.spentHours != null && payload.spentHours !== "" ? Number(payload.spentHours) : 0,
       comments: [],
     };
     state.tickets.unshift(created);
@@ -471,6 +885,10 @@ export async function createTicket(payload) {
     status: payload.status || "Open",
     created_at: Date.now(),
     tags: asArray(payload.tags),
+    parent_id: payload.parentId || null,
+    due_date: payload.dueDate || null,
+    estimate_hours: payload.estimateHours != null && payload.estimateHours !== "" ? Number(payload.estimateHours) : null,
+    spent_hours: payload.spentHours != null && payload.spentHours !== "" ? Number(payload.spentHours) : 0,
   };
 
   const { data, error } = await supabase
@@ -499,6 +917,10 @@ export async function updateTicketFields(ticketId, fields) {
   if (typeof fields.priority === "string") patch.priority = fields.priority;
   if (typeof fields.urgency === "string") patch.urgency = fields.urgency;
   if (typeof fields.assignee === "string") patch.assignee = fields.assignee;
+  if ("parentId" in fields) patch.parent_id = fields.parentId ?? null;
+  if ("dueDate" in fields) patch.due_date = fields.dueDate || null;
+  if ("estimateHours" in fields) patch.estimate_hours = fields.estimateHours == null || fields.estimateHours === "" ? null : Number(fields.estimateHours);
+  if ("spentHours" in fields) patch.spent_hours = fields.spentHours == null || fields.spentHours === "" ? 0 : Number(fields.spentHours);
 
   if (!Object.keys(patch).length) {
     const { data, error } = await supabase
@@ -573,6 +995,98 @@ export async function createTicketComment(ticketId, payload) {
   return toComment(data);
 }
 
+export async function createApproval(payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const approval = {
+      id: `appr_${uid()}`,
+      orgId: payload.orgId,
+      teamId: payload.teamId || "",
+      ticketId: payload.ticketId,
+      catalogItemId: payload.catalogItemId || "",
+      requestedBy: payload.requestedBy,
+      requestedFor: payload.requestedFor || payload.requestedBy,
+      approverId: payload.approverId || "",
+      approverRole: payload.approverRole || "Admin",
+      approverMode: payload.approverMode || "role",
+      approverTeamId: payload.approverTeamId || "",
+      status: payload.status || "Pending",
+      decision: payload.decision || "",
+      comments: payload.comments || "",
+      dueAt: payload.dueAt || null,
+      createdAt: Date.now(),
+      decidedAt: payload.decidedAt || null,
+    };
+    state.approvals = [...(state.approvals || []), approval];
+    saveDemoState();
+    return clone(approval);
+  }
+
+  const row = {
+    id: `appr_${uid()}`,
+    org_id: payload.orgId,
+    team_id: payload.teamId || "",
+    ticket_id: payload.ticketId,
+    catalog_item_id: payload.catalogItemId || "",
+    requested_by: payload.requestedBy,
+    requested_for: payload.requestedFor || payload.requestedBy,
+    approver_id: payload.approverId || "",
+      approver_role: payload.approverRole || "Admin",
+      approver_mode: payload.approverMode || "role",
+      approver_team_id: payload.approverTeamId || null,
+    status: payload.status || "Pending",
+    decision: payload.decision || "",
+    comments: payload.comments || "",
+    due_at: payload.dueAt || null,
+    created_at: Date.now(),
+    decided_at: payload.decidedAt || null,
+  };
+
+  const { data, error } = await supabase
+    .from(TABLES.approvals)
+    .insert(row)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to create approval.");
+  return toApproval(data);
+}
+
+export async function resolveApproval(approvalId, payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const index = (state.approvals || []).findIndex((row) => row.id === approvalId);
+    if (index < 0) throw new Error("Approval not found.");
+    const next = {
+      ...state.approvals[index],
+      status: payload.status,
+      decision: payload.decision || payload.status,
+      comments: payload.comments || "",
+      approverId: payload.approverId || state.approvals[index].approverId,
+      decidedAt: Date.now(),
+    };
+    state.approvals[index] = next;
+    saveDemoState();
+    return clone(next);
+  }
+
+  const { data, error } = await supabase
+    .from(TABLES.approvals)
+    .update({
+      status: payload.status,
+      decision: payload.decision || payload.status,
+      comments: payload.comments || "",
+      approver_id: payload.approverId || undefined,
+      decided_at: Date.now(),
+    })
+    .eq("id", approvalId)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to update approval.");
+  return toApproval(data);
+}
+
 export async function createArticle(payload) {
   if (shouldUseDemoMode()) {
     const state = getDemoState();
@@ -581,7 +1095,9 @@ export async function createArticle(payload) {
       title: payload.title,
       orgId: payload.orgId,
       category: payload.category,
+      folder: payload.folder || "General",
       author: payload.author,
+      editors: asArray(payload.editors),
       content: payload.content,
       views: 0,
       tags: asArray(payload.tags),
@@ -597,7 +1113,9 @@ export async function createArticle(payload) {
     title: payload.title,
     org_id: payload.orgId,
     category: payload.category,
+    folder: payload.folder || "General",
     author: payload.author,
+    editors: asArray(payload.editors),
     content: payload.content,
     views: 0,
     tags: asArray(payload.tags),
@@ -611,6 +1129,44 @@ export async function createArticle(payload) {
     .single();
 
   fail(error, "Failed to publish article.");
+  return toArticle(data);
+}
+
+export async function updateArticle(articleId, payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const index = state.articles.findIndex((row) => row.id === articleId);
+    if (index < 0) throw new Error("Article not found.");
+    state.articles[index] = {
+      ...state.articles[index],
+      title: payload.title,
+      category: payload.category,
+      folder: payload.folder || "General",
+      content: payload.content,
+      tags: asArray(payload.tags),
+      editors: asArray(payload.editors),
+    };
+    saveDemoState();
+    return clone(state.articles[index]);
+  }
+
+  const row = {
+    title: payload.title,
+    category: payload.category,
+    folder: payload.folder || "General",
+    content: payload.content,
+    tags: asArray(payload.tags),
+    editors: asArray(payload.editors),
+  };
+
+  const { data, error } = await supabase
+    .from(TABLES.articles)
+    .update(row)
+    .eq("id", articleId)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to update article.");
   return toArticle(data);
 }
 
@@ -679,6 +1235,27 @@ export async function createOrganisation(payload) {
     urgencies: DEFAULT_URGENCIES,
   });
 
+  return toOrg(data);
+}
+
+export async function updateOrgPlan(orgId, plan) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const org = state.orgs.find((o) => o.id === orgId);
+    if (!org) throw new Error("Organisation not found.");
+    org.plan = plan;
+    saveDemoState();
+    return clone(toOrg(org));
+  }
+
+  const { data, error } = await supabase
+    .from(TABLES.orgs)
+    .update({ plan })
+    .eq("id", orgId)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to update plan.");
   return toOrg(data);
 }
 
@@ -860,6 +1437,9 @@ export async function upsertOrgSettings(payload) {
       priorities,
       priorityMap: prioritiesToMap(priorities),
       urgencies: normalizeUrgencies(payload.urgencies),
+      categories: Array.isArray(payload.categories) && payload.categories.length ? payload.categories.map((c) => String(c)) : CATEGORIES,
+      rolePermissions: payload.rolePermissions || {},
+      requireApprovals: !!payload.requireApprovals,
       updatedAt: Date.now(),
     };
     const index = state.orgSettings.findIndex((row) => row.orgId === payload.orgId);
@@ -873,6 +1453,9 @@ export async function upsertOrgSettings(payload) {
     org_id: payload.orgId,
     priorities: normalizePriorities(payload.priorities),
     urgencies: normalizeUrgencies(payload.urgencies),
+    categories: Array.isArray(payload.categories) && payload.categories.length ? payload.categories.map((c) => String(c)) : CATEGORIES,
+    role_permissions: payload.rolePermissions || {},
+    require_approvals: !!payload.requireApprovals,
     updated_at: Date.now(),
   };
 
@@ -967,6 +1550,7 @@ export async function savePostIncidentReview(payload) {
       timeline: payload.timeline || "",
       actionItems: asArray(payload.actionItems),
       owner: payload.owner || "",
+      customData: payload.customData || {},
       createdAt: payload.createdAt || Date.now(),
       updatedAt: Date.now(),
     };
@@ -990,6 +1574,7 @@ export async function savePostIncidentReview(payload) {
     timeline: payload.timeline || "",
     action_items: asArray(payload.actionItems),
     owner: payload.owner || "",
+    data: payload.customData || {},
     updated_at: Date.now(),
   };
 
@@ -1011,4 +1596,286 @@ export async function savePostIncidentReview(payload) {
 
   fail(result.error, "Failed to save post-incident review.");
   return toPostIncidentReview(result.data);
+}
+
+export async function createClosingTemplate(payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    if (!state.closingTemplates) state.closingTemplates = [];
+    const template = {
+      id: `tmpl_${uid()}`,
+      orgId: payload.orgId,
+      teamId: payload.teamId || "",
+      name: payload.name,
+      description: payload.description || "",
+      content: payload.content,
+      applyToTypes: asArray(payload.applyToTypes),
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    state.closingTemplates.push(template);
+    saveDemoState();
+    return clone(template);
+  }
+
+  const row = {
+    id: `tmpl_${uid()}`,
+    org_id: payload.orgId,
+    team_id: payload.teamId || "",
+    name: payload.name,
+    description: payload.description || "",
+    content: payload.content,
+    apply_to_types: asArray(payload.applyToTypes),
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  };
+
+  const { data, error } = await supabase
+    .from(TABLES.closingTemplates)
+    .insert(row)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to create template.");
+  return toClosingTemplate(data);
+}
+
+export async function updateClosingTemplate(templateId, payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    if (!state.closingTemplates) state.closingTemplates = [];
+    const index = state.closingTemplates.findIndex((t) => t.id === templateId);
+    if (index < 0) throw new Error("Template not found.");
+    state.closingTemplates[index] = {
+      ...state.closingTemplates[index],
+      ...payload,
+      updatedAt: Date.now(),
+    };
+    saveDemoState();
+    return clone(state.closingTemplates[index]);
+  }
+
+  const patch = {
+    name: payload.name,
+    description: payload.description || "",
+    content: payload.content,
+    apply_to_types: asArray(payload.applyToTypes),
+    updated_at: Date.now(),
+  };
+
+  const { data, error } = await supabase
+    .from(TABLES.closingTemplates)
+    .update(patch)
+    .eq("id", templateId)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to update template.");
+  return toClosingTemplate(data);
+}
+
+export async function deleteClosingTemplate(templateId) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    if (!state.closingTemplates) state.closingTemplates = [];
+    state.closingTemplates = state.closingTemplates.filter((t) => t.id !== templateId);
+    saveDemoState();
+    return true;
+  }
+
+  const { error } = await supabase
+    .from(TABLES.closingTemplates)
+    .delete()
+    .eq("id", templateId);
+
+  if (error) throw new Error(error.message || "Failed to delete template.");
+  return true;
+}
+
+export async function upsertPirFieldConfig(payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    if (!state.pirFieldConfigs) state.pirFieldConfigs = [];
+    const existing = state.pirFieldConfigs.find((cfg) => cfg.teamId === payload.teamId && cfg.orgId === payload.orgId);
+    const config = {
+      id: existing?.id || `pir_cfg_${uid()}`,
+      orgId: payload.orgId,
+      teamId: payload.teamId || "",
+      fields: asArray(payload.fields),
+      createdAt: existing?.createdAt || Date.now(),
+      updatedAt: Date.now(),
+    };
+    if (existing) {
+      const index = state.pirFieldConfigs.indexOf(existing);
+      state.pirFieldConfigs[index] = config;
+    } else {
+      state.pirFieldConfigs.push(config);
+    }
+    saveDemoState();
+    return clone(config);
+  }
+
+  const row = {
+    org_id: payload.orgId,
+    team_id: payload.teamId || "",
+    fields: asArray(payload.fields),
+    updated_at: Date.now(),
+  };
+
+  const existing = await supabase
+    .from(TABLES.pirFieldConfigs)
+    .select("id")
+    .eq("org_id", payload.orgId)
+    .eq("team_id", payload.teamId || "")
+    .single();
+
+  let result;
+  if (existing.data?.id) {
+    result = await supabase
+      .from(TABLES.pirFieldConfigs)
+      .update(row)
+      .eq("id", existing.data.id)
+      .select("*")
+      .single();
+  } else {
+    result = await supabase
+      .from(TABLES.pirFieldConfigs)
+      .insert({ id: `pir_cfg_${uid()}`, ...row, created_at: Date.now() })
+      .select("*")
+      .single();
+  }
+
+  fail(result.error, "Failed to save PIR field config.");
+  return toPirFieldConfig(result.data);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Activity Audit Log
+// Track all ticket changes for compliance and visibility
+// ─────────────────────────────────────────────────────────────────────────────
+
+const toActivityLog = (row) => ({
+  id: row.id,
+  ticketId: row.ticket_id,
+  orgId: row.org_id,
+  teamId: row.team_id,
+  userId: row.user_id,
+  action: row.action,
+  field: row.field || "",
+  oldValue: row.old_value,
+  newValue: row.new_value,
+  createdAt: Number(row.created_at),
+});
+
+export async function logActivity(payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    if (!state.activityLog) state.activityLog = [];
+    const log = {
+      id: `log_${uid()}`,
+      ticketId: payload.ticketId,
+      orgId: payload.orgId,
+      teamId: payload.teamId,
+      userId: payload.userId,
+      action: payload.action,
+      field: payload.field || "",
+      oldValue: payload.oldValue,
+      newValue: payload.newValue,
+      createdAt: Date.now(),
+    };
+    state.activityLog.push(log);
+    saveDemoState();
+    return clone(log);
+  }
+
+  const row = {
+    id: `log_${uid()}`,
+    ticket_id: payload.ticketId,
+    org_id: payload.orgId,
+    team_id: payload.teamId,
+    user_id: payload.userId,
+    action: payload.action,
+    field: payload.field || "",
+    old_value: payload.oldValue,
+    new_value: payload.newValue,
+    created_at: Date.now(),
+  };
+
+  const { data, error } = await supabase
+    .from(TABLES.activityLog)
+    .insert(row)
+    .select("*")
+    .single();
+
+  // Don't fail on audit log errors - they're non-critical
+  if (error) console.warn("Failed to log activity:", error.message);
+  return data ? toActivityLog(data) : null;
+}
+
+export async function fetchActivityLog(ticketId) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const logs = (state.activityLog || [])
+      .filter((log) => log.ticketId === ticketId)
+      .sort((a, b) => b.createdAt - a.createdAt);
+    return clone(logs);
+  }
+
+  const { data, error } = await supabase
+    .from(TABLES.activityLog)
+    .select("*")
+    .eq("ticket_id", ticketId)
+    .order("created_at", { ascending: false });
+
+  if (error) {
+    console.warn("Failed to fetch activity log:", error.message);
+    return [];
+  }
+
+  return (data || []).map(toActivityLog);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SLA Breach Detection & Notifications
+// Check for tickets approaching or breaching SLA
+// ─────────────────────────────────────────────────────────────────────────────
+
+export function checkSLAStatus(ticket, hours = 24) {
+  const createdMs = ticket.createdAt;
+  const nowMs = Date.now();
+  const elapsedMs = nowMs - createdMs;
+  const elapsedHours = elapsedMs / (1000 * 60 * 60);
+  const percentComplete = (elapsedHours / hours) * 100;
+
+  return {
+    elapsedHours: Math.round(elapsedHours * 10) / 10,
+    percentComplete: Math.round(percentComplete),
+    isBreached: elapsedHours > hours,
+    isRisk: percentComplete > 75 && percentComplete <= 100,
+    hoursRemaining: Math.max(0, Math.round((hours - elapsedHours) * 10) / 10),
+  };
+}
+
+export function findSLABreachers(tickets, priorityCatalog = {}) {
+  return tickets
+    .filter((tk) => !["Resolved", "Closed"].includes(tk.status))
+    .map((tk) => {
+      const cfg = priorityCatalog[tk.priority];
+      const slaHours = cfg && Number(cfg.sla) > 0 ? Number(cfg.sla) : slaForPriority(tk.priority);
+      const status = checkSLAStatus(tk, slaHours);
+      return { ticket: tk, slaStatus: status };
+    })
+    .filter(({ slaStatus }) => slaStatus.isBreached);
+}
+
+export function findSLAAtRisk(tickets, priorityCatalog = {}) {
+  return tickets
+    .filter((tk) => !["Resolved", "Closed"].includes(tk.status))
+    .map((tk) => {
+      const cfg = priorityCatalog[tk.priority];
+      const slaHours = cfg && Number(cfg.sla) > 0 ? Number(cfg.sla) : slaForPriority(tk.priority);
+      const status = checkSLAStatus(tk, slaHours);
+      return { ticket: tk, slaStatus: status };
+    })
+    .filter(({ slaStatus }) => slaStatus.isRisk && !slaStatus.isBreached);
 }

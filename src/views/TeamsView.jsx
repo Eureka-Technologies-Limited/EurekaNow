@@ -1,8 +1,9 @@
 import { useEffect, useMemo, useState } from "react";
-import { DEFAULT_URGENCIES, PRIORITIES } from "../core/constants.js";
+import { DEFAULT_URGENCIES, PRIORITIES, TICKET_TYPES } from "../core/constants.js";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { Avatar, Badge, Btn, Card, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
+import { PlansModal, PlanBadge } from "../ui/UpgradeGate.jsx";
 
 const TEAM_ICONS = ["IT","ENG","OPS","APP","NET","SEC","DATA","QA","PM","UX","HR","FIN"];
 const FALLBACK_ROLES = ["Admin", "Agent", "End User"];
@@ -13,13 +14,36 @@ const defaultPriorityRows = () => Object.entries(PRIORITIES).map(([name, cfg]) =
   sla: cfg.sla,
 }));
 
+const isValidHexColor = (color) => {
+  const hex = String(color || "").trim();
+  return /^#[0-9A-Fa-f]{6}$/.test(hex);
+};
+
 const normalizePriorityRows = (rows) => {
   const list = (rows || [])
-    .map((row) => ({
-      name: String(row?.name || "").trim(),
-      color: String(row?.color || "").trim() || "#888888",
-      sla: Number(row?.sla || 0),
-    }))
+    .map((row) => {
+      const rawColor = row?.color;
+      const name = String(row?.name || "").trim();
+      
+      // Try to preserve the color if it's a valid hex color
+      let color = isValidHexColor(rawColor) ? String(rawColor).trim() : null;
+      
+      // If no valid color, try to recover from PRIORITIES constant
+      if (!color && PRIORITIES[name]) {
+        color = PRIORITIES[name].color;
+      }
+      
+      // Fall back to a neutral color if still no valid color
+      if (!color) {
+        color = "#888888";
+      }
+      
+      return {
+        name,
+        color,
+        sla: Number(row?.sla || 0),
+      };
+    })
     .filter((row) => row.name && row.sla > 0);
   return list.length ? list : defaultPriorityRows();
 };
@@ -31,7 +55,10 @@ export function TeamsView({
   tickets,
   orgSettings,
   teamSettings,
+  closingTemplates = [],
+  pirFieldConfigs = [],
   teamRoles,
+  plan,
   onCreateOrg,
   onCreateTeam,
   onCreateMember,
@@ -39,6 +66,11 @@ export function TeamsView({
   onSaveOrgSettings,
   onSaveTeamSettings,
   onAddTeamRole,
+  onCreateClosingTemplate,
+  onUpdateClosingTemplate,
+  onDeleteClosingTemplate,
+  onUpsertPirFieldConfig,
+  onUpgradePlan,
 }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
@@ -50,7 +82,10 @@ export function TeamsView({
   const [editRolesUserId, setEditRolesUserId] = useState(null);
   const [settingsOrgOpen, setSettingsOrgOpen] = useState(false);
   const [settingsTeamId, setSettingsTeamId] = useState(null);
+  const [settingsTab, setSettingsTab] = useState("sla");
+  const [templateEditor, setTemplateEditor] = useState(null); // { orgId, teamId, template }
   const [addRoleTeamId, setAddRoleTeamId] = useState(null);
+  const [plansOpen, setPlansOpen] = useState(false);
 
   useEffect(() => {
     if (!orgs.length) {
@@ -70,6 +105,14 @@ export function TeamsView({
   const selectedMemberTeamRoles = teamRoles.filter((r) => r.teamId === selectedMember?.teamId);
 
   const orgSetting = orgSettings.find((row) => row.orgId === selOrg);
+
+  const templatesForOrg = (orgId, teamId) => (
+    closingTemplates.filter((tmpl) => tmpl.orgId === orgId && (!tmpl.teamId || tmpl.teamId === teamId || tmpl.teamId === ""))
+  );
+
+  const pirConfigFor = (orgId, teamId) => (
+    pirFieldConfigs.find((cfg) => cfg.orgId === orgId && (cfg.teamId === (teamId || ""))) || null
+  );
 
   return (
     <div>
@@ -126,14 +169,17 @@ export function TeamsView({
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", flexWrap: "wrap", gap: 10 }}>
                   <div>
                     <h2 style={{ fontSize: isMobile ? 16 : 18, fontWeight: 800, margin: "0 0 6px", color: t.text }}>{org.name}</h2>
-                    <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                    <div style={{ display: "flex", gap: 7, flexWrap: "wrap", alignItems: "center" }}>
                       <Badge label={org.industry} color={t.accentText} bg={t.accentBg} />
-                      <Badge label={org.plan} color={t.blueText} bg={t.blueBg} />
+                      <PlanBadge plan={org.plan} onClick={() => setPlansOpen(true)} />
                     </div>
                   </div>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
                     <Btn variant="secondary" size="sm" onClick={() => setSettingsOrgOpen(true)}>
                       <I name="settings" size={12} /> SLA & Priority
+                    </Btn>
+                    <Btn variant="secondary" size="sm" onClick={() => setPlansOpen(true)}>
+                      <I name="zap" size={12} /> Upgrade
                     </Btn>
                     <Btn variant="secondary" size="sm" onClick={() => setAddTeamOpen(true)}>
                       <I name="plus" size={12} /> Team
@@ -279,30 +325,196 @@ export function TeamsView({
       )}
 
       {settingsOrgOpen && org && (
-        <Modal title="Organisation SLA, Priority & Urgency" onClose={() => setSettingsOrgOpen(false)} width={620}>
-          <SettingsForm
-            defaultPriorities={normalizePriorityRows(orgSetting?.priorities)}
-            defaultUrgencies={orgSetting?.urgencies || DEFAULT_URGENCIES}
-            onSave={async (settings) => {
-              await onSaveOrgSettings({ orgId: org.id, ...settings });
-              setSettingsOrgOpen(false);
-            }}
-            onCancel={() => setSettingsOrgOpen(false)}
-          />
+        <Modal title="Organisation Settings" onClose={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }} width={820}>
+          <div style={{ display: "flex", gap: 12 }}>
+            <div style={{ width: 200 }}>
+              {[
+                { id: "sla", label: "SLA & Priority" },
+                { id: "permissions", label: "Permissions" },
+                { id: "categories", label: "Categories" },
+                { id: "templates", label: "Templates" },
+                { id: "pir", label: "PIR Fields" },
+              ].map((it) => (
+                <Btn
+                  key={it.id}
+                  variant={settingsTab === it.id ? "primary" : "ghost"}
+                  full
+                  size="md"
+                  onClick={() => setSettingsTab(it.id)}
+                  style={{ justifyContent: "flex-start", textAlign: "left", padding: "8px 10px", marginBottom: 6, borderRadius: 8 }}
+                >
+                  {it.label}
+                </Btn>
+              ))}
+            </div>
+            <div style={{ flex: 1 }}>
+              {settingsTab === "sla" && (
+                <SettingsForm
+                  defaultPriorities={normalizePriorityRows(orgSetting?.priorities)}
+                  defaultUrgencies={orgSetting?.urgencies || DEFAULT_URGENCIES}
+                  onSave={async (settings) => {
+                    await onSaveOrgSettings({ orgId: org.id, ...settings });
+                    setSettingsOrgOpen(false);
+                    setSettingsTab("sla");
+                  }}
+                  onCancel={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }}
+                />
+              )}
+
+              {settingsTab === "permissions" && (
+                <PermissionsForm
+                  orgId={org.id}
+                  orgSetting={orgSetting}
+                  users={users.filter((u) => u.orgId === org.id)}
+                  teamRoles={teamRoles}
+                  onCancel={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }}
+                  onSave={async (settings) => {
+                    await onSaveOrgSettings({ orgId: org.id, priorities: normalizePriorityRows(orgSetting?.priorities), urgencies: orgSetting?.urgencies || DEFAULT_URGENCIES, ...settings });
+                    setSettingsOrgOpen(false);
+                    setSettingsTab("sla");
+                  }}
+                  onUpdateMemberRoles={onUpdateMemberRoles}
+                />
+              )}
+
+              {settingsTab === "categories" && (
+                <CategoriesForm
+                  defaultCategories={orgSetting?.categories || []}
+                  onSave={async (settings) => {
+                    await onSaveOrgSettings({ orgId: org.id, priorities: normalizePriorityRows(orgSetting?.priorities), urgencies: orgSetting?.urgencies || DEFAULT_URGENCIES, ...settings });
+                    setSettingsOrgOpen(false);
+                    setSettingsTab("sla");
+                  }}
+                  onCancel={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }}
+                />
+              )}
+
+              {settingsTab === "templates" && (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>Closing Templates</div>
+                    <Btn variant="primary" size="sm" onClick={() => setTemplateEditor({ orgId: org.id, teamId: "", template: null })}>Add Template</Btn>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {templatesForOrg(org.id, "").map((tmpl) => (
+                      <div key={tmpl.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 10, border: `1px solid ${t.border}`, borderRadius: 8 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700 }}>{tmpl.name}</div>
+                          <div style={{ fontSize: 12, color: t.text3 }}>{tmpl.description}</div>
+                          <div style={{ fontSize: 11, color: t.text3, marginTop: 6 }}>Applies to: {tmpl.applyToTypes.join(", ")}</div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <Btn size="sm" variant="secondary" onClick={() => setTemplateEditor({ orgId: org.id, teamId: tmpl.teamId || "", template: tmpl })}>Edit</Btn>
+                          <Btn size="sm" variant="danger" onClick={async () => { await onDeleteClosingTemplate?.(tmpl.id); }}>
+                            Delete
+                          </Btn>
+                        </div>
+                      </div>
+                    ))}
+                    {templatesForOrg(org.id, "").length === 0 && <div style={{ color: t.text3 }}>No templates yet.</div>}
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === "pir" && (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>PIR Field Config</div>
+                  </div>
+                  <div>
+                    <PirEditor
+                      orgId={org.id}
+                      teamId={""}
+                      initial={pirConfigFor(org.id, "")}
+                      onSave={async (cfg) => { await onUpsertPirFieldConfig?.({ orgId: org.id, teamId: "", fields: cfg }); setSettingsOrgOpen(false); setSettingsTab("sla"); }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </Modal>
       )}
 
       {settingsTeamId && selectedTeam && (
-        <Modal title={`Team Settings - ${selectedTeam.name}`} onClose={() => setSettingsTeamId(null)} width={620}>
-          <SettingsForm
-            defaultPriorities={normalizePriorityRows(teamSettings.find((cfg) => cfg.teamId === settingsTeamId)?.priorities || orgSetting?.priorities)}
-            defaultUrgencies={teamSettings.find((cfg) => cfg.teamId === settingsTeamId)?.urgencies || orgSetting?.urgencies || DEFAULT_URGENCIES}
-            onSave={async (settings) => {
-              await onSaveTeamSettings({ teamId: settingsTeamId, ...settings });
-              setSettingsTeamId(null);
-            }}
-            onCancel={() => setSettingsTeamId(null)}
-          />
+        <Modal title={`Team Settings - ${selectedTeam.name}`} onClose={() => { setSettingsTeamId(null); setSettingsTab("sla"); }} width={820}>
+          <div style={{ display: "flex", gap: 12 }}>
+            <div style={{ width: 200 }}>
+              {[
+                { id: "sla", label: "SLA & Priority" },
+                { id: "templates", label: "Templates" },
+                { id: "pir", label: "PIR Fields" },
+              ].map((it) => (
+                <Btn
+                  key={it.id}
+                  variant={settingsTab === it.id ? "primary" : "ghost"}
+                  full
+                  size="md"
+                  onClick={() => setSettingsTab(it.id)}
+                  style={{ justifyContent: "flex-start", textAlign: "left", padding: "8px 10px", marginBottom: 6, borderRadius: 8 }}
+                >
+                  {it.label}
+                </Btn>
+              ))}
+            </div>
+            <div style={{ flex: 1 }}>
+              {settingsTab === "sla" && (
+                <SettingsForm
+                  defaultPriorities={normalizePriorityRows(teamSettings.find((cfg) => cfg.teamId === settingsTeamId)?.priorities || orgSetting?.priorities)}
+                  defaultUrgencies={teamSettings.find((cfg) => cfg.teamId === settingsTeamId)?.urgencies || orgSetting?.urgencies || DEFAULT_URGENCIES}
+                  onSave={async (settings) => {
+                    await onSaveTeamSettings({ teamId: settingsTeamId, ...settings });
+                    setSettingsTeamId(null);
+                    setSettingsTab("sla");
+                  }}
+                  onCancel={() => { setSettingsTeamId(null); setSettingsTab("sla"); }}
+                />
+              )}
+
+              {settingsTab === "templates" && (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>Closing Templates</div>
+                    <Btn variant="primary" size="sm" onClick={() => setTemplateEditor({ orgId: org.id, teamId: selectedTeam.id, template: null })}>Add Template</Btn>
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {templatesForOrg(org.id, selectedTeam.id).map((tmpl) => (
+                      <div key={tmpl.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 10, border: `1px solid ${t.border}`, borderRadius: 8 }}>
+                        <div style={{ flex: 1 }}>
+                          <div style={{ fontSize: 13, fontWeight: 700 }}>{tmpl.name}</div>
+                          <div style={{ fontSize: 12, color: t.text3 }}>{tmpl.description}</div>
+                          <div style={{ fontSize: 11, color: t.text3, marginTop: 6 }}>Applies to: {tmpl.applyToTypes.join(", ")}</div>
+                        </div>
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <Btn size="sm" variant="secondary" onClick={() => setTemplateEditor({ orgId: org.id, teamId: tmpl.teamId || "", template: tmpl })}>Edit</Btn>
+                          <Btn size="sm" variant="danger" onClick={async () => { await onDeleteClosingTemplate?.(tmpl.id); }}>
+                            Delete
+                          </Btn>
+                        </div>
+                      </div>
+                    ))}
+                    {templatesForOrg(org.id, selectedTeam.id).length === 0 && <div style={{ color: t.text3 }}>No templates yet.</div>}
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === "pir" && (
+                <div>
+                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 10 }}>
+                    <div style={{ fontSize: 13, fontWeight: 700 }}>PIR Field Config</div>
+                  </div>
+                  <div>
+                    <PirEditor
+                      orgId={org.id}
+                      teamId={selectedTeam.id}
+                      initial={pirConfigFor(org.id, selectedTeam.id)}
+                      onSave={async (cfg) => { await onUpsertPirFieldConfig?.({ orgId: org.id, teamId: selectedTeam.id, fields: cfg }); setSettingsTeamId(null); setSettingsTab("sla"); }}
+                    />
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
         </Modal>
       )}
 
@@ -331,14 +543,40 @@ export function TeamsView({
           />
         </Modal>
       )}
+      {templateEditor && (
+        <TemplateEditor
+          orgId={templateEditor.orgId}
+          teamId={templateEditor.teamId}
+          template={templateEditor.template}
+          onClose={() => setTemplateEditor(null)}
+          onCreate={onCreateClosingTemplate}
+          onUpdate={onUpdateClosingTemplate}
+        />
+      )}
+
+      {plansOpen && org && (
+        <PlansModal
+          currentPlan={org.plan}
+          onClose={() => setPlansOpen(false)}
+          onSelectPlan={async (planKey) => {
+            await onUpgradePlan?.(org.id, planKey);
+            setPlansOpen(false);
+          }}
+        />
+      )}
     </div>
   );
 }
 
 function SettingsForm({ defaultPriorities, defaultUrgencies, onSave, onCancel }) {
   const t = useTokens();
+  const { isMobile } = useBreakpoint();
   const [priorities, setPriorities] = useState(defaultPriorities);
-  const [urgenciesText, setUrgenciesText] = useState((defaultUrgencies || []).join(", "));
+  const [urgencies, setUrgencies] = useState(
+    Array.isArray(defaultUrgencies) && defaultUrgencies.length
+      ? defaultUrgencies
+      : ["Critical", "High", "Medium", "Low"]
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
@@ -354,18 +592,30 @@ function SettingsForm({ defaultPriorities, defaultUrgencies, onSave, onCancel })
     setPriorities((rows) => [...rows, { name: "", color: "#666666", sla: 24 }]);
   };
 
+  const updateUrgency = (index, value) => {
+    setUrgencies((rows) => rows.map((row, i) => (i === index ? value : row)));
+  };
+
+  const removeUrgency = (index) => {
+    setUrgencies((rows) => rows.filter((_, i) => i !== index));
+  };
+
+  const addUrgency = () => {
+    setUrgencies((rows) => [...rows, ""]);
+  };
+
   const submit = async () => {
     setSaving(true);
     setError("");
     const nextPriorities = normalizePriorityRows(priorities);
-    const urgencies = urgenciesText.split(",").map((u) => u.trim()).filter(Boolean);
-    if (!urgencies.length) {
+    const nextUrgencies = urgencies.map((u) => String(u || "").trim()).filter(Boolean);
+    if (!nextUrgencies.length) {
       setError("Add at least one urgency level.");
       setSaving(false);
       return;
     }
     try {
-      await onSave({ priorities: nextPriorities, urgencies });
+      await onSave({ priorities: nextPriorities, urgencies: nextUrgencies });
     } catch (err) {
       setError(err?.message || "Failed to save settings.");
       setSaving(false);
@@ -382,7 +632,7 @@ function SettingsForm({ defaultPriorities, defaultUrgencies, onSave, onCancel })
         <Label>Priorities & SLA (hours)</Label>
         <div style={{ display: "grid", gap: 8 }}>
           {priorities.map((p, i) => (
-            <div key={`${p.name}-${i}`} style={{ display: "grid", gridTemplateColumns: "1.2fr 110px 110px auto", gap: 8 }}>
+            <div key={`priority-${i}`} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1.2fr 110px 110px auto", gap: 8 }}>
               <Input value={p.name} onChange={(e) => updatePriority(i, "name", e.target.value)} placeholder="Priority name" />
               <Input value={String(p.sla)} onChange={(e) => updatePriority(i, "sla", e.target.value)} placeholder="SLA h" />
               <input type="color" value={p.color} onChange={(e) => updatePriority(i, "color", e.target.value)} style={{ width: "100%", height: 38, border: `1px solid ${t.border}`, borderRadius: 8, background: t.surface2 }} />
@@ -396,8 +646,18 @@ function SettingsForm({ defaultPriorities, defaultUrgencies, onSave, onCancel })
       </div>
 
       <div>
-        <Label>Urgency Levels (comma-separated)</Label>
-        <Input value={urgenciesText} onChange={(e) => setUrgenciesText(e.target.value)} placeholder="Critical, High, Medium, Low" />
+        <Label>Urgency Levels</Label>
+        <div style={{ display: "grid", gap: 8 }}>
+          {urgencies.map((u, i) => (
+            <div key={`urgency-${i}`} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr auto" : "1fr auto", gap: 8 }}>
+              <Input value={u} onChange={(e) => updateUrgency(i, e.target.value)} placeholder="Urgency name" />
+              <Btn variant="secondary" size="sm" onClick={() => removeUrgency(i)}>Remove</Btn>
+            </div>
+          ))}
+        </div>
+        <div style={{ marginTop: 8 }}>
+          <Btn variant="secondary" size="sm" onClick={addUrgency}><I name="plus" size={12} /> Add urgency</Btn>
+        </div>
       </div>
 
       {error && <div style={{ fontSize: 12, color: "#dc2626" }}>{error}</div>}
@@ -405,6 +665,294 @@ function SettingsForm({ defaultPriorities, defaultUrgencies, onSave, onCancel })
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
         <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
         <Btn variant="primary" onClick={submit} disabled={saving}>{saving ? "Saving..." : "Save Settings"}</Btn>
+      </div>
+    </div>
+  );
+}
+
+function CategoriesForm({ defaultCategories, onSave, onCancel }) {
+  const t = useTokens();
+  const { isMobile } = useBreakpoint();
+  const [categories, setCategories] = useState(Array.isArray(defaultCategories) && defaultCategories.length ? defaultCategories : ["General"]);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const updateCategory = (index, value) => {
+    setCategories((rows) => rows.map((row, i) => (i === index ? value : row)));
+  };
+
+  const removeCategory = (index) => {
+    setCategories((rows) => rows.filter((_, i) => i !== index));
+  };
+
+  const addCategory = () => {
+    setCategories((rows) => [...rows, ""]);
+  };
+
+  const submit = async () => {
+    const nextCategories = categories.map((c) => String(c || "").trim()).filter(Boolean);
+    if (!nextCategories.length) {
+      setError("Add at least one category.");
+      return;
+    }
+    setSaving(true);
+    setError("");
+    try {
+      await onSave({ categories: nextCategories });
+    } catch (err) {
+      setError(err?.message || "Failed to save categories.");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ fontSize: 12, color: t.text3, lineHeight: 1.5 }}>
+        Define the categories your organisation uses for tickets and KB content.
+      </div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {categories.map((c, i) => (
+          <div key={`cat-${i}`} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr auto" : "1fr auto", gap: 8 }}>
+            <Input value={c} onChange={(e) => updateCategory(i, e.target.value)} placeholder="Category name" />
+            <Btn variant="secondary" size="sm" onClick={() => removeCategory(i)}>Remove</Btn>
+          </div>
+        ))}
+        <div>
+          <Btn variant="secondary" size="sm" onClick={addCategory}><I name="plus" size={12} /> Add category</Btn>
+        </div>
+      </div>
+      {error && <div style={{ fontSize: 12, color: "#dc2626" }}>{error}</div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
+        <Btn variant="primary" onClick={submit} disabled={saving}>Save Categories</Btn>
+      </div>
+    </div>
+  );
+}
+
+function PermissionsForm({ orgId, orgSetting, users, teamRoles, onSave, onCancel, onUpdateMemberRoles }) {
+  const t = useTokens();
+  const [catalogEditable, setCatalogEditable] = useState(!!orgSetting?.catalogEditable);
+  const [requireApprovals, setRequireApprovals] = useState(!!orgSetting?.requireApprovals);
+  const [defaultApproverRole, setDefaultApproverRole] = useState(orgSetting?.defaultCatalogApproverRole || "");
+  const [saving, setSaving] = useState(false);
+  const [userSaving, setUserSaving] = useState(null);
+
+  // rolePermissions structure: { roleName: { permKey: true, ... }, ... }
+  const initialRolePerms = orgSetting?.rolePermissions || {};
+  const [rolePermissions, setRolePermissions] = useState(() => ({ ...initialRolePerms }));
+
+  // derive permission keys from rolePermissions
+  const permissionKeys = useMemo(() => ["catalog.manage", "catalog.edit", "approvals.resolve", "tickets.edit", "tickets.create"], []);
+
+  const presetRoles = ["Catalog Manager", "Admin", "Agent", "End User"];
+
+  const roleOptions = useMemo(() => {
+    const custom = (teamRoles || []).map((r) => r.name).filter(Boolean);
+    const merged = [...FALLBACK_ROLES, ...custom];
+    return Array.from(new Set(merged));
+  }, [teamRoles]);
+
+  const togglePermission = (role, perm) => {
+    setRolePermissions((prev) => {
+      const next = { ...(prev || {}) };
+      const row = { ...(next[role] || {}) };
+      row[perm] = !row[perm];
+      next[role] = row;
+      return next;
+    });
+  };
+
+  const addPermissionKey = (key) => {
+    const k = String(key || "").trim();
+    if (!k) return;
+    if (permissionKeys.includes(k)) return;
+    // initialize flag false for all roles
+    setRolePermissions((prev) => {
+      const next = { ...(prev || {}) };
+      roleOptions.forEach((r) => { next[r] = { ...(next[r] || {}) }; next[r][k] = false; });
+      return next;
+    });
+  };
+
+  const permissionDefinitions = useMemo(() => ([
+    { key: "catalog.manage", label: "Manage catalog items", description: "Create and edit catalog items, approvers, and publishing settings." },
+    { key: "catalog.edit", label: "Edit catalog items", description: "Change catalog content without full manage access." },
+    { key: "approvals.resolve", label: "Resolve approvals", description: "Approve or reject pending requests." },
+    { key: "tickets.edit", label: "Edit tickets", description: "Change ticket fields and status." },
+    { key: "tickets.create", label: "Create tickets", description: "Open new incidents, requests, and changes." },
+  ]), []);
+
+  const submit = async () => {
+    setSaving(true);
+    try {
+      await onSave({ catalogEditable: !!catalogEditable, requireApprovals: !!requireApprovals, defaultCatalogApproverRole: defaultApproverRole || "", rolePermissions });
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const grantCatalogManager = async (user) => {
+    const current = Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role].filter(Boolean);
+    if (current.includes("Catalog Manager")) return;
+    setUserSaving(user.id);
+    try {
+      const next = [...current, "Catalog Manager"];
+      await onUpdateMemberRoles?.({ userId: user.id, roles: next });
+    } finally {
+      setUserSaving(null);
+    }
+  };
+
+  const revokeCatalogManager = async (user) => {
+    const current = Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role].filter(Boolean);
+    if (!current.includes("Catalog Manager")) return;
+    setUserSaving(user.id);
+    try {
+      const next = current.filter((r) => r !== "Catalog Manager");
+      if (!next.length) next.push("End User");
+      await onUpdateMemberRoles?.({ userId: user.id, roles: next });
+    } finally {
+      setUserSaving(null);
+    }
+  };
+
+  const [newPerm, setNewPerm] = useState("");
+
+  const applyPreset = (role, preset) => {
+    const presets = {
+      "Catalog Manager": { "catalog.manage": true, "catalog.edit": true, "approvals.resolve": true },
+      "Agent": { "tickets.create": true, "tickets.edit": true },
+      "End User": { "tickets.create": true },
+      "Admin": { "catalog.manage": true, "catalog.edit": true, "approvals.resolve": true, "tickets.create": true, "tickets.edit": true },
+    };
+    const map = presets[preset] || presets[role] || {};
+    setRolePermissions((prev) => {
+      const next = { ...(prev || {}) };
+      next[role] = { ...(next[role] || {}), ...map };
+      return next;
+    });
+  };
+
+  const allRoles = roleOptions.slice(0, 4);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ fontSize: 12, color: t.text3, lineHeight: 1.5 }}>
+        This area controls who can manage the catalog and who can resolve approvals. Start with a preset, then fine-tune only if needed.
+      </div>
+
+      <div>
+        <Label>Catalog Editing & Approvals</Label>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input type="checkbox" checked={catalogEditable} onChange={(e) => setCatalogEditable(e.target.checked)} />
+            <span style={{ fontSize: 13 }}>Allow org members to edit service catalog items</span>
+          </label>
+          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <input type="checkbox" checked={requireApprovals} onChange={(e) => setRequireApprovals(e.target.checked)} />
+            <span style={{ fontSize: 13 }}>Require approvals for catalog requests</span>
+          </label>
+        </div>
+      </div>
+
+      <div>
+        <Label>Default Approver Role</Label>
+        <div style={{ fontSize: 12, color: t.text3, marginBottom: 6 }}>
+          Used when a catalog item is approval-based but not tied to one user or team.
+        </div>
+        <Sel value={defaultApproverRole} onChange={(e) => setDefaultApproverRole(e.target.value)}>
+          <option value="">- none -</option>
+          {roleOptions.map((r) => <option key={r} value={r}>{r}</option>)}
+        </Sel>
+      </div>
+
+      <div>
+        <Label>Role permissions</Label>
+        <div style={{ fontSize: 12, color: t.text3, marginBottom: 8 }}>
+          Pick a preset to get started, then adjust only the permissions you need.
+        </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
+          {presetRoles.map((role) => (
+            <Btn key={role} size="sm" variant="secondary" onClick={() => applyPreset(role, role)}>
+              {role === "Catalog Manager" ? "Catalog Manager preset" : `${role} preset`}
+            </Btn>
+          ))}
+          <Btn size="sm" variant="ghost" onClick={() => {
+            setRolePermissions({});
+            presetRoles.forEach((role) => applyPreset(role, role));
+          }}>
+            Apply recommended defaults
+          </Btn>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
+          <Input value={newPerm} onChange={(e) => setNewPerm(e.target.value)} placeholder="Add custom permission key, e.g. kb.edit" onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addPermissionKey(newPerm); setNewPerm(''); } }} />
+          <Btn variant="secondary" onClick={() => { addPermissionKey(newPerm); setNewPerm(""); }}>Add</Btn>
+        </div>
+
+        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+          {permissionDefinitions.map((perm) => (
+            <div key={perm.key} style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 12, background: t.surface2 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
+                <div style={{ minWidth: 200 }}>
+                  <div style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{perm.label}</div>
+                  <div style={{ fontSize: 12, color: t.text3, marginTop: 4, lineHeight: 1.5 }}>{perm.description}</div>
+                </div>
+                <div style={{ fontSize: 11, color: t.text3, alignSelf: "center" }}>{perm.key}</div>
+              </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {allRoles.map((role) => {
+                  const checked = !!((rolePermissions || {})[role]?.[perm.key]);
+                  return (
+                    <label key={`${role}-${perm.key}`} style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${t.border}`, borderRadius: 999, padding: "6px 10px", background: checked ? t.accentBg : t.surface }}>
+                      <input type="checkbox" checked={checked} onChange={() => togglePermission(role, perm.key)} />
+                      <span style={{ fontSize: 12, color: checked ? t.accentText : t.text2 }}>{role}</span>
+                    </label>
+                  );
+                })}
+              </div>
+            </div>
+          ))}
+        </div>
+
+        <div style={{ marginTop: 10, fontSize: 12, color: t.text3 }}>
+          Recommended defaults give Admin full access, Catalog Manager catalog control, Agents ticket actions, and End Users request creation only.
+        </div>
+      </div>
+
+      <div>
+        <Label>Assign Catalog Manager</Label>
+        <div style={{ fontSize: 12, color: t.text3, marginBottom: 6 }}>
+          Quick shortcut for users who should manage catalog items and approvals.
+        </div>
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {users.map((u) => {
+            const roles = Array.isArray(u.roles) && u.roles.length ? u.roles : [u.role].filter(Boolean);
+            const has = roles.includes("Catalog Manager");
+            return (
+              <div key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 8, border: `1px solid ${t.border}`, borderRadius: 8 }}>
+                <div>
+                  <div style={{ fontWeight: 700 }}>{u.name}</div>
+                  <div style={{ fontSize: 12, color: t.text3 }}>{roles.join(", ")}</div>
+                </div>
+                <div>
+                  {has ? (
+                    <Btn size="sm" variant="danger" onClick={() => revokeCatalogManager(u)} disabled={userSaving === u.id}>{userSaving === u.id ? "…" : "Revoke"}</Btn>
+                  ) : (
+                    <Btn size="sm" variant="primary" onClick={() => grantCatalogManager(u)} disabled={userSaving === u.id}>{userSaving === u.id ? "…" : "Grant"}</Btn>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+          {users.length === 0 && <div style={{ color: t.text3 }}>No users in this organisation.</div>}
+        </div>
+      </div>
+
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
+        <Btn variant="primary" onClick={submit} disabled={saving}>{saving ? "Saving…" : "Save Permissions"}</Btn>
       </div>
     </div>
   );
@@ -444,6 +992,7 @@ function AddOrgForm({ onSave, onCancel }) {
   const [f, setF] = useState({ name: "", domain: "", industry: "Technology", plan: "Professional" });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const { isMobile } = useBreakpoint();
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
   const industries = ["Technology","Healthcare","Engineering","Finance","Legal","Education","Other"];
   const plans = ["Starter","Professional","Enterprise"];
@@ -464,7 +1013,7 @@ function AddOrgForm({ onSave, onCancel }) {
     <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
       <div><Label>Name</Label><Input value={f.name} onChange={(e) => set("name", e.target.value)} placeholder="Acme Corp" autoFocus /></div>
       <div><Label>Domain</Label><Input value={f.domain} onChange={(e) => set("domain", e.target.value)} placeholder="acme.com" /></div>
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+      <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10 }}>
         <div><Label>Industry</Label><Sel value={f.industry} onChange={(e) => set("industry", e.target.value)}>{industries.map((i) => <option key={i}>{i}</option>)}</Sel></div>
         <div><Label>Plan</Label><Sel value={f.plan} onChange={(e) => set("plan", e.target.value)}>{plans.map((p) => <option key={p}>{p}</option>)}</Sel></div>
       </div>
@@ -695,6 +1244,140 @@ function EditMemberRolesForm({ user, teamRoles, onSave, onCancel }) {
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
         <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
         <Btn variant="primary" onClick={submit} disabled={saving}>Save Roles</Btn>
+      </div>
+    </div>
+  );
+}
+
+function TemplateEditor({ orgId, teamId, template, onClose, onCreate, onUpdate }) {
+  const t = useTokens();
+  const [name, setName] = useState(template?.name || "");
+  const [desc, setDesc] = useState(template?.description || "");
+  const [content, setContent] = useState(template?.content || "");
+  const [applyTo, setApplyTo] = useState(template?.applyToTypes || ["Incident"]);
+  const [saving, setSaving] = useState(false);
+
+  const toggleType = (type) => {
+    setApplyTo((prev) => prev.includes(type) ? prev.filter((p) => p !== type) : [...prev, type]);
+  };
+
+  const save = async () => {
+    if (!name.trim() || !content.trim()) return;
+    setSaving(true);
+    try {
+      if (template?.id) {
+        await onUpdate?.(template.id, { name: name.trim(), description: desc.trim(), content, applyToTypes: applyTo });
+      } else {
+        await onCreate?.({ orgId, teamId: teamId || "", name: name.trim(), description: desc.trim(), content, applyToTypes: applyTo });
+      }
+      onClose();
+    } catch (err) {
+      // ignore for now
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <Modal title={template?.id ? "Edit Template" : "New Template"} onClose={onClose} width={720}>
+      <div style={{ display: "grid", gap: 10 }}>
+        <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Template name" autoFocus />
+        <Input value={desc} onChange={(e) => setDesc(e.target.value)} placeholder="Short description" />
+        <div>
+          <div style={{ fontSize: 11, color: t.text3, marginBottom: 6 }}>Applies to</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {TICKET_TYPES.map((tt) => (
+              <button key={tt} onClick={() => toggleType(tt)} style={{ padding: "6px 10px", borderRadius: 8, border: `1px solid ${applyTo.includes(tt) ? t.accent : t.border}`, background: applyTo.includes(tt) ? t.accentBg : "none", cursor: "pointer" }}>{tt}</button>
+            ))}
+          </div>
+        </div>
+        <Input multiline rows={8} value={content} onChange={(e) => setContent(e.target.value)} placeholder="Template content" />
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+          <Btn variant="secondary" onClick={onClose}>Cancel</Btn>
+          <Btn variant="primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Btn>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+function PirEditor({ orgId, teamId, initial, onSave }) {
+  const t = useTokens();
+  const { isMobile } = useBreakpoint();
+  const [fields, setFields] = useState(() => (initial?.fields ? initial.fields.map((f) => ({ ...f })) : []));
+  const [saving, setSaving] = useState(false);
+
+  const addField = () => {
+    setFields((f) => [...f, { name: `field_${f.length + 1}`, label: "New Field", type: "text", required: false }]);
+  };
+
+  const updateField = (index, key, value) => {
+    setFields((rows) => rows.map((r, i) => (i === index ? { ...r, [key]: value } : r)));
+  };
+
+  const removeField = (index) => setFields((rows) => rows.filter((_, i) => i !== index));
+
+  const move = (index, dir) => {
+    setFields((rows) => {
+      const next = [...rows];
+      const j = index + dir;
+      if (j < 0 || j >= next.length) return next;
+      const tmp = next[j]; next[j] = next[index]; next[index] = tmp;
+      return next;
+    });
+  };
+
+  const reset = () => setFields(initial?.fields ? initial.fields.map((f) => ({ ...f })) : []);
+
+  const save = async () => {
+    setSaving(true);
+    try {
+      // basic validation: names must be non-empty
+      const invalid = fields.some((f) => !f.name || !f.name.trim());
+      if (invalid) {
+        // simple client-side feedback: abort save
+        setSaving(false);
+        return;
+      }
+      await onSave(fields.map((f) => ({ name: String(f.name).trim(), label: String(f.label || "").trim(), type: f.type || "text", required: !!f.required })));
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const typeOptions = ["text", "list", "user"];
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+      <div style={{ fontSize: 12, color: t.text3 }}>Add fields for the PIR form. Use <strong>user</strong> type to select an owner.</div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        {fields.map((fld, i) => (
+          <div key={`pir-field-${i}`} style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1.2fr 110px 90px auto", gap: 8, alignItems: "center" }}>
+            <Input value={fld.name} onChange={(e) => updateField(i, "name", e.target.value)} placeholder="field_name" />
+            <Input value={fld.label} onChange={(e) => updateField(i, "label", e.target.value)} placeholder="Label shown to users" />
+            <Sel value={fld.type} onChange={(e) => updateField(i, "type", e.target.value)}>
+              {typeOptions.map((tp) => <option key={tp} value={tp}>{tp}</option>)}
+            </Sel>
+            <label style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <input type="checkbox" checked={!!fld.required} onChange={(e) => updateField(i, "required", e.target.checked)} />
+              <span style={{ fontSize: 11, color: t.text3 }}>Required</span>
+            </label>
+            <div style={{ display: "flex", gap: 6 }}>
+              <button onClick={() => move(i, -1)} title="Move up" style={{ background: "none", border: "1px solid " + t.border, borderRadius: 6, padding: "6px 8px", cursor: "pointer" }}>↑</button>
+              <button onClick={() => move(i, 1)} title="Move down" style={{ background: "none", border: "1px solid " + t.border, borderRadius: 6, padding: "6px 8px", cursor: "pointer" }}>↓</button>
+              <button onClick={() => removeField(i)} title="Remove" style={{ background: "none", border: "1px solid " + t.border, borderRadius: 6, padding: "6px 8px", cursor: "pointer", color: t.redText }}>✕</button>
+            </div>
+          </div>
+        ))}
+        {fields.length === 0 && <div style={{ color: t.text3 }}>No fields yet. Click Add field to get started.</div>}
+      </div>
+
+      <div style={{ display: "flex", gap: 8 }}>
+        <Btn variant="secondary" onClick={reset}>Reset</Btn>
+        <Btn onClick={addField} variant="secondary">Add Field</Btn>
+        <div style={{ flex: 1 }} />
+        <Btn variant="primary" onClick={save} disabled={saving}>{saving ? "Saving…" : "Save"}</Btn>
       </div>
     </div>
   );

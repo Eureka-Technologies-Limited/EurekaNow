@@ -26,12 +26,68 @@ export function useBreakpoint() {
 
 // ── Theme context ─────────────────────────────────────────────────────────────
 
+const THEME_MODE_KEY = "eurekanow_theme_mode_v1";
+
 const ThemeCtx = createContext();
 
+function getSystemDarkMode() {
+  if (typeof window === "undefined" || !window.matchMedia) return true;
+  return window.matchMedia("(prefers-color-scheme: dark)").matches;
+}
+
+function loadThemeMode() {
+  if (typeof window === "undefined") return "system";
+  try {
+    const raw = localStorage.getItem(THEME_MODE_KEY);
+    if (raw === "dark" || raw === "light" || raw === "system") return raw;
+  } catch {}
+  return "system";
+}
+
 export function ThemeProvider({ children }) {
-  const [dark, setDark] = useState(true);
+  const [mode, setModeState] = useState(loadThemeMode);
+  const [systemDark, setSystemDark] = useState(getSystemDarkMode);
+
+  useEffect(() => {
+    if (typeof window === "undefined" || !window.matchMedia) return undefined;
+
+    const media = window.matchMedia("(prefers-color-scheme: dark)");
+    const handleChange = (event) => setSystemDark(event.matches);
+    setSystemDark(media.matches);
+
+    if (media.addEventListener) {
+      media.addEventListener("change", handleChange);
+      return () => media.removeEventListener("change", handleChange);
+    }
+
+    media.addListener(handleChange);
+    return () => media.removeListener(handleChange);
+  }, []);
+
+  useEffect(() => {
+    try {
+      localStorage.setItem(THEME_MODE_KEY, mode);
+    } catch {}
+  }, [mode]);
+
+  const dark = mode === "system" ? systemDark : mode === "dark";
+
+  const setMode = (nextMode) => {
+    setModeState((currentMode) => {
+      const resolved = typeof nextMode === "function" ? nextMode(currentMode) : nextMode;
+      return resolved === "dark" || resolved === "light" || resolved === "system" ? resolved : currentMode;
+    });
+  };
+
+  const toggle = () => {
+    setMode((currentMode) => {
+      const resolvedDark = currentMode === "system" ? systemDark : currentMode === "dark";
+      return resolvedDark ? "light" : "dark";
+    });
+  };
+
   return (
-    <ThemeCtx.Provider value={{ dark, toggle: () => setDark((d) => !d) }}>
+    <ThemeCtx.Provider value={{ dark, mode, setMode, toggle }}>
       {children}
     </ThemeCtx.Provider>
   );

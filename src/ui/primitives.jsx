@@ -4,11 +4,11 @@
 // These components have no business logic — they only handle presentation.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { useTokens, useTheme } from "../core/hooks.js";
 import { useBreakpoint } from "../core/hooks.js";
 import { PRIORITIES } from "../core/constants.js";
-import { slaPct, slaLeft, slaColor, slaForPriority } from "../core/utils.js";
+import { slaPct, slaLeft, slaColor, slaForPriority, findPriorityCfg } from "../core/utils.js";
 
 // ── Avatar ────────────────────────────────────────────────────────────────────
 const AVATAR_PALETTES = [
@@ -49,11 +49,12 @@ export function Badge({ label, color, bg, size = 11 }) {
 
 // ── Semantic Badges ───────────────────────────────────────────────────────────
 
-export function PriorityBadge({ priority }) {
+export function PriorityBadge({ priority, catalog }) {
   const { dark } = useTheme();
-  const cfg = PRIORITIES[priority] || {};
+  const cfg = findPriorityCfg(catalog, priority) || PRIORITIES[priority] || {};
   const col = cfg.color || "#888";
-  return <Badge label={priority} color={col} bg={dark ? col + "22" : col + "18"} />;
+  const bg = cfg.bg || (dark ? col + "22" : col + "18");
+  return <Badge label={priority} color={col} bg={bg} />;
 }
 
 export function StatusBadge({ status }) {
@@ -91,12 +92,12 @@ export function SLABar({ priority, createdAt, showLabel = true, slaHours }) {
   const left  = slaLeft(createdAt, h);
   const color = slaColor(createdAt, h, t);
   return (
-    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-      <div style={{ flex: 1, height: 3, background: t.surface3, borderRadius: 99, overflow: "hidden" }}>
-        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 99 }} />
+    <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0 }}>
+      <div style={{ flex: 1, height: 4, background: t.surface3, borderRadius: 99, overflow: "hidden", minWidth: 0 }}>
+        <div style={{ width: `${pct}%`, height: "100%", background: color, borderRadius: 99, transition: "width 0.2s ease" }} />
       </div>
       {showLabel && (
-        <span style={{ fontSize: 10, fontWeight: 700, color, minWidth: 60, textAlign: "right" }}>
+        <span style={{ fontSize: 10, fontWeight: 700, color, minWidth: "50px", textAlign: "right", flexShrink: 0 }}>
           {left}
         </span>
       )}
@@ -106,8 +107,10 @@ export function SLABar({ priority, createdAt, showLabel = true, slaHours }) {
 
 // ── Button ────────────────────────────────────────────────────────────────────
 
-export function Btn({ children, variant = "primary", size = "md", onClick, disabled, full, style: ex }) {
+export function Btn({ children, variant = "primary", size = "md", onClick, disabled, full, style: ex, ariaLabel, title }) {
   const t = useTokens();
+  const [focused, setFocused] = useState(false);
+  const [hovered, setHovered] = useState(false);
   const variants = {
     primary:   { background: t.accent, color: "#0f0f0e", border: "none" },
     secondary: { background: "transparent", color: t.text2, border: `1px solid ${t.border}` },
@@ -119,19 +122,31 @@ export function Btn({ children, variant = "primary", size = "md", onClick, disab
     md: { fontSize: 13, padding: "8px 15px" },
     lg: { fontSize: 15, padding: "11px 22px" },
   };
+  const focusRing = focused ? { boxShadow: `0 0 0 4px ${t.accentBg}` } : {};
+  const hoverLift = hovered ? { transform: "translateY(-1px)", boxShadow: focused ? `0 0 0 5px ${t.accentBg}` : "0 6px 18px rgba(0,0,0,0.08)" } : {};
+
   return (
     <button
       onClick={onClick}
       disabled={disabled}
+      aria-label={ariaLabel}
+      title={title || ariaLabel}
+      onFocus={() => setFocused(true)}
+      onBlur={() => setFocused(false)}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
       style={{
         ...variants[variant], ...sizes[size],
         borderRadius: 9, fontWeight: 700,
         cursor: disabled ? "not-allowed" : "pointer",
-        opacity: disabled ? 0.4 : 1,
+        opacity: disabled ? 0.45 : 1,
         display: "inline-flex", alignItems: "center",
         justifyContent: "center", gap: 6,
-        fontFamily: t.font, transition: "opacity .15s",
+        fontFamily: t.font, transition: "transform .12s, box-shadow .12s, opacity .12s",
         width: full ? "100%" : "auto",
+        outline: "none",
+        ...focusRing,
+        ...hoverLift,
         ...ex,
       }}
     >

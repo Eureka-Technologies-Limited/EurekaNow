@@ -5,7 +5,7 @@
 
 import { useState } from "react";
 import { useTokens, useTheme, useBreakpoint } from "../core/hooks.js";
-import { DEMO_CREDENTIALS } from "../core/api.js";
+import { DEMO_CREDENTIALS, loginWithGoogle } from "../core/api.js";
 import { Btn, Card, Input, Label } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 
@@ -35,7 +35,7 @@ export function LandingPage({ onLogin }) {
           <div style={{ width: 28, height: 28, borderRadius: 8, background: t.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
             <span style={{ fontWeight: 900, fontSize: 14, color: "#0f0f0e" }}>E</span>
           </div>
-          <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.4px", color: t.text }}>EureakNow</span>
+          <span style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.4px", color: t.text }}>EurekaNow</span>
         </div>
         <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <button onClick={toggle} style={{ background: "none", border: "none", cursor: "pointer", color: t.text2, display: "flex", padding: 6 }}>
@@ -54,14 +54,14 @@ export function LandingPage({ onLogin }) {
         </div>
         <h1 style={{ fontSize: isMobile ? "clamp(28px,8vw,40px)" : "clamp(36px,5vw,64px)", fontWeight: 800, margin: "0 0 16px", letterSpacing: "-1.5px", lineHeight: 1.1, color: t.text }}>
           The service desk that<br />
-          <span style={{ color: t.accent }}>works for everyone.</span>
+          <span style={{ color: t.accent }}>adapts to every workflow.</span>
         </h1>
         <p style={{ fontSize: isMobile ? 14 : 17, color: t.text2, maxWidth: 480, margin: "0 auto 32px", lineHeight: 1.7 }}>
-          IT, clinical ops, engineering, HR — one platform, customised for each person.
+          One platform for IT, clinical ops, engineering, and HR. Each workspace stays personal, clear, and easy to tailor.
         </p>
         <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
-          <Btn variant="primary" size={isMobile ? "md" : "lg"} onClick={onLogin}>Start free trial →</Btn>
-          <Btn variant="secondary" size={isMobile ? "md" : "lg"} onClick={onLogin}>View demo</Btn>
+          <Btn variant="primary" size={isMobile ? "md" : "lg"} onClick={onLogin}>Open the app →</Btn>
+          <Btn variant="secondary" size={isMobile ? "md" : "lg"} onClick={onLogin}>Use the demo</Btn>
         </div>
       </div>
 
@@ -105,7 +105,7 @@ export function LandingPage({ onLogin }) {
       </div>
 
       <footer style={{ borderTop: `1px solid ${t.border}`, padding: "16px 20px", textAlign: "center" }}>
-        <span style={{ fontSize: 11, color: t.text3 }}>© 2025 EureakNow — Eureka Technologies Ltd</span>
+        <span style={{ fontSize: 11, color: t.text3 }}>© {new Date().getFullYear()} EurekaNow — Eureka Technologies Ltd</span>
       </footer>
     </div>
   );
@@ -120,10 +120,11 @@ export function LoginPage({ onLogin, onBack }) {
   const { dark, toggle } = useTheme();
   const { isMobile } = useBreakpoint();
 
-  const [email,    setEmail]    = useState("");
-  const [password, setPassword] = useState("");
-  const [error,    setError]    = useState("");
-  const [loading,  setLoading]  = useState(false);
+  const [email,         setEmail]         = useState("");
+  const [password,      setPassword]      = useState("");
+  const [error,         setError]         = useState("");
+  const [loading,       setLoading]       = useState(false);
+  const [googleLoading, setGoogleLoading] = useState(false);
 
   const attempt = async () => {
     setError("");
@@ -133,6 +134,18 @@ export function LoginPage({ onLogin, onBack }) {
     } catch (err) {
       setError(err?.message || "Unable to sign in.");
       setLoading(false);
+    }
+  };
+
+  const attemptGoogle = async () => {
+    setError("");
+    setGoogleLoading(true);
+    try {
+      await loginWithGoogle();
+      // Note: Google OAuth will redirect to callback URL
+    } catch (err) {
+      setError(err?.message || "Unable to sign in with Google.");
+      setGoogleLoading(false);
     }
   };
 
@@ -154,7 +167,7 @@ export function LoginPage({ onLogin, onBack }) {
             <div style={{ width: 44, height: 44, borderRadius: 13, background: t.accent, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
               <span style={{ fontWeight: 900, fontSize: 20, color: "#0f0f0e" }}>E</span>
             </div>
-            <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.5px", margin: 0, color: t.text }}>EureakNow</h1>
+            <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.5px", margin: 0, color: t.text }}>EurekaNow</h1>
             <p style={{ fontSize: 13, color: t.text2, marginTop: 5 }}>Sign in to your workspace</p>
           </div>
 
@@ -177,6 +190,57 @@ export function LoginPage({ onLogin, onBack }) {
               <Btn variant="primary" onClick={attempt} disabled={!email || !password || loading} full>
                 {loading ? "Signing in…" : "Sign in →"}
               </Btn>
+              
+              {/* Divider */}
+              <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "8px 0 0" }}>
+                <div style={{ flex: 1, height: "1px", background: t.border }} />
+                <span style={{ fontSize: 11, color: t.text3, fontWeight: 500 }}>or</span>
+                <div style={{ flex: 1, height: "1px", background: t.border }} />
+              </div>
+              
+              {/* Google Sign-In Button */}
+              <button 
+                onClick={attemptGoogle} 
+                disabled={googleLoading}
+                style={{ 
+                  display: "flex", 
+                  alignItems: "center", 
+                  justifyContent: "center", 
+                  gap: 8,
+                  width: "100%",
+                  padding: "10px 12px",
+                  background: dark ? "#1f2937" : "#ffffff",
+                  border: `1px solid ${dark ? "#4b5563" : "#e5e7eb"}`,
+                  borderRadius: 8,
+                  color: dark ? "#f3f4f6" : "#1f2937",
+                  fontFamily: t.font,
+                  fontSize: 14,
+                  fontWeight: 500,
+                  cursor: googleLoading ? "not-allowed" : "pointer",
+                  transition: "all 0.2s ease",
+                  opacity: googleLoading ? 0.7 : 1,
+                  boxShadow: dark 
+                    ? "0 1px 3px rgba(0,0,0,0.3)" 
+                    : "0 1px 2px rgba(0,0,0,0.05)",
+                }}
+                onMouseEnter={(e) => {
+                  if (!googleLoading) {
+                    e.target.style.boxShadow = dark 
+                      ? "0 4px 12px rgba(0,0,0,0.4)" 
+                      : "0 4px 12px rgba(0,0,0,0.1)";
+                    e.target.style.transform = "translateY(-1px)";
+                  }
+                }}
+                onMouseLeave={(e) => {
+                  e.target.style.boxShadow = dark 
+                    ? "0 1px 3px rgba(0,0,0,0.3)" 
+                    : "0 1px 2px rgba(0,0,0,0.05)";
+                  e.target.style.transform = "translateY(0)";
+                }}
+              >
+                <I name="google" size={14} />
+                {googleLoading ? "Signing in…" : "Sign in with Google"}
+              </button>
             </div>
           </Card>
           <div style={{ fontSize: 11, color: t.text3, textAlign: "center", lineHeight: 1.6 }}>

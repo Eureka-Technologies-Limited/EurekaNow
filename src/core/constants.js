@@ -22,6 +22,7 @@ export const DEFAULT_TEAM_ROLES = [
   { name: "Admin", description: "Full access" },
   { name: "Agent", description: "Handle tickets" },
   { name: "End User", description: "Submit only" },
+  { name: "Catalog Manager", description: "Manage service catalog items and approvers" },
 ];
 
 export const STATUSES = [
@@ -73,10 +74,15 @@ export const VIEW_LABELS = {
   dashboard:  "Dashboard",
   incidents:  "Incidents",
   requests:   "Service Requests",
+  catalog:    "Service Catalog",
+  approvals:  "Approvals",
   changes:    "Change Requests",
   problems:   "Problems",
   tasks:      "Tasks",
   all_tickets:"All Tickets",
+  kanban:     "Kanban Board",
   teams:      "Teams & Orgs",
   kb:         "Knowledge Base",
+  reports:    "Reports & Analytics",
+  profile:    "My Profile",
 };
