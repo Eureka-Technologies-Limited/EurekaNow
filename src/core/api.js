@@ -134,6 +134,7 @@ const toTicket = (row, commentsByTicketId = {}) => ({
   description: row.description || "",
   type: row.type,
   category: row.category,
+  catalogItemId: row.catalog_item_id || "",
   orgId: row.org_id,
   teamId: row.team_id,
   assignee: row.assignee || "",
@@ -142,6 +143,7 @@ const toTicket = (row, commentsByTicketId = {}) => ({
   urgency: row.urgency || "Medium",
   status: row.status,
   createdAt: Number(row.created_at),
+  resolvedAt: row.resolved_at ? Number(row.resolved_at) : null,
   tags: asArray(row.tags),
   parentId: row.parent_id || null,
   dueDate: row.due_date ? Number(row.due_date) : null,
@@ -176,6 +178,7 @@ const toOrgSettings = (row) => {
     categories,
     rolePermissions: row?.role_permissions || {},
     requireApprovals: Boolean(row?.require_approvals),
+    approvalMode: row?.approval_mode || "all",
     updatedAt: Number(row?.updated_at || 0),
   };
 };
@@ -256,6 +259,65 @@ const toCatalogItem = (row) => ({
   createdAt: Number(row.created_at),
   updatedAt: Number(row.updated_at),
 });
+
+export async function createCatalogItem(payload) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const item = {
+      id: `cat_${uid()}`,
+      orgId: payload.orgId,
+      teamId: payload.teamId || "",
+      name: payload.name,
+      description: payload.description || "",
+      category: payload.category || "General",
+      icon: payload.icon || "request",
+      defaultType: payload.defaultType || "Service Request",
+      defaultPriority: payload.defaultPriority || "Medium",
+      defaultUrgency: payload.defaultUrgency || "Medium",
+      requiresApproval: !!payload.requiresApproval,
+      approverRole: payload.approverRole || "Admin",
+      approverId: payload.approverId || "",
+      approverMode: payload.approverMode || "role",
+      approverTeamId: payload.approverTeamId || "",
+      active: payload.active !== false,
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    };
+    state.catalogItems = [item, ...(state.catalogItems || [])];
+    saveDemoState();
+    return clone(item);
+  }
+
+  const row = {
+    id: `cat_${uid()}`,
+    org_id: payload.orgId,
+    team_id: payload.teamId || null,
+    name: payload.name,
+    description: payload.description || "",
+    category: payload.category || "General",
+    icon: payload.icon || "request",
+    default_type: payload.defaultType || "Service Request",
+    default_priority: payload.defaultPriority || "Medium",
+    default_urgency: payload.defaultUrgency || "Medium",
+    requires_approval: !!payload.requiresApproval,
+    approver_role: payload.approverRole || "Admin",
+    approver_id: payload.approverId || null,
+    approver_mode: payload.approverMode || "role",
+    approver_team_id: payload.approverTeamId || null,
+    active: payload.active !== false,
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  };
+
+  const { data, error } = await supabase
+    .from(TABLES.catalogItems)
+    .insert(row)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to create catalog item.");
+  return toCatalogItem(data);
+}
 
 export async function updateCatalogItem(itemId, payload) {
   if (shouldUseDemoMode()) {
@@ -433,7 +495,7 @@ const makeDemoSeed = () => {
         content: "1. Open the VPN portal.\n2. Click reset password.\n3. Complete MFA verification.",
       },
     ],
-    orgSettings: [{ orgId: "o_demo", priorities, priorityMap: prioritiesToMap(priorities), urgencies: DEFAULT_URGENCIES, categories: CATEGORIES, updatedAt: Date.now() }],
+    orgSettings: [{ orgId: "o_demo", priorities, priorityMap: prioritiesToMap(priorities), urgencies: DEFAULT_URGENCIES, categories: CATEGORIES, approvalMode: "all", updatedAt: Date.now() }],
     teamSettings: [{ teamId: "t_demo", priorities, priorityMap: prioritiesToMap(priorities), urgencies: DEFAULT_URGENCIES, updatedAt: Date.now() }],
     teamRoles: [
       { id: "role_demo_admin", teamId: "t_demo", name: "Admin", description: "Full access", createdAt: ago(200) },
@@ -850,6 +912,7 @@ export async function createTicket(payload) {
       description: payload.description || "",
       type: payload.type,
       category: payload.category,
+      catalogItemId: payload.catalogItemId || "",
       orgId: payload.orgId,
       teamId: payload.teamId || "",
       assignee: payload.assignee || "",
@@ -889,6 +952,7 @@ export async function createTicket(payload) {
     due_date: payload.dueDate || null,
     estimate_hours: payload.estimateHours != null && payload.estimateHours !== "" ? Number(payload.estimateHours) : null,
     spent_hours: payload.spentHours != null && payload.spentHours !== "" ? Number(payload.spentHours) : 0,
+    resolved_at: payload.resolvedAt == null ? null : Number(payload.resolvedAt),
   };
 
   const { data, error } = await supabase
@@ -906,7 +970,17 @@ export async function updateTicketFields(ticketId, fields) {
     const state = getDemoState();
     const index = state.tickets.findIndex((row) => row.id === ticketId);
     if (index < 0) throw new Error("Ticket not found.");
-    state.tickets[index] = { ...state.tickets[index], ...fields };
+    // If status moved to Resolved/Closed and no resolvedAt provided, stamp it in demo state
+    const nextFields = { ...fields };
+    if (typeof fields.status === "string") {
+      if (["Resolved", "Closed"].includes(fields.status) && !('resolvedAt' in fields)) {
+        nextFields.resolvedAt = Date.now();
+      }
+      if (!["Resolved", "Closed"].includes(fields.status) && !('resolvedAt' in fields)) {
+        nextFields.resolvedAt = null;
+      }
+    }
+    state.tickets[index] = { ...state.tickets[index], ...nextFields };
     saveDemoState();
     return clone(state.tickets[index]);
   }
@@ -914,6 +988,7 @@ export async function updateTicketFields(ticketId, fields) {
   const patch = {};
 
   if (typeof fields.status === "string") patch.status = fields.status;
+  if ("resolvedAt" in fields && fields.resolvedAt != null) patch.resolved_at = Number(fields.resolvedAt);
   if (typeof fields.priority === "string") patch.priority = fields.priority;
   if (typeof fields.urgency === "string") patch.urgency = fields.urgency;
   if (typeof fields.assignee === "string") patch.assignee = fields.assignee;
@@ -1114,6 +1189,7 @@ export async function createArticle(payload) {
     org_id: payload.orgId,
     category: payload.category,
     folder: payload.folder || "General",
+    catalog_item_id: payload.catalogItemId || null,
     author: payload.author,
     editors: asArray(payload.editors),
     content: payload.content,
@@ -1440,6 +1516,7 @@ export async function upsertOrgSettings(payload) {
       categories: Array.isArray(payload.categories) && payload.categories.length ? payload.categories.map((c) => String(c)) : CATEGORIES,
       rolePermissions: payload.rolePermissions || {},
       requireApprovals: !!payload.requireApprovals,
+      approvalMode: payload.approvalMode || "all",
       updatedAt: Date.now(),
     };
     const index = state.orgSettings.findIndex((row) => row.orgId === payload.orgId);
@@ -1456,6 +1533,7 @@ export async function upsertOrgSettings(payload) {
     categories: Array.isArray(payload.categories) && payload.categories.length ? payload.categories.map((c) => String(c)) : CATEGORIES,
     role_permissions: payload.rolePermissions || {},
     require_approvals: !!payload.requireApprovals,
+    approval_mode: payload.approvalMode || "all",
     updated_at: Date.now(),
   };
 

@@ -8,11 +8,11 @@ import { useEffect, useState } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { PRIORITIES, STATUSES } from "../core/constants.js";
 import { fmtTs, slaForPriority, findPriorityCfg } from "../core/utils.js";
-import { Avatar, Btn, Input, TypeBadge, SLABar, StatusBadge } from "../ui/primitives.jsx";
+import { Avatar, Btn, Card, Input, TypeBadge, SLABar, StatusBadge } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 import { canFeature } from "../core/subscriptions.js";
 
-export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch, onComment, priorityCatalog, urgencyLevels, review, onSaveReview, closingTemplates = [], pirFieldConfig = null, allTickets = [], onOpenTicket, plan = "Free", onUpgrade }) {
+export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch, onComment, priorityCatalog, urgencyLevels, review, onSaveReview, closingTemplates = [], pirFieldConfig = null, allTickets = [], onOpenTicket, plan = "Free", onUpgrade, approvals = [], onResolveApproval, onAddApproval }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
   const catalog = (priorityCatalog && Object.keys(priorityCatalog).length) ? priorityCatalog : PRIORITIES;
@@ -37,6 +37,11 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
   });
   const [reviewSaving, setReviewSaving] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [approvalComments, setApprovalComments] = useState({});
+  const [approvalSaving, setApprovalSaving] = useState({});
+  const [nextApproverId, setNextApproverId] = useState("");
+  const [addingApprover, setAddingApprover] = useState(false);
+  const [addApproverError, setAddApproverError] = useState("");
 
   const now = Date.now();
   const isOverdue = !!tk.dueDate && tk.dueDate < now && !["Resolved", "Closed"].includes(tk.status);
@@ -171,6 +176,23 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
 
   const agents   = users.filter((u) => u.orgId === tk.orgId);
   const reporter = users.find((u) => u.id === tk.reporter);
+  const currentUserRoles = Array.isArray(currentUser?.roles) && currentUser.roles.length
+    ? currentUser.roles
+    : [currentUser?.role].filter(Boolean);
+  const ticketApprovals = (approvals || []).filter((a) => a.ticketId === tk.id);
+  const pendingApproverIds = new Set(
+    ticketApprovals
+      .filter((a) => a.status === "Pending" && a.approverId)
+      .map((a) => a.approverId)
+  );
+  const addableApprovers = agents.filter((u) => !pendingApproverIds.has(u.id));
+  const canManageApprovals = Boolean(
+    currentUser?.id === tk.reporter ||
+    currentUser?.id === tk.assignee ||
+    currentUserRoles.includes("Admin") ||
+    currentUserRoles.includes("Manager") ||
+    currentUserRoles.includes("Team Lead")
+  );
 
   const overlay = isMobile
     ? { position: "fixed", inset: 0, background: t.surface, zIndex: 250, display: "flex", flexDirection: "column", overflowY: "auto", WebkitOverflowScrolling: "touch" }
@@ -214,6 +236,8 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
     { id: "activity", label: "Activity",     badge: tk.comments.length || null },
     { id: "related",  label: "Related",      badge: relatedCount || null },
     ...(showPIR ? [{ id: "pir", label: "Post-Incident Review" }] : []),
+    // Show approvals tab for request tickets and approval-based requests
+    ...((tk.type === "Service Request" || tk.type === "Change Request" || tk.status === "Awaiting Approval" || (approvals || []).length > 0 || tk.catalogItemId) ? [{ id: "approvals", label: "Approvals", badge: ticketApprovals.length || null }] : []),
   ];
 
   const tabBtn = (tb) => (
@@ -349,7 +373,7 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                   return `SLA — ${slaDisplay}h target`;
                 })()}
               </div>
-              <SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={(findPriorityCfg(catalog, tk.priority) && Number(findPriorityCfg(catalog, tk.priority).sla) > 0) ? Number(findPriorityCfg(catalog, tk.priority).sla) : slaForPriority(tk.priority)} />
+              <SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={(findPriorityCfg(catalog, tk.priority) && Number(findPriorityCfg(catalog, tk.priority).sla) > 0) ? Number(findPriorityCfg(catalog, tk.priority).sla) : slaForPriority(tk.priority)} endAt={tk.resolvedAt} />
             </div>
             <div style={{ display: "flex", gap: 16, flexWrap: "wrap" }}>
               {reporter && (
@@ -388,9 +412,41 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
             {tab === "activity" && (
               <div>
                 {tk.description && (
+                  (() => {
+                    // For service requests created from catalog items we often append a justification paragraph.
+                    // When possible, split the description on blank lines and surface the last paragraph as a dedicated justification.
+                    const isRequestLike = !!tk.catalogItemId || tk.type === "Service Request" || tk.type === "Service request";
+                    if (isRequestLike) {
+                      const parts = String(tk.description || "").split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+                      if (parts.length > 1) {
+                        const desc = parts.slice(0, parts.length - 1).join("\n\n");
+                        const just = parts[parts.length - 1];
+                        return (
+                          <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${t.border}` }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 6 }}>Description</div>
+                            <div style={{ fontSize: 13, color: t.text2, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{desc}</div>
+                            <div style={{ marginTop: 12 }}>
+                              <div style={{ fontSize: 11, color: t.text3, marginBottom: 6, fontWeight: 700 }}>Reason / Business justification</div>
+                              <div style={{ fontSize: 13, color: t.text2, whiteSpace: "pre-wrap" }}>{just}</div>
+                            </div>
+                          </div>
+                        );
+                      }
+                    }
+                    return (
+                      <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${t.border}` }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 6 }}>Description</div>
+                        <div style={{ fontSize: 13, color: t.text2, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{tk.description}</div>
+                      </div>
+                    );
+                  })()
+                )}
+
+                {/* Show requestedFor / requested for user when present (catalog requests) */}
+                {tk.requestedFor && tk.requestedFor !== tk.reporter && (
                   <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${t.border}` }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 6 }}>Description</div>
-                    <div style={{ fontSize: 13, color: t.text2, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{tk.description}</div>
+                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 6 }}>Requested for</div>
+                    <div style={{ fontSize: 13, color: t.text2 }}>{(users.find((u) => u.id === tk.requestedFor) || {}).name || tk.requestedFor}</div>
                   </div>
                 )}
 
@@ -447,6 +503,144 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                     )}
                   </div>
                 )}
+              </div>
+            )}
+
+            {tab === "approvals" && (
+              <div>
+                {canManageApprovals && (
+                  <Card style={{ marginBottom: 12 }}>
+                    <div style={{ display: "flex", gap: 10, alignItems: "flex-end", flexWrap: "wrap" }}>
+                      <div style={{ flex: "1 1 260px", minWidth: 220 }}>
+                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.08em", textTransform: "uppercase", color: t.text3, marginBottom: 6 }}>Add extra approver</div>
+                        <select
+                          value={nextApproverId}
+                          onChange={(e) => setNextApproverId(e.target.value)}
+                          style={{ width: "100%", background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "8px 10px", color: t.text, fontFamily: t.font, fontSize: 12 }}
+                        >
+                          <option value="">Select user…</option>
+                          {addableApprovers.map((user) => (
+                            <option key={user.id} value={user.id}>{user.name} ({roleLabel(user)})</option>
+                          ))}
+                        </select>
+                        {addApproverError && (
+                          <div style={{ marginTop: 6, fontSize: 11, color: t.redText }}>{addApproverError}</div>
+                        )}
+                      </div>
+                      <Btn
+                        size="sm"
+                        variant="secondary"
+                        disabled={!nextApproverId || addingApprover || !onAddApproval}
+                        onClick={async () => {
+                          if (!nextApproverId || !onAddApproval) return;
+                          try {
+                            setAddingApprover(true);
+                            setAddApproverError("");
+                            await onAddApproval(tk.id, {
+                              approverMode: "user",
+                              approverId: nextApproverId,
+                              requestedFor: tk.requestedFor || tk.reporter,
+                              dueAt: tk.dueDate || null,
+                            });
+                            setNextApproverId("");
+                          } catch (err) {
+                            setAddApproverError(err?.message || "Could not add approver.");
+                          } finally {
+                            setAddingApprover(false);
+                          }
+                        }}
+                      >
+                        {addingApprover ? "Adding..." : "Add approver"}
+                      </Btn>
+                    </div>
+                  </Card>
+                )}
+
+                {ticketApprovals.length === 0 && (
+                  <div style={{ color: t.text3 }}>No approvals for this ticket.</div>
+                )}
+                {ticketApprovals.map((appr) => {
+                  const approver = users.find((u) => u.id === appr.approverId);
+                  const teamApprovers = appr.approverMode === "team"
+                    ? users.filter((u) => u.teamId === appr.approverTeamId)
+                    : [];
+                  const requester = users.find((u) => u.id === appr.requestedBy) || {};
+                  const requestedFor = users.find((u) => u.id === appr.requestedFor) || {};
+                  const canAct = appr.status === "Pending" && (
+                    (appr.approverMode === "user" && currentUser?.id === appr.approverId) ||
+                    (appr.approverMode === "team" && currentUser?.teamId === appr.approverTeamId) ||
+                    (appr.approverMode === "role" && currentUserRoles.includes(appr.approverRole))
+                  );
+                  return (
+                    <Card key={appr.id} style={{ marginBottom: 10 }}>
+                      <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>{appr.id} — {appr.status}</div>
+                            {approver && <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                              <Avatar name={approver.name} size={20} fs={8} />
+                              <div style={{ fontSize: 12, color: t.text3 }}>{approver.name}</div>
+                            </div>}
+                          </div>
+                          <div style={{ fontSize: 12, color: t.text3, marginTop: 6 }}>
+                            Approver: {appr.approverMode === "team" ? `Team: ${appr.approverTeamId || '—'}` : (approver?.name || appr.approverRole)}
+                          </div>
+                          {appr.approverMode === "team" && teamApprovers.length > 0 && (
+                            <div style={{ marginTop: 10 }}>
+                              <div style={{ fontSize: 11, color: t.text3, marginBottom: 6, fontWeight: 700 }}>Eligible approvers</div>
+                              <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                                {teamApprovers.map((member) => (
+                                  <div key={member.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8, background: t.surface2, border: `1px solid ${t.border}` }}>
+                                    <Avatar name={member.name} size={22} fs={8} />
+                                    <div style={{ minWidth: 0 }}>
+                                      <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>{member.name}</div>
+                                      <div style={{ fontSize: 11, color: t.text3 }}>{member.role || (Array.isArray(member.roles) ? member.roles.join(", ") : "Member")}</div>
+                                    </div>
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                          )}
+                          <div style={{ fontSize: 12, color: t.text3, marginTop: 6 }}>Requested by: {requester.name || appr.requestedBy} — For: {requestedFor.name || appr.requestedFor}</div>
+                          {appr.dueAt && <div style={{ fontSize: 12, color: t.text3, marginTop: 6 }}>Due: {new Date(appr.dueAt).toLocaleDateString()}</div>}
+                          {appr.comments && <div style={{ marginTop: 8, whiteSpace: 'pre-wrap', color: t.text2 }}>{appr.comments}</div>}
+                          {/* inline action area for approvers */}
+                          {canAct && appr.status === "Pending" && (
+                            <div style={{ marginTop: 8 }}>
+                              <div style={{ fontSize: 11, color: t.text3, marginBottom: 6 }}>Your note (optional)</div>
+                              <Input multiline rows={3} value={approvalComments[appr.id] || ""} onChange={(e) => setApprovalComments((prev) => ({ ...prev, [appr.id]: e.target.value }))} placeholder="Add a note for the requester or audit log" />
+                            </div>
+                          )}
+                        </div>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8, alignItems: "flex-end" }}>
+                          {canAct ? (
+                            <div style={{ fontSize: 12, color: t.text3 }}>Pending your decision</div>
+                          ) : (
+                            <div style={{ fontSize: 12, color: t.text3 }}>Ticket status: {tk.status}</div>
+                          )}
+                          {canAct && (
+                            <div style={{ display: "flex", gap: 8 }}>
+                              <Btn size="sm" variant="primary" disabled={approvalSaving[appr.id]} onClick={async () => {
+                                try {
+                                  setApprovalSaving((s) => ({ ...s, [appr.id]: true }));
+                                  await onResolveApproval?.(appr.id, "Approved", approvalComments[appr.id] || "");
+                                  setApprovalComments((p) => ({ ...p, [appr.id]: "" }));
+                                } finally { setApprovalSaving((s) => ({ ...s, [appr.id]: false })); }
+                              }}>{approvalSaving[appr.id] ? "…" : "Approve"}</Btn>
+                              <Btn size="sm" variant="danger" disabled={approvalSaving[appr.id]} onClick={async () => {
+                                try {
+                                  setApprovalSaving((s) => ({ ...s, [appr.id]: true }));
+                                  await onResolveApproval?.(appr.id, "Rejected", approvalComments[appr.id] || "");
+                                  setApprovalComments((p) => ({ ...p, [appr.id]: "" }));
+                                } finally { setApprovalSaving((s) => ({ ...s, [appr.id]: false })); }
+                              }}>{approvalSaving[appr.id] ? "…" : "Reject"}</Btn>
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </Card>
+                  );
+                })}
               </div>
             )}
 

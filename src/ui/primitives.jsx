@@ -63,6 +63,7 @@ export function StatusBadge({ status }) {
     "Open":         { color: t.blueText,   bg: t.blueBg   },
     "In Progress":  { color: t.purpleText, bg: t.purpleBg },
     "Pending":      { color: t.yellowText, bg: t.yellowBg },
+    "Awaiting Approval": { color: t.yellowText, bg: t.yellowBg },
     "Resolved":     { color: t.greenText,  bg: t.greenBg  },
     "Closed":       { color: t.grayText,   bg: t.grayBg   },
   };
@@ -85,12 +86,12 @@ export function TypeBadge({ type }) {
 
 // ── SLA Bar ───────────────────────────────────────────────────────────────────
 
-export function SLABar({ priority, createdAt, showLabel = true, slaHours }) {
+export function SLABar({ priority, createdAt, showLabel = true, slaHours, endAt = null }) {
   const t = useTokens();
   const h     = Number(slaHours) > 0 ? Number(slaHours) : slaForPriority(priority);
-  const pct   = slaPct(createdAt, h);
-  const left  = slaLeft(createdAt, h);
-  const color = slaColor(createdAt, h, t);
+  const pct   = slaPct(createdAt, h, endAt);
+  const left  = slaLeft(createdAt, h, endAt);
+  const color = slaColor(createdAt, h, t, endAt);
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 8, width: "100%", minWidth: 0 }}>
       <div style={{ flex: 1, height: 4, background: t.surface3, borderRadius: 99, overflow: "hidden", minWidth: 0 }}>

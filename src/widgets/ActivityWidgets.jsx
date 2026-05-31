@@ -87,7 +87,7 @@ export function CriticalList({ tickets, onOpenTicket, priorityCatalog }) {
                   <StatusBadge status={tk.status} />
                 </div>
                 <div style={{ fontSize: 10, color: t.text3 }}>{tk.id}</div>
-                <SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={(findPriorityCfg(catalog, tk.priority) && Number(findPriorityCfg(catalog, tk.priority).sla) > 0) ? Number(findPriorityCfg(catalog, tk.priority).sla) : slaForPriority(tk.priority)} />
+                <SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={(findPriorityCfg(catalog, tk.priority) && Number(findPriorityCfg(catalog, tk.priority).sla) > 0) ? Number(findPriorityCfg(catalog, tk.priority).sla) : slaForPriority(tk.priority)} endAt={tk.resolvedAt} />
               </button>
             ))}
           </div>
@@ -146,7 +146,7 @@ export function SLARisk({ tickets, onOpenTicket, priorityCatalog }) {
     .map((tk) => {
       const cfg = findPriorityCfg(catalog, tk.priority);
       const slaHours = cfg && Number(cfg.sla) > 0 ? Number(cfg.sla) : slaForPriority(tk.priority);
-      return { ...tk, pct: slaPct(tk.createdAt, slaHours) };
+      return { ...tk, pct: slaPct(tk.createdAt, slaHours, tk.resolvedAt) };
     })
     .filter((tk) => tk.pct >= 50)
     .sort((a, b) => b.pct - a.pct);

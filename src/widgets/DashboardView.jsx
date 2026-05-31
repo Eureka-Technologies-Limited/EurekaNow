@@ -2,7 +2,7 @@
 // DASHBOARD: Customiser modal + DashboardView layout
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { Card, Btn, Modal } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
@@ -92,12 +92,13 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, s
   const [overId, setOverId] = useState(null);
   const [resizing, setResizing] = useState(null);
   const gridRef = useRef(null);
+  const [compactDensity, setCompactDensity] = useState(false);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const cols = isMobile ? 1 : isTablet ? 2 : 4;
   const gridGap = 12;
-  const baseRowHeight = 116;
+  const baseRowHeight = compactDensity ? 86 : 116;
 
   const moveWidget = (fromId, toId) => {
     if (!fromId || !toId || fromId === toId) return;
@@ -142,6 +143,8 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, s
     if (isMobile) next.colSpan = 1;
     return next;
   };
+
+  const widgetsForLayout = useMemo(() => layout.map((id) => ALL_WIDGETS.find((ww) => ww.id === id)).filter(Boolean), [layout]);
 
   useEffect(() => {
     if (!resizing) return undefined;
@@ -190,6 +193,9 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, s
           <Btn variant="secondary" size="sm" onClick={() => setArrangeMode((v) => !v)}>
             <I name="grid" size={12} /> {arrangeMode ? "Done" : "Arrange"}
           </Btn>
+          <Btn variant={compactDensity ? "primary" : "ghost"} size="sm" onClick={() => setCompactDensity((s) => !s)} aria-pressed={compactDensity} title="Toggle compact density">
+            {compactDensity ? "Compact" : "Comfort"}
+          </Btn>
           <Btn variant="secondary" size="sm" onClick={onCustomise}>
             <I name="settings" size={12} /> Customise
           </Btn>
@@ -214,9 +220,8 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, s
           background: t.surface2,
         }}
       >
-        {layout.map((id) => {
-          const w = ALL_WIDGETS.find((ww) => ww.id === id);
-          if (!w) return null;
+        {widgetsForLayout.map((w) => {
+          const id = w.id;
           const sizing = getWidgetSizing(id, w.size);
           const canResize = !isMobile && w.size !== "sm";
           const isDragTarget = arrangeMode && overId === id && dragId && dragId !== id;
@@ -258,6 +263,7 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, s
                 minHeight: 0,
                 border: arrangeMode ? `1px dashed ${isDragTarget ? t.accent : t.border2}` : undefined,
                 boxShadow: arrangeMode && isDragTarget ? `0 0 0 1px ${t.accent}` : undefined,
+                padding: compactDensity ? 8 : undefined,
               }}>
               <DashWidget
                 id={id}

@@ -29,6 +29,7 @@ export const STATUSES = [
   "Open",
   "In Progress",
   "Pending",
+  "Awaiting Approval",
   "Resolved",
   "Closed",
 ];

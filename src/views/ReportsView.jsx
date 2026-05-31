@@ -264,7 +264,7 @@ export function ReportsView({ tickets, users }) {
   }, [tickets, users, rangeStart, rangeMs, range, now]);
 
   // ── Apply colour tokens (outside memo) ─────────────────────────────────────
-  const STATUS_COLORS  = { "Open": t.blue, "In Progress": t.purple, "Pending": t.yellow, "Resolved": t.green, "Closed": t.gray };
+  const STATUS_COLORS  = { "Open": t.blue, "In Progress": t.purple, "Pending": t.yellow, "Awaiting Approval": t.yellow, "Resolved": t.green, "Closed": t.gray };
   const PRIORITY_COLORS = { Critical: t.red, High: t.orange, Medium: t.yellow, Low: t.blue };
   const TYPE_COLORS    = { "Incident": t.red, "Service Request": t.green, "Change Request": t.orange, "Problem": t.purple, "Task": t.gray };
 
