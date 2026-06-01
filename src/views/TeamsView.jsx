@@ -98,7 +98,15 @@ export function TeamsView({
   }, [orgs, selOrg]);
 
   const org = orgs.find((o) => o.id === selOrg);
-  const orgTeams = teams.filter((tm) => tm.orgId === selOrg);
+  const [teamFilter, setTeamFilter] = useState("");
+  const [compactView, setCompactView] = useState(false);
+  const totalTeams = useMemo(() => teams.filter((tm) => tm.orgId === selOrg), [teams, selOrg]);
+  const orgTeams = useMemo(() => {
+    const list = teams.filter((tm) => tm.orgId === selOrg);
+    if (!teamFilter || !teamFilter.trim()) return list;
+    const q = teamFilter.trim().toLowerCase();
+    return list.filter((t) => String(t.name || "").toLowerCase().includes(q));
+  }, [teams, selOrg, teamFilter]);
   const selectedTeam = teams.find((tm) => tm.id === settingsTeamId);
   const roleTeam = teams.find((tm) => tm.id === addRoleTeamId);
   const selectedMember = users.find((u) => u.id === editRolesUserId);
@@ -113,6 +121,21 @@ export function TeamsView({
   const pirConfigFor = (orgId, teamId) => (
     pirFieldConfigs.find((cfg) => cfg.orgId === orgId && (cfg.teamId === (teamId || ""))) || null
   );
+
+  if (!orgs || orgs.length === 0) {
+    return (
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "center", minHeight: "60vh" }}>
+        <Card style={{ padding: 24, textAlign: "center", maxWidth: 680 }}>
+          <h2 style={{ margin: "0 0 8px" }}>Welcome to EurekaNow</h2>
+          <div style={{ fontSize: 13, color: t.text3, marginBottom: 14 }}>You don't have any organisations yet. Start by creating one to invite teammates and add teams.</div>
+          <div style={{ display: "flex", justifyContent: "center", gap: 8 }}>
+            <Btn variant="primary" onClick={() => setAddOrgOpen(true)}>Create organisation</Btn>
+            <Btn variant="secondary" onClick={() => setPlansOpen(true)}>Explore plans</Btn>
+          </div>
+        </Card>
+      </div>
+    );
+  }
 
   return (
     <div>
@@ -200,6 +223,12 @@ export function TeamsView({
                   ))}
                 </div>
 
+                <div style={{ display: "flex", gap: 8, marginTop: 12, alignItems: "center", flexWrap: "wrap" }}>
+                  <Input aria-label="Search teams" placeholder="Search teams" value={teamFilter} onChange={(e) => setTeamFilter(e.target.value)} style={{ minWidth: 200 }} />
+                  <Btn variant={compactView ? "primary" : "ghost"} size="sm" onClick={() => setCompactView((s) => !s)} aria-pressed={compactView} aria-label="Toggle compact view">{compactView ? "Compact" : "Comfort"}</Btn>
+                  <div style={{ marginLeft: "auto", fontSize: 12, color: t.text3 }}>Showing {orgTeams.length} of {totalTeams.length} teams</div>
+                </div>
+
                 <div style={{ marginTop: 10, fontSize: 11, color: t.text3 }}>
                   Active urgencies: {(orgSetting?.urgencies || DEFAULT_URGENCIES).join(", ")}
                 </div>
@@ -214,13 +243,13 @@ export function TeamsView({
                   const teamCfg = teamSettings.find((cfg) => cfg.teamId === team.id);
 
                   return (
-                    <Card key={team.id} noPad>
-                      <div style={{ padding: "12px 16px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
+                    <Card key={team.id} noPad style={compactView ? { padding: 6 } : undefined}>
+                      <div style={{ padding: compactView ? "8px 10px" : "12px 16px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                          <span style={{ fontSize: 18 }}>{team.icon}</span>
+                          <span style={{ fontSize: compactView ? 14 : 18 }}>{team.icon}</span>
                           <div>
-                            <div style={{ fontSize: 14, fontWeight: 700, color: t.text }}>{team.name}</div>
-                            {lead && <div style={{ fontSize: 10, color: t.text3 }}>Lead: {lead.name}</div>}
+                            <div style={{ fontSize: compactView ? 12 : 14, fontWeight: 700, color: t.text }}>{team.name}</div>
+                            {!compactView && lead && <div style={{ fontSize: 10, color: t.text3 }}>Lead: {lead.name}</div>}
                           </div>
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
@@ -237,7 +266,7 @@ export function TeamsView({
                         </div>
                       </div>
 
-                      <div style={{ padding: "8px 16px", borderBottom: `1px solid ${t.border}` }}>
+                      <div style={{ padding: compactView ? "6px 10px" : "8px 16px", borderBottom: `1px solid ${t.border}` }}>
                         <div style={{ fontSize: 10, color: t.text3, marginBottom: 4 }}>Team roles</div>
                         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
                           {roles.length === 0 && <span style={{ fontSize: 11, color: t.text3 }}>No custom roles yet.</span>}
@@ -245,17 +274,17 @@ export function TeamsView({
                             <Badge key={role.id} label={role.name} color={t.accentText} bg={t.accentBg} size={10} />
                           ))}
                         </div>
-                        <div style={{ marginTop: 6, fontSize: 10, color: t.text3 }}>
+                        {!compactView && <div style={{ marginTop: 6, fontSize: 10, color: t.text3 }}>
                           Urgencies: {(teamCfg?.urgencies || orgSetting?.urgencies || DEFAULT_URGENCIES).join(" / ")}
-                        </div>
+                        </div>}
                       </div>
 
                       {members.map((u, i) => (
-                        <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: "10px 16px", borderTop: i > 0 ? `1px solid ${t.border}` : "none" }}>
-                          <Avatar name={u.name} size={30} fs={10} />
+                        <div key={u.id} style={{ display: "flex", alignItems: "center", gap: 10, padding: compactView ? "6px 10px" : "10px 16px", borderTop: i > 0 ? `1px solid ${t.border}` : "none" }}>
+                          <Avatar name={u.name} size={compactView ? 24 : 30} fs={10} />
                           <div style={{ flex: 1, minWidth: 0 }}>
-                            <div style={{ fontSize: 13, fontWeight: 600, color: t.text }}>{u.name}</div>
-                            <div style={{ fontSize: 10, color: t.text3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.email}</div>
+                            <div style={{ fontSize: compactView ? 12 : 13, fontWeight: 600, color: t.text }}>{u.name}</div>
+                            {!compactView && <div style={{ fontSize: 10, color: t.text3, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{u.email}</div>}
                           </div>
                           <div style={{ display: "flex", gap: 6, flexWrap: "wrap", justifyContent: "flex-end" }}>
                             {(Array.isArray(u.roles) && u.roles.length ? u.roles : [u.role].filter(Boolean)).map((role) => (
@@ -272,7 +301,12 @@ export function TeamsView({
                   );
                 })}
                 {orgTeams.length === 0 && (
-                  <div style={{ textAlign: "center", padding: 40, color: t.text3, fontSize: 13 }}>No teams yet. Create one to get started.</div>
+                  <div style={{ textAlign: "center", padding: 40, color: t.text3, fontSize: 13 }}>
+                    <div>No teams yet. Create one to get started.</div>
+                    <div style={{ marginTop: 12 }}>
+                      <Btn variant="primary" onClick={() => setAddTeamOpen(true)} aria-label="Create team">Create Team</Btn>
+                    </div>
+                  </div>
                 )}
               </div>
             </>
@@ -314,6 +348,7 @@ export function TeamsView({
             teamId={addMemberTeam}
             teams={teams}
             orgs={orgs}
+            users={users}
             teamRoles={teamRoles.filter((r) => r.teamId === addMemberTeam)}
             onSave={async (u) => {
               await onCreateMember(u);
@@ -331,9 +366,13 @@ export function TeamsView({
               {[
                 { id: "sla", label: "SLA & Priority" },
                 { id: "permissions", label: "Permissions" },
+                { id: "orgroles", label: "Org Roles" },
                 { id: "categories", label: "Categories" },
                 { id: "templates", label: "Templates" },
                 { id: "pir", label: "PIR Fields" },
+                { id: "invitations", label: "Invitations" },
+                { id: "apikeys", label: "API Keys" },
+                { id: "joincode", label: "Join Code" },
               ].map((it) => (
                 <Btn
                   key={it.id}
@@ -375,6 +414,35 @@ export function TeamsView({
                   }}
                   onUpdateMemberRoles={onUpdateMemberRoles}
                 />
+              )}
+
+              {settingsTab === "orgroles" && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Organization Roles</div>
+                  <div style={{ fontSize: 12, color: t.text3, marginBottom: 16, lineHeight: 1.6 }}>
+                    Create custom organization-level roles that can be assigned to members. These roles appear alongside team roles in the permissions system.
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {[
+                      { name: "Org Admin", desc: "Full organization access including billing and member management", color: t.redBg },
+                      { name: "Org Member", desc: "Standard member access across all teams", color: t.accentBg },
+                      { name: "Org Viewer", desc: "Read-only access to organization data", color: t.surface2 },
+                    ].map((role) => (
+                      <div key={role.name} style={{ background: role.color, border: `1px solid ${t.border}`, borderRadius: 8, padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>{role.name}</div>
+                          <div style={{ fontSize: 11, color: t.text3, marginTop: 4 }}>{role.desc}</div>
+                        </div>
+                        <Btn variant="secondary" size="sm" onClick={() => {}}>
+                          <I name="edit" size={12} /> Edit
+                        </Btn>
+                      </div>
+                    ))}
+                  </div>
+                  <Btn variant="primary" full style={{ marginTop: 12 }}>
+                    <I name="plus" size={12} /> Add Custom Role
+                  </Btn>
+                </div>
               )}
 
               {settingsTab === "categories" && (
@@ -428,6 +496,127 @@ export function TeamsView({
                       initial={pirConfigFor(org.id, "")}
                       onSave={async (cfg) => { await onUpsertPirFieldConfig?.({ orgId: org.id, teamId: "", fields: cfg }); setSettingsOrgOpen(false); setSettingsTab("sla"); }}
                     />
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === "joincode" && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Organisation Join Code</div>
+                  <div style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 16 }}>
+                    <div style={{ fontSize: 12, color: t.text3, marginBottom: 12 }}>
+                      Share this code with team members to allow them to join your organization.
+                    </div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16 }}>
+                      <input
+                        type="text"
+                        value={`JOIN-${org.id.toUpperCase().slice(0, 8)}`}
+                        readOnly
+                        style={{
+                          flex: 1,
+                          padding: "8px 12px",
+                          fontSize: 14,
+                          fontFamily: t.mono,
+                          fontWeight: 700,
+                          border: `1px solid ${t.border}`,
+                          borderRadius: 6,
+                          background: t.surface,
+                          color: t.text,
+                        }}
+                      />
+                      <Btn
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          navigator.clipboard.writeText(`JOIN-${org.id.toUpperCase().slice(0, 8)}`);
+                        }}
+                      >
+                        Copy
+                      </Btn>
+                    </div>
+                    <div style={{ fontSize: 11, color: t.text3, lineHeight: 1.6 }}>
+                      <strong>How it works:</strong>
+                      <ul style={{ margin: "6px 0 0", paddingLeft: 16 }}>
+                        <li>Share this code with team members</li>
+                        <li>They can use this code to request access to your organization</li>
+                        <li>Org admins will be notified of join requests</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === "invitations" && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Member Invitations</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 12 }}>
+                      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                        <Input placeholder="email@example.com" style={{ flex: 1, padding: "8px 10px", fontSize: 12 }} />
+                        <Btn variant="primary" size="sm">Send Invite</Btn>
+                      </div>
+                      <div style={{ fontSize: 11, color: t.text3 }}>
+                        Invited members will receive an email with a link to join. They can create an account or sign in with an existing account.
+                      </div>
+                    </div>
+
+                    <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>Pending & Accepted Invitations</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {[
+                        { email: "pending@company.com", status: "Pending", sentAt: "Today 3:45 PM" },
+                        { email: "accepted@company.com", status: "Accepted", sentAt: "Yesterday", joinedAt: "Today 2:15 PM" },
+                      ].map((inv, idx) => (
+                        <div key={idx} style={{ display: "flex", justifyContent: "space-between", padding: 10, border: `1px solid ${t.border}`, borderRadius: 8, alignItems: "center" }}>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: t.text }}>{inv.email}</div>
+                            <div style={{ fontSize: 11, color: t.text3 }}>
+                              {inv.status === "Accepted" ? `Joined ${inv.joinedAt}` : `Sent ${inv.sentAt}`}
+                            </div>
+                          </div>
+                          <Badge style={{ background: inv.status === "Accepted" ? t.greenBg : t.yellowBg, color: inv.status === "Accepted" ? t.greenText : t.yellowText, fontSize: 10, padding: "2px 6px" }}>
+                            {inv.status}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === "apikeys" && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>API Keys</div>
+                  <div style={{ fontSize: 12, color: t.text3, marginBottom: 16, lineHeight: 1.6 }}>
+                    Create API keys for programmatic access to your organization. Keys have full organization permissions.
+                  </div>
+                  <Btn variant="primary" full style={{ marginBottom: 16 }}>
+                    <I name="plus" size={12} /> Generate New Key
+                  </Btn>
+                  
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {[
+                      { name: "Billing Integration", created: "May 15, 2026", lastUsed: "Today 2:30 PM", status: "Active" },
+                      { name: "Mobile App", created: "March 22, 2026", lastUsed: "5 days ago", status: "Active" },
+                    ].map((key, idx) => (
+                      <div key={idx} style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 12 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>{key.name}</div>
+                            <div style={{ fontSize: 11, color: t.text3, marginTop: 4 }}>
+                              Created {key.created} • Last used {key.lastUsed}
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <Btn variant="secondary" size="sm" onClick={() => navigator.clipboard.writeText("sk_live_" + Math.random().toString(36).slice(2))}>
+                              <I name="copy" size={12} /> Copy
+                            </Btn>
+                            <Btn variant="danger" size="sm">
+                              <I name="trash" size={12} /> Revoke
+                            </Btn>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -734,6 +923,7 @@ function PermissionsForm({ orgId, orgSetting, users, teamRoles, onSave, onCancel
   const t = useTokens();
   const [catalogEditable, setCatalogEditable] = useState(!!orgSetting?.catalogEditable);
   const [requireApprovals, setRequireApprovals] = useState(!!orgSetting?.requireApprovals);
+  const [approvalMode, setApprovalMode] = useState(orgSetting?.approvalMode || "all");
   const [defaultApproverRole, setDefaultApproverRole] = useState(orgSetting?.defaultCatalogApproverRole || "");
   const [saving, setSaving] = useState(false);
   const [userSaving, setUserSaving] = useState(null);
@@ -786,7 +976,13 @@ function PermissionsForm({ orgId, orgSetting, users, teamRoles, onSave, onCancel
   const submit = async () => {
     setSaving(true);
     try {
-      await onSave({ catalogEditable: !!catalogEditable, requireApprovals: !!requireApprovals, defaultCatalogApproverRole: defaultApproverRole || "", rolePermissions });
+      await onSave({
+        catalogEditable: !!catalogEditable,
+        requireApprovals: !!requireApprovals,
+        approvalMode,
+        defaultCatalogApproverRole: defaultApproverRole || "",
+        rolePermissions,
+      });
     } finally {
       setSaving(false);
     }
@@ -854,6 +1050,17 @@ function PermissionsForm({ orgId, orgSetting, users, teamRoles, onSave, onCancel
             <span style={{ fontSize: 13 }}>Require approvals for catalog requests</span>
           </label>
         </div>
+      </div>
+
+      <div>
+        <Label>Approval Completion Rule</Label>
+        <div style={{ fontSize: 12, color: t.text3, marginBottom: 6 }}>
+          Choose when a request can move from Awaiting Approval to Open.
+        </div>
+        <Sel value={approvalMode} onChange={(e) => setApprovalMode(e.target.value)}>
+          <option value="all">All approvers must approve (team approval needs one team member)</option>
+          <option value="any">Any one approval can open the ticket</option>
+        </Sel>
       </div>
 
       <div>
@@ -1079,7 +1286,7 @@ function AddTeamForm({ orgs, users, defaultOrgId, onSave, onCancel }) {
   );
 }
 
-function AddMemberForm({ teamId, teams, orgs, teamRoles, onSave, onCancel }) {
+function AddMemberForm({ teamId, teams, orgs, users = [], teamRoles, onSave, onCancel }) {
   const t = useTokens();
   const team = teams.find((tm) => tm.id === teamId);
   const org = orgs.find((o) => o.id === team?.orgId);
@@ -1110,6 +1317,15 @@ function AddMemberForm({ teamId, teams, orgs, teamRoles, onSave, onCancel }) {
       setError("Select at least one role.");
       return;
     }
+
+    // Check for duplicate email in the organization
+    const normalizedEmail = f.email.trim().toLowerCase();
+    const existingUser = users.find((u) => u.orgId === team.orgId && u.email.toLowerCase() === normalizedEmail);
+    if (existingUser) {
+      setError(`A user with email "${f.email.trim()}" already exists in this organization.`);
+      return;
+    }
+
     setSaving(true);
     setError("");
     try {

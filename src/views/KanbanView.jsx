@@ -18,7 +18,7 @@ const DEFAULT_BOARD = {
   columns: [
     { id: "c_open",     name: "Open",        color: "#3182ce", statusMap: ["Open"],                   wipLimit: null },
     { id: "c_progress", name: "In Progress",  color: "#805ad5", statusMap: ["In Progress"],            wipLimit: null },
-    { id: "c_pending",  name: "Pending",      color: "#d69e2e", statusMap: ["Pending"],                wipLimit: null },
+    { id: "c_pending",  name: "Pending",      color: "#d69e2e", statusMap: ["Pending", "Awaiting Approval"],                wipLimit: null },
     { id: "c_done",     name: "Done",         color: "#38a169", statusMap: ["Resolved", "Closed"],     wipLimit: null },
   ],
   autoAdd:    { types: [], priorities: [] },
@@ -119,7 +119,7 @@ function KanbanCard({ ticket, users, catalog, cardFields, onOpenTicket, onDragSt
       )}
 
       {cardFields.includes("sla") && slaHours && (
-        <SLABar priority={ticket.priority} createdAt={ticket.createdAt} slaHours={slaHours} />
+        <SLABar priority={ticket.priority} createdAt={ticket.createdAt} slaHours={slaHours} endAt={ticket.resolvedAt} />
       )}
     </div>
   );

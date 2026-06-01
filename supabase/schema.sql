@@ -70,6 +70,7 @@ create table if not exists tickets (
   priority    text   not null default 'Medium',
   urgency     text   not null default 'Medium',
   status      text   not null default 'Open',
+  resolved_at bigint,
   -- Unix milliseconds — matches Date.now() in the application layer
   created_at  bigint not null,
   tags        jsonb  not null default '[]'::jsonb,
@@ -81,6 +82,7 @@ create table if not exists tickets (
 
 -- Migration guards (safe no-ops if columns already exist)
 alter table tickets add column if not exists urgency   text  not null default 'Medium';
+alter table tickets add column if not exists resolved_at bigint;
 alter table tickets add column if not exists parent_id text;
   alter table tickets add column if not exists due_date bigint;
   alter table tickets add column if not exists estimate_hours numeric;
@@ -125,12 +127,14 @@ create table if not exists org_settings (
   categories jsonb  not null default '["Network","Software","Hardware","Security","Access Management","Onboarding","Facilities","Healthcare","Engineering","Finance","Legal","Other"]'::jsonb,
   role_permissions jsonb not null default '{}',
   require_approvals boolean not null default false,
+  approval_mode text not null default 'all',
   updated_at bigint not null default 0
 );
 
 -- Migration guard
 alter table org_settings add column if not exists
   categories jsonb not null default '["Network","Software","Hardware","Security","Access Management","Onboarding","Facilities","Healthcare","Engineering","Finance","Legal","Other"]'::jsonb;
+alter table org_settings add column if not exists approval_mode text not null default 'all';
 
 create table if not exists team_settings (
   team_id    text   primary key,

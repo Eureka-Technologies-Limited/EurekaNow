@@ -7,6 +7,7 @@ import { useTokens, useTheme, useBreakpoint } from "../core/hooks.js";
 import { VIEW_LABELS, VIEW_TO_TYPE, PRIORITIES, DEFAULT_URGENCIES } from "../core/constants.js";
 import {
   createArticle,
+  createCatalogItem,
   createMember,
   createOrganisation,
   createApproval,
@@ -35,7 +36,7 @@ import { slaForPriority, slaPct } from "../core/utils.js";
 import { I } from "../core/icons.jsx";
 import { ToastContainer, useToasts } from "../ui/Toast.jsx";
 import { UpgradeGate, PlansModal, PlanBadge } from "../ui/UpgradeGate.jsx";
-import { normalizePlan, canFeature } from "../core/subscriptions.js";
+import { normalizePlan, canFeature, subscribeToTicketUpdates, subscribeToTicketComments, subscribeToApprovals } from "../core/subscriptions.js";
 import { DEFAULT_LAYOUT } from "../widgets/registry.js";
 import { DashboardView, DashCustomiser } from "../widgets/DashboardView.jsx";
 import { TicketListView }   from "../views/TicketListView.jsx";
@@ -427,26 +428,38 @@ const NOTIF_STYLES = {
   comment:     { icon: "send",      colorKey: "purple"  },
 };
 
-export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile, notifications = [], unreadCount = 0, notifReadIds = new Set(), onMarkRead, onMarkAllRead, onOpenTicket, onOpenCommandPalette }) {
+export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile, notifications = [], unreadCount = 0, notifReadIds = new Set(), onMarkRead, onMarkAllRead, onOpenTicket, onOpenCommandPalette, currentUser, orgs = [], teams = [], selectedOrgId, selectedTeamId, onSelectOrg, onSelectTeam }) {
   const t = useTokens();
   const [notifOpen, setNotifOpen] = useState(false);
+  const [orgTeamOpen, setOrgTeamOpen] = useState(false);
   const bellRef     = useRef(null);
   const dropdownRef = useRef(null);
+  const orgTeamRef = useRef(null);
+  const orgTeamBtnRef = useRef(null);
+
+  const activeOrg = orgs.find((o) => o.id === selectedOrgId);
+  const activeTeam = teams.find((tm) => tm.id === selectedTeamId && tm.orgId === selectedOrgId);
+  const orgTeams = teams.filter((tm) => tm.orgId === selectedOrgId);
 
   const critCount = tickets.filter((tk) => tk.priority === "Critical" && !["Resolved","Closed"].includes(tk.status)).length;
 
   // Close dropdown on outside click
   useEffect(() => {
-    if (!notifOpen) return;
+    if (!notifOpen && !orgTeamOpen) return;
     const handler = (e) => {
-      if (
+      if (notifOpen &&
         bellRef.current     && !bellRef.current.contains(e.target) &&
         dropdownRef.current && !dropdownRef.current.contains(e.target)
       ) setNotifOpen(false);
+      
+      if (orgTeamOpen &&
+        orgTeamBtnRef.current && !orgTeamBtnRef.current.contains(e.target) &&
+        orgTeamRef.current    && !orgTeamRef.current.contains(e.target)
+      ) setOrgTeamOpen(false);
     };
     document.addEventListener("mousedown", handler);
     return () => document.removeEventListener("mousedown", handler);
-  }, [notifOpen]);
+  }, [notifOpen, orgTeamOpen]);
 
   return (
     <header style={{ background: t.surface, borderBottom: `1px solid ${t.border}`, height: 52, display: "flex", alignItems: "center", padding: "0 16px", gap: 12, flexShrink: 0, position: "relative", zIndex: 50 }}>
@@ -455,6 +468,126 @@ export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile, notific
           <I name="menu" size={17} />
         </button>
       )}
+
+      {/* Org/Team Selector */}
+      {!isMobile && orgs.length > 0 && (
+        <div style={{ position: "relative" }}>
+          <button
+            ref={orgTeamBtnRef}
+            onClick={() => setOrgTeamOpen((o) => !o)}
+            title={`${activeOrg?.name || "Org"} / ${activeTeam?.name || "Team"}`}
+            style={{
+              background: orgTeamOpen ? t.accentBg : t.surface2,
+              border: `1px solid ${orgTeamOpen ? t.accent + "44" : t.border}`,
+              borderRadius: 8,
+              cursor: "pointer",
+              color: t.text2,
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              padding: "5px 10px",
+              fontFamily: t.font,
+              fontSize: 12,
+              fontWeight: 500,
+              maxWidth: 220,
+              overflow: "hidden",
+              whiteSpace: "nowrap",
+              textOverflow: "ellipsis",
+            }}
+          >
+            <I name="org" size={14} />
+            <span style={{ flex: 1, minWidth: 0, overflow: "hidden", textOverflow: "ellipsis" }}>
+              {activeOrg?.name || "—"} / {activeTeam?.name || "—"}
+            </span>
+            <I name="chevron-down" size={12} />
+          </button>
+
+          {orgTeamOpen && (
+            <div
+              ref={orgTeamRef}
+              style={{
+                position: "absolute",
+                top: "calc(100% + 8px)",
+                left: 0,
+                width: 320,
+                background: t.surface,
+                border: `1px solid ${t.border}`,
+                borderRadius: 12,
+                boxShadow: "0 8px 32px rgba(0,0,0,0.25)",
+                zIndex: 200,
+                overflow: "hidden",
+              }}
+            >
+              {/* Organization Select */}
+              <div style={{ padding: "12px 14px 10px", borderBottom: `1px solid ${t.border}` }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>Organization</div>
+                <div style={{ display: "flex", flexDirection: "column", gap: 2 }}>
+                  {orgs.map((org) => (
+                    <button
+                      key={org.id}
+                      onClick={() => {
+                        onSelectOrg?.(org.id);
+                        const firstTeam = teams.find((t) => t.orgId === org.id);
+                        if (firstTeam) onSelectTeam?.(firstTeam.id);
+                        setOrgTeamOpen(false);
+                      }}
+                      style={{
+                        background: selectedOrgId === org.id ? t.accentBg : "transparent",
+                        border: `1px solid ${selectedOrgId === org.id ? t.accent + "44" : "transparent"}`,
+                        borderRadius: 6,
+                        padding: "8px 10px",
+                        cursor: "pointer",
+                        fontFamily: t.font,
+                        color: selectedOrgId === org.id ? t.accentText : t.text2,
+                        fontSize: 12,
+                        fontWeight: selectedOrgId === org.id ? 600 : 400,
+                        textAlign: "left",
+                        transition: "background 0.1s",
+                      }}
+                    >
+                      {org.name}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Team Select */}
+              {orgTeams.length > 0 && (
+                <div style={{ padding: "12px 14px" }}>
+                  <div style={{ fontSize: 11, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>Team</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 2, maxHeight: 240, overflowY: "auto" }}>
+                    {orgTeams.map((team) => (
+                      <button
+                        key={team.id}
+                        onClick={() => {
+                          onSelectTeam?.(team.id);
+                          setOrgTeamOpen(false);
+                        }}
+                        style={{
+                          background: selectedTeamId === team.id ? t.accentBg : "transparent",
+                          border: `1px solid ${selectedTeamId === team.id ? t.accent + "44" : "transparent"}`,
+                          borderRadius: 6,
+                          padding: "8px 10px",
+                          cursor: "pointer",
+                          fontFamily: t.font,
+                          color: selectedTeamId === team.id ? t.accentText : t.text2,
+                          fontSize: 12,
+                          fontWeight: selectedTeamId === team.id ? 600 : 400,
+                          textAlign: "left",
+                          transition: "background 0.1s",
+                        }}
+                      >
+                        {team.name}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
       <span style={{ fontSize: 14, fontWeight: 700, color: t.text, flex: 1 }}>
         {VIEW_LABELS[view] || view}
       </span>
@@ -576,6 +709,8 @@ export function AppShell({ currentUser, onLogout }) {
   const [approvals,    setApprovals]    = useState([]);
   const [loading,      setLoading]      = useState(true);
   const [loadError,    setLoadError]    = useState("");
+  const [selectedOrgId, setSelectedOrgId] = useState(null);
+  const [selectedTeamId, setSelectedTeamId] = useState(null);
   const [shellPrefs,   setShellPrefs]   = useState(() => loadShellPrefs(currentUser?.id));
   const [view,         setView]         = useState(() => {
     const prefs = loadShellPrefs(currentUser?.id);
@@ -651,7 +786,7 @@ export function AppShell({ currentUser, onLogout }) {
     tickets.forEach((tk) => {
       if (["Resolved", "Closed"].includes(tk.status)) return;
       const slaHours = slaForPriority(tk.priority);
-      const pct      = slaPct(tk.createdAt, slaHours);
+      const pct      = slaPct(tk.createdAt, slaHours, tk.resolvedAt);
 
       if (tk.assignee === currentUser.id) {
         if (notifPrefs.slaBreaches && pct >= 100) {
@@ -757,6 +892,77 @@ export function AppShell({ currentUser, onLogout }) {
     load();
     return () => { mounted = false; };
   }, []);
+
+  // Set up real-time subscriptions for live updates
+  useEffect(() => {
+    if (tickets.length === 0) return;
+    
+    // Subscribe to ticket updates
+    const unsubscribeTickets = subscribeToTicketUpdates((update) => {
+      const { type, ticket } = update;
+      
+      if (type === "insert") {
+        setTickets((prev) => [ticket, ...prev]);
+      } else if (type === "update") {
+        setTickets((prev) => prev.map((t) => t.id === ticket.id ? ticket : t));
+        // Update active ticket if it matches
+        if (activeTicket?.id === ticket.id) {
+          setActiveTicket(ticket);
+        }
+      } else if (type === "delete") {
+        setTickets((prev) => prev.filter((t) => t.id !== ticket.id));
+      }
+    });
+
+    // Subscribe to comment updates
+    const unsubscribeComments = subscribeToTicketComments(activeTicket?.id, (update) => {
+      if (update.type === "insert" || update.type === "update") {
+        setActiveTicket((prev) => {
+          if (!prev) return prev;
+          return {
+            ...prev,
+            comments: [
+              ...(prev.comments || []).filter((c) => c.id !== update.comment.id),
+              update.comment,
+            ],
+          };
+        });
+      }
+    });
+
+    // Subscribe to approval updates
+    const unsubscribeApprovals = subscribeToApprovals((update) => {
+      const { type, approval } = update;
+      
+      if (type === "insert" || type === "update") {
+        setApprovals((prev) => [
+          ...prev.filter((a) => a.id !== approval.id),
+          approval,
+        ]);
+      } else if (type === "delete") {
+        setApprovals((prev) => prev.filter((a) => a.id !== approval.id));
+      }
+    });
+
+    return () => {
+      unsubscribeTickets?.();
+      unsubscribeComments?.();
+      unsubscribeApprovals?.();
+    };
+  }, [activeTicket?.id, tickets.length]);
+
+  // Initialize selected org/team on data load
+  useEffect(() => {
+    if (orgs.length === 0 || teams.length === 0) return;
+    if (!selectedOrgId) {
+      const userOrg = currentUser?.orgId || orgs[0]?.id;
+      setSelectedOrgId(userOrg);
+    }
+    if (!selectedTeamId && selectedOrgId) {
+      const userTeam = currentUser?.teamId || teams.find((t) => t.orgId === selectedOrgId)?.id;
+      setSelectedTeamId(userTeam);
+    }
+  }, [orgs, teams, currentUser?.orgId, currentUser?.teamId, selectedOrgId, selectedTeamId]);
 
   // Show tutorial on first login if not completed
   useEffect(() => {
@@ -987,7 +1193,16 @@ export function AppShell({ currentUser, onLogout }) {
   };
 
   const handleBulkUpdate = async (updates) => {
-    const results = await Promise.all(updates.map(({ id, fields }) => updateTicketFields(id, fields)));
+    const normalized = (updates || [])
+      .map((row) => ({
+        id: row?.id || row?.ticketId,
+        fields: row?.fields || row?.updates || {},
+      }))
+      .filter((row) => row.id && row.fields && Object.keys(row.fields).length > 0);
+
+    if (normalized.length === 0) return;
+
+    const results = await Promise.all(normalized.map(({ id, fields }) => updateTicketFields(id, fields)));
     setTickets((rows) => {
       const map = {};
       results.forEach((tk) => { map[tk.id] = tk; });
@@ -1000,17 +1215,25 @@ export function AppShell({ currentUser, onLogout }) {
     const requesterId = payload.requestedFor || currentUser.id;
     const ticketTitle = String(payload.title || item?.name || "Service Request").trim() || "Service Request";
     const ticketDescription = String(payload.description || item?.description || "").trim();
+    const needsApproval = Boolean(
+      item.requiresApproval ||
+      item.approverMode === "user" ||
+      item.approverMode === "team" ||
+      item.approverId ||
+      item.approverTeamId
+    );
     const createdTicket = await createTicket({
       type: payload.type || item.defaultType || "Service Request",
       title: ticketTitle,
       description: ticketDescription,
+      catalogItemId: item.id,
       orgId: payload.orgId,
       teamId: payload.teamId || "",
       reporter: requesterId,
       assignee: "",
       priority: payload.priority || item.defaultPriority || "Medium",
       urgency: payload.urgency || item.defaultUrgency || "Medium",
-      status: item.requiresApproval ? "Pending" : "Open",
+      status: needsApproval ? "Awaiting Approval" : "Open",
       dueDate: payload.dueDate || null,
       estimateHours: payload.estimateHours || null,
       spentHours: 0,
@@ -1019,7 +1242,7 @@ export function AppShell({ currentUser, onLogout }) {
 
     setTickets((rows) => [createdTicket, ...rows]);
 
-    if (item.requiresApproval) {
+    if (needsApproval) {
       // Build approval payload depending on approverMode: 'role'|'user'|'team'
       let approverId = "";
       let approverTeamId = "";
@@ -1083,6 +1306,48 @@ export function AppShell({ currentUser, onLogout }) {
     setCatalogItems((rows) => rows.map((r) => r.id === saved.id ? saved : r));
     return saved;
   };
+  const handleCreateCatalogItem = async (payload) => {
+    const created = await createCatalogItem(payload);
+    setCatalogItems((rows) => [created, ...rows]);
+    return created;
+  };
+  const handleAddApprovalToTicket = async (ticketId, payload = {}) => {
+    const ticket = tickets.find((row) => row.id === ticketId);
+    if (!ticket) throw new Error("Ticket not found.");
+
+    const createdApproval = await createApproval({
+      orgId: ticket.orgId,
+      teamId: ticket.teamId || "",
+      ticketId,
+      catalogItemId: ticket.catalogItemId || "",
+      requestedBy: payload.requestedBy || effectiveUser.id,
+      requestedFor: payload.requestedFor || ticket.requestedFor || ticket.reporter,
+      approverId: payload.approverId || "",
+      approverRole: payload.approverRole || "Admin",
+      approverMode: payload.approverMode || "user",
+      approverTeamId: payload.approverTeamId || "",
+      status: "Pending",
+      dueAt: payload.dueAt || ticket.dueDate || null,
+      comments: payload.comments || "",
+    });
+
+    setApprovals((rows) => [createdApproval, ...rows]);
+
+    if (!["Awaiting Approval", "Resolved", "Closed"].includes(ticket.status)) {
+      const updatedTicket = await updateTicketFields(ticketId, { status: "Awaiting Approval" });
+      setTickets((rows) => rows.map((row) => row.id === updatedTicket.id ? updatedTicket : row));
+      setActiveTicket((current) => (current?.id === updatedTicket.id ? updatedTicket : current));
+    }
+
+    addToast({
+      type: "info",
+      title: "Approver added",
+      message: `Approval ${createdApproval.id} was added to ${ticketId}.`,
+      duration: 3500,
+    });
+
+    return createdApproval;
+  };
   const handleResolveApproval = async (approvalId, decision, comments) => {
     const approval = approvals.find((row) => row.id === approvalId);
     if (!approval) throw new Error("Approval not found.");
@@ -1094,16 +1359,34 @@ export function AppShell({ currentUser, onLogout }) {
       approverId: currentUser.id,
     });
 
-    setApprovals((rows) => rows.map((row) => row.id === resolved.id ? resolved : row));
+    const nextApprovals = approvals.map((row) => row.id === resolved.id ? resolved : row);
+    setApprovals(nextApprovals);
 
-    const nextStatus = decision === "Approved" ? "Open" : "Closed";
+    const orgSetting = orgSettings.find((row) => row.orgId === approval.orgId) || {};
+    const approvalMode = orgSetting.approvalMode || "all";
+    const ticketApprovals = nextApprovals.filter((row) => row.ticketId === approval.ticketId);
+    let nextStatus = "Awaiting Approval";
+
+    if (decision !== "Approved") {
+      nextStatus = "Closed";
+    } else if (approvalMode === "any") {
+      nextStatus = "Open";
+    } else {
+      const hasRejected = ticketApprovals.some((row) => row.status === "Rejected");
+      const hasPending = ticketApprovals.some((row) => row.status === "Pending");
+      nextStatus = !hasRejected && !hasPending ? "Open" : "Awaiting Approval";
+    }
+
     const updatedTicket = await updateTicketFields(approval.ticketId, { status: nextStatus });
     setTickets((rows) => rows.map((row) => row.id === updatedTicket.id ? updatedTicket : row));
+    setActiveTicket((current) => (current?.id === updatedTicket.id ? updatedTicket : current));
 
     addToast({
       type: decision === "Approved" ? "success" : "warning",
       title: `Approval ${decision.toLowerCase()}`,
-      message: `${approval.ticketId} is now ${nextStatus.toLowerCase()}.`,
+      message: nextStatus === "Awaiting Approval"
+        ? `${approval.ticketId} is still awaiting remaining approvals.`
+        : `${approval.ticketId} is now ${nextStatus.toLowerCase()}.`,
       duration: 4500,
     });
 
@@ -1184,6 +1467,13 @@ export function AppShell({ currentUser, onLogout }) {
           onMarkAllRead={handleMarkAllRead}
           onOpenTicket={(tk) => tk && openTicket(tk)}
           onOpenCommandPalette={() => setCmdOpen(true)}
+          currentUser={effectiveUser}
+          orgs={orgs}
+          teams={teams}
+          selectedOrgId={selectedOrgId}
+          selectedTeamId={selectedTeamId}
+          onSelectOrg={setSelectedOrgId}
+          onSelectTeam={setSelectedTeamId}
         />
 
         <main style={{ flex: 1, overflowY: "auto", padding: isMobile ? "16px 14px" : "22px", paddingBottom: isMobile ? "80px" : "22px", WebkitOverflowScrolling: "touch" }}>
@@ -1211,6 +1501,7 @@ export function AppShell({ currentUser, onLogout }) {
                 orgSettings={orgSettings}
               tickets={tickets}
               onRequestItem={handleRequestCatalogItem}
+              onCreateCatalogItem={handleCreateCatalogItem}
               onUpdateCatalogItem={handleUpdateCatalogItem}
             />
           )}
@@ -1357,6 +1648,9 @@ export function AppShell({ currentUser, onLogout }) {
           onOpenTicket={openTicket}
           plan={plan}
           onUpgrade={() => setShowPlansModal(true)}
+          approvals={approvals.filter((a) => a.ticketId === activeTicket.id)}
+          onResolveApproval={handleResolveApproval}
+          onAddApproval={handleAddApprovalToTicket}
         />
       )}
       {modal === "new" && (

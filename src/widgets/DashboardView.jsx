@@ -2,7 +2,7 @@
 // DASHBOARD: Customiser modal + DashboardView layout
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useMemo } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { Card, Btn, Modal } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
@@ -43,25 +43,37 @@ export function DashCustomiser({ layout, onSave, onClose, onReset }) {
                   key={w.id}
                   onClick={() => toggle(w.id)}
                   style={{
-                    display: "flex", alignItems: "center", gap: 10,
+                    display: "flex", alignItems: "flex-start", gap: 10,
                     padding: "10px 13px",
                     background: active ? t.accentBg : t.surface2,
                     border: `1.5px solid ${active ? t.accent : t.border}`,
                     borderRadius: 9, cursor: "pointer", fontFamily: t.font, textAlign: "left",
+                    minHeight: 56,
                   }}
                 >
                   <div style={{
                     width: 16, height: 16, borderRadius: 4,
                     background: active ? t.accent : t.surface3,
                     display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0,
+                    marginTop: 2,
                   }}>
                     {active && <I name="check" size={10} />}
                   </div>
-                  <div>
-                    <div style={{ fontSize: 12, fontWeight: 600, color: active ? t.accentText : t.text }}>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ 
+                      fontSize: 12, fontWeight: 600, color: active ? t.accentText : t.text,
+                      wordBreak: "break-word",
+                      overflowWrap: "break-word",
+                      lineHeight: 1.4,
+                      margin: "0 0 2px 0",
+                    }}>
                       {w.label}
                     </div>
-                    <div style={{ fontSize: 9, color: t.text3 }}>
+                    <div style={{ 
+                      fontSize: 9, color: t.text3,
+                      lineHeight: 1.3,
+                      overflowWrap: "break-word",
+                    }}>
                       {w.size === "sm" ? "Stat card" : w.size === "md" ? "Chart" : "List widget"}
                     </div>
                   </div>
@@ -92,12 +104,13 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, s
   const [overId, setOverId] = useState(null);
   const [resizing, setResizing] = useState(null);
   const gridRef = useRef(null);
+  const [compactDensity, setCompactDensity] = useState(false);
 
   const hour = new Date().getHours();
   const greeting = hour < 12 ? "Good morning" : hour < 17 ? "Good afternoon" : "Good evening";
   const cols = isMobile ? 1 : isTablet ? 2 : 4;
   const gridGap = 12;
-  const baseRowHeight = 116;
+  const baseRowHeight = compactDensity ? 86 : 116;
 
   const moveWidget = (fromId, toId) => {
     if (!fromId || !toId || fromId === toId) return;
@@ -143,6 +156,8 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, s
     return next;
   };
 
+  const widgetsForLayout = useMemo(() => layout.map((id) => ALL_WIDGETS.find((ww) => ww.id === id)).filter(Boolean), [layout]);
+
   useEffect(() => {
     if (!resizing) return undefined;
 
@@ -178,17 +193,24 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, s
         justifyContent: "space-between", marginBottom: 20,
         flexDirection: isMobile ? "column" : "row", gap: isMobile ? 12 : 0,
       }}>
-        <div>
-          <h1 style={{ fontSize: isMobile ? 20 : 22, fontWeight: 800, margin: 0, letterSpacing: "-0.5px", color: t.text }}>
+        <div style={{ minWidth: 0, flex: 1 }}>
+          <h1 style={{ 
+            fontSize: isMobile ? 20 : 22, fontWeight: 800, margin: 0, letterSpacing: "-0.5px", color: t.text,
+            wordBreak: "break-word",
+            overflowWrap: "break-word",
+          }}>
             {greeting}, {currentUser.name.split(" ")[0]}
           </h1>
-          <p style={{ fontSize: 12, color: t.text3, marginTop: 4 }}>
+          <p style={{ fontSize: 12, color: t.text3, marginTop: 4, margin: "4px 0 0 0" }}>
             {new Date().toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
           </p>
         </div>
-        <div style={{ display: "flex", gap: 8 }}>
+        <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
           <Btn variant="secondary" size="sm" onClick={() => setArrangeMode((v) => !v)}>
             <I name="grid" size={12} /> {arrangeMode ? "Done" : "Arrange"}
+          </Btn>
+          <Btn variant={compactDensity ? "primary" : "ghost"} size="sm" onClick={() => setCompactDensity((s) => !s)} aria-pressed={compactDensity} title="Toggle compact density">
+            {compactDensity ? "Compact" : "Comfort"}
           </Btn>
           <Btn variant="secondary" size="sm" onClick={onCustomise}>
             <I name="settings" size={12} /> Customise
@@ -212,11 +234,12 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, s
           borderRadius: 12,
           padding: 12,
           background: t.surface2,
+          fontSize: 13,
+          lineHeight: 1.5,
         }}
       >
-        {layout.map((id) => {
-          const w = ALL_WIDGETS.find((ww) => ww.id === id);
-          if (!w) return null;
+        {widgetsForLayout.map((w) => {
+          const id = w.id;
           const sizing = getWidgetSizing(id, w.size);
           const canResize = !isMobile && w.size !== "sm";
           const isDragTarget = arrangeMode && overId === id && dragId && dragId !== id;
@@ -250,24 +273,40 @@ export function DashboardView({ tickets, articles, users, currentUser, layout, s
                   transition: "opacity 0.12s ease, transform 0.12s ease",
                   cursor: arrangeMode ? "grab" : "default",
                   minWidth: 0,
+                  minHeight: 0,
                 }}
             >
               <Card style={{
                 height: "100%",
                 flex: 1,
                 minHeight: 0,
+                minWidth: 0,
                 border: arrangeMode ? `1px dashed ${isDragTarget ? t.accent : t.border2}` : undefined,
                 boxShadow: arrangeMode && isDragTarget ? `0 0 0 1px ${t.accent}` : undefined,
+                padding: compactDensity ? 10 : 16,
+                overflow: "hidden",
+                display: "flex",
+                flexDirection: "column",
               }}>
-              <DashWidget
-                id={id}
-                tickets={tickets}
-                articles={articles}
-                users={users}
-                currentUser={currentUser}
-                onOpenTicket={onOpenTicket}
-                priorityCatalog={priorityCatalog}
-              />
+              <div style={{
+                flex: 1,
+                minHeight: 0,
+                minWidth: 0,
+                overflow: "hidden",
+                display: "flex",
+                flexDirection: "column",
+                margin: compactDensity ? 0 : 4,
+              }}>
+                <DashWidget
+                  id={id}
+                  tickets={tickets}
+                  articles={articles}
+                  users={users}
+                  currentUser={currentUser}
+                  onOpenTicket={onOpenTicket}
+                  priorityCatalog={priorityCatalog}
+                />
+              </div>
               </Card>
               {arrangeMode && (
                 <div style={{
