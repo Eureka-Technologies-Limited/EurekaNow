@@ -3,6 +3,8 @@
 // Three plans: Free · Basic · Pro
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { supabase } from "./supabase.js";
+
 export const PLANS = {
   Free: {
     label: "Free",
@@ -157,4 +159,136 @@ export function minPlanFor(feature) {
     if (PLANS[key].features[feature]) return key;
   }
   return "Pro";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REALTIME SUBSCRIPTIONS — Supabase live updates
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Subscribe to real-time ticket updates
+ * @param {Function} onTicketChange - Callback when ticket changes
+ * @param {Array<string>} ticketIds - Optional ticket IDs to filter
+ * @returns {Function} Unsubscribe function
+ */
+export function subscribeToTicketUpdates(onTicketChange, ticketIds = null) {
+  if (!supabase) return () => {};
+
+  let subsc = null;
+  
+  try {
+    // Subscribe to all inserts, updates, and deletes on tickets table
+    subsc = supabase
+      .channel("tickets")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "tickets",
+        },
+        (payload) => {
+          const record = payload.new || payload.old;
+          
+          // Filter by ticketIds if provided
+          if (ticketIds && !ticketIds.includes(record.id)) {
+            return;
+          }
+          
+          onTicketChange({
+            type: payload.eventType.toLowerCase(),
+            ticket: record,
+          });
+        }
+      )
+      .subscribe();
+  } catch (err) {
+    console.warn("Realtime subscriptions not available:", err.message);
+  }
+
+  return () => {
+    if (subsc) {
+      supabase.removeChannel(subsc);
+    }
+  };
+}
+
+/**
+ * Subscribe to comment updates on a ticket
+ * @param {string} ticketId - Ticket ID to watch
+ * @param {Function} onCommentChange - Callback on comment changes
+ * @returns {Function} Unsubscribe function
+ */
+export function subscribeToTicketComments(ticketId, onCommentChange) {
+  if (!supabase || !ticketId) return () => {};
+
+  let subsc = null;
+
+  try {
+    subsc = supabase
+      .channel(`ticket_comments_${ticketId}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "ticket_comments",
+          filter: `ticket_id=eq.${ticketId}`,
+        },
+        (payload) => {
+          onCommentChange({
+            type: payload.eventType.toLowerCase(),
+            comment: payload.new || payload.old,
+          });
+        }
+      )
+      .subscribe();
+  } catch (err) {
+    console.warn("Comment subscriptions not available:", err.message);
+  }
+
+  return () => {
+    if (subsc) {
+      supabase.removeChannel(subsc);
+    }
+  };
+}
+
+/**
+ * Subscribe to approval updates
+ * @param {Function} onApprovalChange - Callback on approval changes
+ * @returns {Function} Unsubscribe function
+ */
+export function subscribeToApprovals(onApprovalChange) {
+  if (!supabase) return () => {};
+
+  let subsc = null;
+
+  try {
+    subsc = supabase
+      .channel("approvals")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "approvals",
+        },
+        (payload) => {
+          onApprovalChange({
+            type: payload.eventType.toLowerCase(),
+            approval: payload.new || payload.old,
+          });
+        }
+      )
+      .subscribe();
+  } catch (err) {
+    console.warn("Approval subscriptions not available:", err.message);
+  }
+
+  return () => {
+    if (subsc) {
+      supabase.removeChannel(subsc);
+    }
+  };
 }

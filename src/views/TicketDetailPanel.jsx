@@ -236,8 +236,7 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
     { id: "activity", label: "Activity",     badge: tk.comments.length || null },
     { id: "related",  label: "Related",      badge: relatedCount || null },
     ...(showPIR ? [{ id: "pir", label: "Post-Incident Review" }] : []),
-    // Show approvals tab for request tickets and approval-based requests
-    ...((tk.type === "Service Request" || tk.type === "Change Request" || tk.status === "Awaiting Approval" || (approvals || []).length > 0 || tk.catalogItemId) ? [{ id: "approvals", label: "Approvals", badge: ticketApprovals.length || null }] : []),
+    // Approvals disabled on tickets per requirements
   ];
 
   const tabBtn = (tb) => (

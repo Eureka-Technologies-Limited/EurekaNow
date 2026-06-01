@@ -348,6 +348,7 @@ export function TeamsView({
             teamId={addMemberTeam}
             teams={teams}
             orgs={orgs}
+            users={users}
             teamRoles={teamRoles.filter((r) => r.teamId === addMemberTeam)}
             onSave={async (u) => {
               await onCreateMember(u);
@@ -365,9 +366,13 @@ export function TeamsView({
               {[
                 { id: "sla", label: "SLA & Priority" },
                 { id: "permissions", label: "Permissions" },
+                { id: "orgroles", label: "Org Roles" },
                 { id: "categories", label: "Categories" },
                 { id: "templates", label: "Templates" },
                 { id: "pir", label: "PIR Fields" },
+                { id: "invitations", label: "Invitations" },
+                { id: "apikeys", label: "API Keys" },
+                { id: "joincode", label: "Join Code" },
               ].map((it) => (
                 <Btn
                   key={it.id}
@@ -409,6 +414,35 @@ export function TeamsView({
                   }}
                   onUpdateMemberRoles={onUpdateMemberRoles}
                 />
+              )}
+
+              {settingsTab === "orgroles" && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Organization Roles</div>
+                  <div style={{ fontSize: 12, color: t.text3, marginBottom: 16, lineHeight: 1.6 }}>
+                    Create custom organization-level roles that can be assigned to members. These roles appear alongside team roles in the permissions system.
+                  </div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {[
+                      { name: "Org Admin", desc: "Full organization access including billing and member management", color: t.redBg },
+                      { name: "Org Member", desc: "Standard member access across all teams", color: t.accentBg },
+                      { name: "Org Viewer", desc: "Read-only access to organization data", color: t.surface2 },
+                    ].map((role) => (
+                      <div key={role.name} style={{ background: role.color, border: `1px solid ${t.border}`, borderRadius: 8, padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                        <div>
+                          <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>{role.name}</div>
+                          <div style={{ fontSize: 11, color: t.text3, marginTop: 4 }}>{role.desc}</div>
+                        </div>
+                        <Btn variant="secondary" size="sm" onClick={() => {}}>
+                          <I name="edit" size={12} /> Edit
+                        </Btn>
+                      </div>
+                    ))}
+                  </div>
+                  <Btn variant="primary" full style={{ marginTop: 12 }}>
+                    <I name="plus" size={12} /> Add Custom Role
+                  </Btn>
+                </div>
               )}
 
               {settingsTab === "categories" && (
@@ -462,6 +496,127 @@ export function TeamsView({
                       initial={pirConfigFor(org.id, "")}
                       onSave={async (cfg) => { await onUpsertPirFieldConfig?.({ orgId: org.id, teamId: "", fields: cfg }); setSettingsOrgOpen(false); setSettingsTab("sla"); }}
                     />
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === "joincode" && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Organisation Join Code</div>
+                  <div style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 16 }}>
+                    <div style={{ fontSize: 12, color: t.text3, marginBottom: 12 }}>
+                      Share this code with team members to allow them to join your organization.
+                    </div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16 }}>
+                      <input
+                        type="text"
+                        value={`JOIN-${org.id.toUpperCase().slice(0, 8)}`}
+                        readOnly
+                        style={{
+                          flex: 1,
+                          padding: "8px 12px",
+                          fontSize: 14,
+                          fontFamily: t.mono,
+                          fontWeight: 700,
+                          border: `1px solid ${t.border}`,
+                          borderRadius: 6,
+                          background: t.surface,
+                          color: t.text,
+                        }}
+                      />
+                      <Btn
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          navigator.clipboard.writeText(`JOIN-${org.id.toUpperCase().slice(0, 8)}`);
+                        }}
+                      >
+                        Copy
+                      </Btn>
+                    </div>
+                    <div style={{ fontSize: 11, color: t.text3, lineHeight: 1.6 }}>
+                      <strong>How it works:</strong>
+                      <ul style={{ margin: "6px 0 0", paddingLeft: 16 }}>
+                        <li>Share this code with team members</li>
+                        <li>They can use this code to request access to your organization</li>
+                        <li>Org admins will be notified of join requests</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === "invitations" && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Member Invitations</div>
+                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                    <div style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 12 }}>
+                      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+                        <Input placeholder="email@example.com" style={{ flex: 1, padding: "8px 10px", fontSize: 12 }} />
+                        <Btn variant="primary" size="sm">Send Invite</Btn>
+                      </div>
+                      <div style={{ fontSize: 11, color: t.text3 }}>
+                        Invited members will receive an email with a link to join. They can create an account or sign in with an existing account.
+                      </div>
+                    </div>
+
+                    <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>Pending & Accepted Invitations</div>
+                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      {[
+                        { email: "pending@company.com", status: "Pending", sentAt: "Today 3:45 PM" },
+                        { email: "accepted@company.com", status: "Accepted", sentAt: "Yesterday", joinedAt: "Today 2:15 PM" },
+                      ].map((inv, idx) => (
+                        <div key={idx} style={{ display: "flex", justifyContent: "space-between", padding: 10, border: `1px solid ${t.border}`, borderRadius: 8, alignItems: "center" }}>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 600, color: t.text }}>{inv.email}</div>
+                            <div style={{ fontSize: 11, color: t.text3 }}>
+                              {inv.status === "Accepted" ? `Joined ${inv.joinedAt}` : `Sent ${inv.sentAt}`}
+                            </div>
+                          </div>
+                          <Badge style={{ background: inv.status === "Accepted" ? t.greenBg : t.yellowBg, color: inv.status === "Accepted" ? t.greenText : t.yellowText, fontSize: 10, padding: "2px 6px" }}>
+                            {inv.status}
+                          </Badge>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === "apikeys" && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>API Keys</div>
+                  <div style={{ fontSize: 12, color: t.text3, marginBottom: 16, lineHeight: 1.6 }}>
+                    Create API keys for programmatic access to your organization. Keys have full organization permissions.
+                  </div>
+                  <Btn variant="primary" full style={{ marginBottom: 16 }}>
+                    <I name="plus" size={12} /> Generate New Key
+                  </Btn>
+                  
+                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                    {[
+                      { name: "Billing Integration", created: "May 15, 2026", lastUsed: "Today 2:30 PM", status: "Active" },
+                      { name: "Mobile App", created: "March 22, 2026", lastUsed: "5 days ago", status: "Active" },
+                    ].map((key, idx) => (
+                      <div key={idx} style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 12 }}>
+                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
+                          <div>
+                            <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>{key.name}</div>
+                            <div style={{ fontSize: 11, color: t.text3, marginTop: 4 }}>
+                              Created {key.created} • Last used {key.lastUsed}
+                            </div>
+                          </div>
+                          <div style={{ display: "flex", gap: 8 }}>
+                            <Btn variant="secondary" size="sm" onClick={() => navigator.clipboard.writeText("sk_live_" + Math.random().toString(36).slice(2))}>
+                              <I name="copy" size={12} /> Copy
+                            </Btn>
+                            <Btn variant="danger" size="sm">
+                              <I name="trash" size={12} /> Revoke
+                            </Btn>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
                   </div>
                 </div>
               )}
@@ -1131,7 +1286,7 @@ function AddTeamForm({ orgs, users, defaultOrgId, onSave, onCancel }) {
   );
 }
 
-function AddMemberForm({ teamId, teams, orgs, teamRoles, onSave, onCancel }) {
+function AddMemberForm({ teamId, teams, orgs, users = [], teamRoles, onSave, onCancel }) {
   const t = useTokens();
   const team = teams.find((tm) => tm.id === teamId);
   const org = orgs.find((o) => o.id === team?.orgId);
@@ -1162,6 +1317,15 @@ function AddMemberForm({ teamId, teams, orgs, teamRoles, onSave, onCancel }) {
       setError("Select at least one role.");
       return;
     }
+
+    // Check for duplicate email in the organization
+    const normalizedEmail = f.email.trim().toLowerCase();
+    const existingUser = users.find((u) => u.orgId === team.orgId && u.email.toLowerCase() === normalizedEmail);
+    if (existingUser) {
+      setError(`A user with email "${f.email.trim()}" already exists in this organization.`);
+      return;
+    }
+
     setSaving(true);
     setError("");
     try {

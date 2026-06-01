@@ -345,6 +345,58 @@ export function ReportsView({ tickets, users }) {
           <HBarChart items={raw.categoryItems} color={t.blue} />
         </Section>
       </div>
+
+      {/* Custom Reports */}
+      <Section title="Custom Reports" sub="Create and save your own report configurations">
+        <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+          <p style={{ margin: 0, fontSize: 12, color: t.text3, lineHeight: 1.6 }}>
+            Build custom reports by selecting specific metrics, date ranges, and filters. Save your configurations for quick access later.
+          </p>
+          <button
+            style={{
+              background: t.accent,
+              color: "#0f0f0e",
+              border: "none",
+              borderRadius: 8,
+              padding: "10px 16px",
+              cursor: "pointer",
+              fontFamily: t.font,
+              fontSize: 12,
+              fontWeight: 700,
+              display: "flex",
+              alignItems: "center",
+              gap: 8,
+              justifyContent: "center",
+            }}
+          >
+            <I name="plus" size={14} /> Create Custom Report
+          </button>
+
+          <div style={{ marginTop: 8 }}>
+            <div style={{ fontSize: 12, fontWeight: 700, color: t.text, marginBottom: 8 }}>Saved Reports</div>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(220px, 1fr))", gap: 8 }}>
+              {[
+                { name: "SLA Compliance Trend", lastModified: "2 hours ago", metrics: ["SLA Compliance", "Volume"] },
+                { name: "Agent Performance Q2", lastModified: "1 day ago", metrics: ["Agent Workload", "Resolution Rate"] },
+              ].map((report, idx) => (
+                <div key={idx} style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 12, cursor: "pointer" }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: t.text, marginBottom: 4 }}>{report.name}</div>
+                  <div style={{ fontSize: 11, color: t.text3, marginBottom: 8 }}>Modified {report.lastModified}</div>
+                  <div style={{ display: "flex", gap: 4, flexWrap: "wrap", marginBottom: 8 }}>
+                    {report.metrics.map((m) => (
+                      <span key={m} style={{ fontSize: 9, background: t.surface3, color: t.text3, padding: "2px 6px", borderRadius: 4 }}>{m}</span>
+                    ))}
+                  </div>
+                  <div style={{ display: "flex", gap: 6 }}>
+                    <button style={{ flex: 1, padding: "6px 10px", fontSize: 11, background: t.accent, color: "#0f0f0e", border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600 }}>View</button>
+                    <button style={{ flex: 1, padding: "6px 10px", fontSize: 11, background: t.surface3, color: t.text3, border: "none", borderRadius: 6, cursor: "pointer", fontWeight: 600 }}>Edit</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      </Section>
     </div>
   );
 }
