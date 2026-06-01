@@ -44,8 +44,8 @@ This guide walks you through setting up Google OAuth 2.0 authentication for Eure
    - Click **CREATE**
    - Fill in the required fields:
      - **App name**: EureakNow
-     - **User support email**: your-email@example.com
-     - **Developer contact emails**: your-email@example.com
+     - **User support email**: <your-email@example.com>
+     - **Developer contact emails**: <your-email@example.com>
    - Click **SAVE AND CONTINUE**
    - Skip scopes, click **SAVE AND CONTINUE**
    - Skip optional info, click **SAVE AND CONTINUE**
@@ -57,13 +57,17 @@ This guide walks you through setting up Google OAuth 2.0 authentication for Eure
    - Select **Web application**
    - Name: "EureakNow Login"
    - Under **Authorized JavaScript origins**, click **ADD URI** and enter:
-     ```
+
+     ```bash
      https://anhsumvnxmxosdjclfss.supabase.co
      ```
+
    - Under **Authorized redirect URIs**, click **ADD URI** and enter:
-     ```
+
+     ```bash
      https://anhsumvnxmxosdjclfss.supabase.co/auth/v1/callback
      ```
+
    - Click **CREATE**
 
 5. You'll see a popup with your credentials:
@@ -91,14 +95,17 @@ This guide walks you through setting up Google OAuth 2.0 authentication for Eure
 ## Troubleshooting
 
 ### "Redirect URI mismatch" error
+
 - Make sure the redirect URI in Google Cloud Console exactly matches what's in Supabase
 - For this project, use: `https://anhsumvnxmxosdjclfss.supabase.co/auth/v1/callback`
 
 ### User not found in database
+
 - The app automatically creates a new user in the database when signing in with Google
 - The user's name and email from Google are used
 
 ### OAuth session not persisting
+
 - Check browser DevTools → Application → Cookies to ensure Supabase session cookie is saved
 - Clear browser cache if issues persist
 
