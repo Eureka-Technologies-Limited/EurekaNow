@@ -5,12 +5,12 @@
 // typeFilter = null → All Tickets; typeFilter = "Incident" → Incidents only.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState } from "react";
+import { useState, useMemo } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { PRIORITIES, STATUSES } from "../core/constants.js";
 import { slaPct, slaForPriority, findPriorityCfg } from "../core/utils.js";
 import { Avatar, Btn, Card, PriorityBadge, StatusBadge, TypeBadge, SLABar } from "../ui/primitives.jsx";
-import { BulkActionsBar } from "../ui/BulkActionsBar.jsx";
+import BulkActionsBar from "../ui/BulkActionsBar.jsx";
 import { I } from "../core/icons.jsx";
 import { canFeature } from "../core/subscriptions.js";
 
@@ -25,6 +25,10 @@ const TYPE_ICON = {
 function formatDueLabel(dueDate) {
   if (!dueDate) return "";
   return new Date(dueDate).toLocaleDateString("en-GB", { day: "2-digit", month: "short" });
+}
+
+function isMultiSelectGesture(e) {
+  return !!(e?.ctrlKey || e?.metaKey);
 }
 
 export function TicketListView({ typeFilter, tickets, users, currentUser, onOpenTicket, onNewTicket, priorityCatalog, onBulkUpdate, plan = "Free", onUpgrade }) {
@@ -44,12 +48,17 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
   const [showFilters,  setShowFilters]  = useState(false);
   const [selected,     setSelected]     = useState(new Set());
   const [activePreset, setActivePreset] = useState(null);
+  const [compactDensity, setCompactDensity] = useState(false);
 
   const label = typeFilter || "All Tickets";
 
-  const filtered = tickets
-    .filter((tk) => !typeFilter || tk.type === typeFilter)
-    .filter((tk) => {
+  const filtered = useMemo(() => {
+    let list = (tickets || []).filter((tk) => !typeFilter || tk.type === typeFilter);
+    // Hide resolved/closed tickets from the dedicated Service Requests view
+    if (typeFilter === "Service Request") {
+      list = list.filter((tk) => !["Resolved", "Closed"].includes(tk.status));
+    }
+    const searched = list.filter((tk) => {
       if (!search) return true;
       const q = search.toLowerCase();
       const reporter = users.find((u) => u.id === tk.reporter);
@@ -59,15 +68,15 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
       if (searchMode === "tag") return (tk.tags || []).some((tag) => String(tag).toLowerCase().includes(q));
       if (searchMode === "reporter") return (reporter?.name || "").toLowerCase().includes(q);
       return haystack.includes(q);
-    })
-    .filter((tk) => fStatus   === "All" || tk.status   === fStatus)
-    .filter((tk) => fPriority === "All" || tk.priority === fPriority)
-    .filter((tk) => {
-      if (fAssignee === "All") return true;
-      if (fAssignee === "__unassigned") return !tk.assignee;
-      return tk.assignee === fAssignee;
-    })
-    .sort((a, b) => {
+    });
+    const filteredStatus = searched.filter((tk) => fStatus === "All" || tk.status === fStatus)
+      .filter((tk) => fPriority === "All" || tk.priority === fPriority)
+      .filter((tk) => {
+        if (fAssignee === "All") return true;
+        if (fAssignee === "__unassigned") return !tk.assignee;
+        return tk.assignee === fAssignee;
+      });
+    const sorted = filteredStatus.slice().sort((a, b) => {
       if (sortBy === "newest")   return b.createdAt - a.createdAt;
       if (sortBy === "oldest")   return a.createdAt - b.createdAt;
       if (sortBy === "priority") return priorityOrder.indexOf(a.priority) - priorityOrder.indexOf(b.priority);
@@ -76,13 +85,15 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
         const cfgA = findPriorityCfg(catalog, a.priority);
         const slaB = cfgB && Number(cfgB.sla) > 0 ? Number(cfgB.sla) : slaForPriority(b.priority);
         const slaA = cfgA && Number(cfgA.sla) > 0 ? Number(cfgA.sla) : slaForPriority(a.priority);
-        return slaPct(b.createdAt, slaB) - slaPct(a.createdAt, slaA);
+        return slaPct(b.createdAt, slaB, b.resolvedAt) - slaPct(a.createdAt, slaA, a.resolvedAt);
       }
       return 0;
     });
+    return sorted;
+  }, [tickets, typeFilter, search, searchMode, fStatus, fPriority, fAssignee, sortBy, priorityOrder, users, catalog]);
 
-  const baseCount = tickets.filter((tk) => !typeFilter || tk.type === typeFilter).length;
-  const clearFilters = () => { setSearch(""); setFStatus("All"); setFPriority("All"); setFAssignee("All"); setActivePreset(null); setSortBy("newest"); };
+  const baseCount = useMemo(() => (tickets || []).filter((tk) => !typeFilter || tk.type === typeFilter).length, [tickets, typeFilter]);
+  const clearFilters = () => { setSearch(""); setFStatus("All"); setFPriority("All"); setFAssignee("All"); setActivePreset(null); setSortBy("newest"); setSelected(new Set()); };
 
   const emptyState = (
     <div style={{ textAlign: "center", padding: "48px 24px" }}>
@@ -176,7 +187,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
     if (!onBulkUpdate || selected.size === 0) return;
     const updates = Array.from(selected).map((ticketId) => ({
       ticketId,
-      updates: { assignee: userId === "" ? null : userId },
+      updates: { assignee: userId === "__unassign" ? null : userId },
     }));
     onBulkUpdate?.(updates);
     setSelected(new Set());
@@ -202,6 +213,9 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
           <span style={{ fontSize: 12, color: t.text3 }}>({filtered.length})</span>
         </div>
         <div style={{ display: "flex", gap: 8 }}>
+          <Btn variant={compactDensity ? "primary" : "ghost"} size="sm" onClick={() => setCompactDensity((s) => !s)} aria-pressed={compactDensity} title="Toggle compact density">
+            {compactDensity ? "Compact" : "Comfort"}
+          </Btn>
           {isMobile && (
             <Btn variant="secondary" size="sm" onClick={() => setShowFilters((f) => !f)}>
               <I name="filter" size={12} />
@@ -327,22 +341,40 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
           {filtered.length === 0 && emptyState}
           {filtered.map((tk) => {
             const assignee = users.find((u) => u.id === tk.assignee);
+            const isSelected = selected.has(tk.id);
             return (
               <button
                 key={tk.id}
-                onClick={() => onOpenTicket(tk)}
+                onClick={(e) => {
+                  if (isMultiSelectGesture(e)) {
+                    e.preventDefault();
+                    toggleSelect(tk.id);
+                    return;
+                  }
+                  onOpenTicket(tk);
+                }}
                 style={{
-                  background: t.surface, border: `1px solid ${t.border}`,
-                  borderRadius: 12, padding: "12px 14px",
+                  background: isSelected ? t.accentBg : t.surface, border: `1px solid ${isSelected ? t.accent : t.border}`,
+                  borderRadius: 12, padding: compactDensity ? "8px 10px" : "12px 14px",
                   cursor: "pointer", fontFamily: t.font, textAlign: "left",
                   borderLeft: `3px solid ${PRIORITIES[tk.priority]?.color || "#888"}`,
                   width: "100%",
                 }}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 8, marginBottom: 8 }}>
-                  <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontSize: 13, fontWeight: 700, color: t.text, marginBottom: 3, lineHeight: 1.3 }}>{tk.title}</div>
-                    <div style={{ fontSize: 10, color: t.text3, fontFamily: t.mono }}>{tk.id}</div>
+                  <div style={{ flex: 1, minWidth: 0, display: "flex", alignItems: "flex-start", gap: 8 }}>
+                    <input
+                      type="checkbox"
+                      checked={isSelected}
+                      onChange={() => toggleSelect(tk.id)}
+                      onClick={(e) => e.stopPropagation()}
+                      style={{ cursor: "pointer", width: 16, height: 16, marginTop: 1, flexShrink: 0, accentColor: t.accent }}
+                      aria-label={`Select ${tk.title}`}
+                    />
+                    <div style={{ minWidth: 0, flex: 1 }}>
+                      <div style={{ fontSize: 13, fontWeight: 700, color: t.text, marginBottom: 3, lineHeight: 1.3 }}>{tk.title}</div>
+                      <div style={{ fontSize: 10, color: t.text3, fontFamily: t.mono }}>{tk.id}</div>
+                    </div>
                   </div>
                   {assignee && <Avatar name={assignee.name} size={26} fs={9} />}
                 </div>
@@ -356,7 +388,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                     </span>
                   )}
                 </div>
-                {(tk.estimateHours != null || tk.spentHours > 0) && (
+                {(tk.estimateHours != null || tk.spentHours > 0) && !compactDensity && (
                   <div style={{ marginTop: 6, fontSize: 11, color: t.text3 }}>
                     {tk.estimateHours != null ? `Est ${tk.estimateHours}h` : ""}
                     {tk.estimateHours != null && tk.spentHours > 0 ? " · " : ""}
@@ -364,7 +396,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                   </div>
                 )}
                 <div style={{ marginTop: 8 }}>
-                  <SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={catalog[tk.priority]?.sla} />
+                  <SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={catalog[tk.priority]?.sla} endAt={tk.resolvedAt} />
                 </div>
               </button>
             );
@@ -376,7 +408,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
           {/* Table header */}
           <div style={{
             display: "grid",
-            gridTemplateColumns: "40px 8px 1fr 100px 90px 100px 100px 140px",
+            gridTemplateColumns: "56px 1fr 100px 90px 100px 100px 140px",
             gap: "12px",
             padding: "12px 16px",
             borderBottom: `1px solid ${t.border}`,
@@ -387,7 +419,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
               type="checkbox"
               checked={selected.size > 0 && selected.size === filtered.length}
               onChange={toggleSelectAll}
-              style={{ cursor: "pointer", width: 18, height: 18 }}
+              style={{ cursor: "pointer", width: 18, height: 18, accentColor: t.accent }}
               title="Select all tickets"
             />
             {["", "Title", "Type", "Priority", "Status", "Agent", "SLA"].map((h) => (
@@ -405,21 +437,28 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
             return (
               <button
                 key={tk.id}
-                onClick={() => onOpenTicket(tk)}
+                onClick={(e) => {
+                  if (isMultiSelectGesture(e)) {
+                    e.preventDefault();
+                    toggleSelect(tk.id);
+                    return;
+                  }
+                  onOpenTicket(tk);
+                }}
                 style={{
                   width: "100%",
                   display: "grid",
-                  gridTemplateColumns: "40px 8px 1fr 100px 90px 100px 100px 140px",
+                  gridTemplateColumns: "56px 1fr 100px 90px 100px 100px 140px",
                   gap: "12px",
                   alignItems: "center",
-                  padding: "12px 16px",
+                  padding: compactDensity ? "8px 12px" : "12px 16px",
                   background: isSelected ? t.accentBg : "none",
                   border: "none",
                   borderTop: i > 0 ? `1px solid ${t.border}` : "none",
                   cursor: "pointer",
                   fontFamily: t.font,
                   textAlign: "left",
-                  minHeight: 52,
+                  minHeight: compactDensity ? 40 : 52,
                 }}
                 onMouseDown={(e) => {
                   if (e.target.type === "checkbox") {
@@ -429,14 +468,17 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                   }
                 }}
               >
-                <input
-                  type="checkbox"
-                  checked={isSelected}
-                  onChange={() => toggleSelect(tk.id)}
-                  onClick={(e) => e.stopPropagation()}
-                  style={{ cursor: "pointer", width: 18, height: 18 }}
-                />
-                <div style={{ width: 8, height: 20, borderRadius: 4, background: (findPriorityCfg(catalog, tk.priority)?.color) || "#888", display: "block", alignSelf: "center" }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
+                  <input
+                    type="checkbox"
+                    checked={isSelected}
+                    onChange={() => toggleSelect(tk.id)}
+                    onClick={(e) => e.stopPropagation()}
+                    style={{ cursor: "pointer", width: 18, height: 18, flexShrink: 0, accentColor: t.accent }}
+                    aria-label={`Select ${tk.title}`}
+                  />
+                  <div style={{ width: 8, height: 20, borderRadius: 4, background: (findPriorityCfg(catalog, tk.priority)?.color) || "#888", display: "block", alignSelf: "center", flexShrink: 0 }} />
+                </div>
                 <div style={{ paddingRight: 0, overflow: "hidden", minWidth: 0 }}>
                   <div style={{ fontSize: 13, fontWeight: 600, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {tk.title}
@@ -460,7 +502,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><PriorityBadge priority={tk.priority} catalog={catalog} /></div>
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><StatusBadge status={tk.status} /></div>
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}>{agent ? <Avatar name={agent.name} size={24} fs={8} /> : <span style={{ color: t.text3 }}>—</span>}</div>
-                <div style={{ minWidth: 0 }}><SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={(findPriorityCfg(catalog, tk.priority) && Number(findPriorityCfg(catalog, tk.priority).sla) > 0) ? Number(findPriorityCfg(catalog, tk.priority).sla) : slaForPriority(tk.priority)} /></div>
+                <div style={{ minWidth: 0 }}><SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={(findPriorityCfg(catalog, tk.priority) && Number(findPriorityCfg(catalog, tk.priority).sla) > 0) ? Number(findPriorityCfg(catalog, tk.priority).sla) : slaForPriority(tk.priority)} endAt={tk.resolvedAt} /></div>
               </button>
             );
           })}

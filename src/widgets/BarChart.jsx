@@ -42,7 +42,7 @@ export function BarChart({ data, label }) {
 export function ByStatusChart({ tickets }) {
   const STATUS_COLORS = {
     "Open": "#3182ce", "In Progress": "#805ad5",
-    "Pending": "#d69e2e", "Resolved": "#38a169", "Closed": "#718096",
+    "Pending": "#d69e2e", "Awaiting Approval": "#d69e2e", "Resolved": "#38a169", "Closed": "#718096",
   };
   const data = STATUSES.map((s) => ({
     label: s,

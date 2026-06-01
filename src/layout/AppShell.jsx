@@ -7,6 +7,7 @@ import { useTokens, useTheme, useBreakpoint } from "../core/hooks.js";
 import { VIEW_LABELS, VIEW_TO_TYPE, PRIORITIES, DEFAULT_URGENCIES } from "../core/constants.js";
 import {
   createArticle,
+  createCatalogItem,
   createMember,
   createOrganisation,
   createApproval,
@@ -651,7 +652,7 @@ export function AppShell({ currentUser, onLogout }) {
     tickets.forEach((tk) => {
       if (["Resolved", "Closed"].includes(tk.status)) return;
       const slaHours = slaForPriority(tk.priority);
-      const pct      = slaPct(tk.createdAt, slaHours);
+      const pct      = slaPct(tk.createdAt, slaHours, tk.resolvedAt);
 
       if (tk.assignee === currentUser.id) {
         if (notifPrefs.slaBreaches && pct >= 100) {
@@ -987,7 +988,16 @@ export function AppShell({ currentUser, onLogout }) {
   };
 
   const handleBulkUpdate = async (updates) => {
-    const results = await Promise.all(updates.map(({ id, fields }) => updateTicketFields(id, fields)));
+    const normalized = (updates || [])
+      .map((row) => ({
+        id: row?.id || row?.ticketId,
+        fields: row?.fields || row?.updates || {},
+      }))
+      .filter((row) => row.id && row.fields && Object.keys(row.fields).length > 0);
+
+    if (normalized.length === 0) return;
+
+    const results = await Promise.all(normalized.map(({ id, fields }) => updateTicketFields(id, fields)));
     setTickets((rows) => {
       const map = {};
       results.forEach((tk) => { map[tk.id] = tk; });
@@ -1000,17 +1010,25 @@ export function AppShell({ currentUser, onLogout }) {
     const requesterId = payload.requestedFor || currentUser.id;
     const ticketTitle = String(payload.title || item?.name || "Service Request").trim() || "Service Request";
     const ticketDescription = String(payload.description || item?.description || "").trim();
+    const needsApproval = Boolean(
+      item.requiresApproval ||
+      item.approverMode === "user" ||
+      item.approverMode === "team" ||
+      item.approverId ||
+      item.approverTeamId
+    );
     const createdTicket = await createTicket({
       type: payload.type || item.defaultType || "Service Request",
       title: ticketTitle,
       description: ticketDescription,
+      catalogItemId: item.id,
       orgId: payload.orgId,
       teamId: payload.teamId || "",
       reporter: requesterId,
       assignee: "",
       priority: payload.priority || item.defaultPriority || "Medium",
       urgency: payload.urgency || item.defaultUrgency || "Medium",
-      status: item.requiresApproval ? "Pending" : "Open",
+      status: needsApproval ? "Awaiting Approval" : "Open",
       dueDate: payload.dueDate || null,
       estimateHours: payload.estimateHours || null,
       spentHours: 0,
@@ -1019,7 +1037,7 @@ export function AppShell({ currentUser, onLogout }) {
 
     setTickets((rows) => [createdTicket, ...rows]);
 
-    if (item.requiresApproval) {
+    if (needsApproval) {
       // Build approval payload depending on approverMode: 'role'|'user'|'team'
       let approverId = "";
       let approverTeamId = "";
@@ -1083,6 +1101,48 @@ export function AppShell({ currentUser, onLogout }) {
     setCatalogItems((rows) => rows.map((r) => r.id === saved.id ? saved : r));
     return saved;
   };
+  const handleCreateCatalogItem = async (payload) => {
+    const created = await createCatalogItem(payload);
+    setCatalogItems((rows) => [created, ...rows]);
+    return created;
+  };
+  const handleAddApprovalToTicket = async (ticketId, payload = {}) => {
+    const ticket = tickets.find((row) => row.id === ticketId);
+    if (!ticket) throw new Error("Ticket not found.");
+
+    const createdApproval = await createApproval({
+      orgId: ticket.orgId,
+      teamId: ticket.teamId || "",
+      ticketId,
+      catalogItemId: ticket.catalogItemId || "",
+      requestedBy: payload.requestedBy || effectiveUser.id,
+      requestedFor: payload.requestedFor || ticket.requestedFor || ticket.reporter,
+      approverId: payload.approverId || "",
+      approverRole: payload.approverRole || "Admin",
+      approverMode: payload.approverMode || "user",
+      approverTeamId: payload.approverTeamId || "",
+      status: "Pending",
+      dueAt: payload.dueAt || ticket.dueDate || null,
+      comments: payload.comments || "",
+    });
+
+    setApprovals((rows) => [createdApproval, ...rows]);
+
+    if (!["Awaiting Approval", "Resolved", "Closed"].includes(ticket.status)) {
+      const updatedTicket = await updateTicketFields(ticketId, { status: "Awaiting Approval" });
+      setTickets((rows) => rows.map((row) => row.id === updatedTicket.id ? updatedTicket : row));
+      setActiveTicket((current) => (current?.id === updatedTicket.id ? updatedTicket : current));
+    }
+
+    addToast({
+      type: "info",
+      title: "Approver added",
+      message: `Approval ${createdApproval.id} was added to ${ticketId}.`,
+      duration: 3500,
+    });
+
+    return createdApproval;
+  };
   const handleResolveApproval = async (approvalId, decision, comments) => {
     const approval = approvals.find((row) => row.id === approvalId);
     if (!approval) throw new Error("Approval not found.");
@@ -1094,16 +1154,34 @@ export function AppShell({ currentUser, onLogout }) {
       approverId: currentUser.id,
     });
 
-    setApprovals((rows) => rows.map((row) => row.id === resolved.id ? resolved : row));
+    const nextApprovals = approvals.map((row) => row.id === resolved.id ? resolved : row);
+    setApprovals(nextApprovals);
 
-    const nextStatus = decision === "Approved" ? "Open" : "Closed";
+    const orgSetting = orgSettings.find((row) => row.orgId === approval.orgId) || {};
+    const approvalMode = orgSetting.approvalMode || "all";
+    const ticketApprovals = nextApprovals.filter((row) => row.ticketId === approval.ticketId);
+    let nextStatus = "Awaiting Approval";
+
+    if (decision !== "Approved") {
+      nextStatus = "Closed";
+    } else if (approvalMode === "any") {
+      nextStatus = "Open";
+    } else {
+      const hasRejected = ticketApprovals.some((row) => row.status === "Rejected");
+      const hasPending = ticketApprovals.some((row) => row.status === "Pending");
+      nextStatus = !hasRejected && !hasPending ? "Open" : "Awaiting Approval";
+    }
+
     const updatedTicket = await updateTicketFields(approval.ticketId, { status: nextStatus });
     setTickets((rows) => rows.map((row) => row.id === updatedTicket.id ? updatedTicket : row));
+    setActiveTicket((current) => (current?.id === updatedTicket.id ? updatedTicket : current));
 
     addToast({
       type: decision === "Approved" ? "success" : "warning",
       title: `Approval ${decision.toLowerCase()}`,
-      message: `${approval.ticketId} is now ${nextStatus.toLowerCase()}.`,
+      message: nextStatus === "Awaiting Approval"
+        ? `${approval.ticketId} is still awaiting remaining approvals.`
+        : `${approval.ticketId} is now ${nextStatus.toLowerCase()}.`,
       duration: 4500,
     });
 
@@ -1211,6 +1289,7 @@ export function AppShell({ currentUser, onLogout }) {
                 orgSettings={orgSettings}
               tickets={tickets}
               onRequestItem={handleRequestCatalogItem}
+              onCreateCatalogItem={handleCreateCatalogItem}
               onUpdateCatalogItem={handleUpdateCatalogItem}
             />
           )}
@@ -1357,6 +1436,9 @@ export function AppShell({ currentUser, onLogout }) {
           onOpenTicket={openTicket}
           plan={plan}
           onUpgrade={() => setShowPlansModal(true)}
+          approvals={approvals.filter((a) => a.ticketId === activeTicket.id)}
+          onResolveApproval={handleResolveApproval}
+          onAddApproval={handleAddApprovalToTicket}
         />
       )}
       {modal === "new" && (

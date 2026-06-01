@@ -1,7 +1,7 @@
 import { useMemo, useState } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { DEFAULT_TEAM_ROLES } from "../core/constants.js";
-import { Btn, Card, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
+import { Avatar, Btn, Card, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 
 function hasRole(user, roleName) {
@@ -216,10 +216,21 @@ function ManageCatalogModal({ item, users = [], teams = [], onClose, onSave }) {
       <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
         <div>
           <Label>Approver type</Label>
-          <div style={{ display: "flex", gap: 8 }}>
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}><input type="radio" checked={approverMode === 'role'} onChange={() => setApproverMode('role')} /> Role</label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}><input type="radio" checked={approverMode === 'user'} onChange={() => setApproverMode('user')} /> Specific user</label>
-            <label style={{ display: "flex", alignItems: "center", gap: 8 }}><input type="radio" checked={approverMode === 'team'} onChange={() => setApproverMode('team')} /> Team (group)</label>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {[
+              { id: "role", label: "Role" },
+              { id: "user", label: "User" },
+              { id: "team", label: "Team" },
+            ].map((option) => (
+              <Btn
+                key={option.id}
+                variant={approverMode === option.id ? "primary" : "secondary"}
+                size="sm"
+                onClick={() => setApproverMode(option.id)}
+              >
+                {option.label}
+              </Btn>
+            ))}
           </div>
         </div>
 
@@ -264,13 +275,43 @@ function ManageCatalogModal({ item, users = [], teams = [], onClose, onSave }) {
   );
 }
 
-export function ServiceCatalogView({ items = [], currentUser, users, teams, orgs, orgSettings = [], onRequestItem, tickets = [], onUpdateCatalogItem }) {
+export function ServiceCatalogView({ items = [], currentUser, users, teams, orgs, orgSettings = [], onRequestItem, onCreateCatalogItem, tickets = [], onUpdateCatalogItem }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
   const [query, setQuery] = useState("");
   const [selectedCategory, setSelectedCategory] = useState("All");
   const [activeItem, setActiveItem] = useState(null);
   const [manageItem, setManageItem] = useState(null);
+  const [creatingItem, setCreatingItem] = useState(false);
+  const [createSaving, setCreateSaving] = useState(false);
+  const [createError, setCreateError] = useState("");
+  const [createForm, setCreateForm] = useState({
+    orgId: currentUser?.orgId || orgs[0]?.id || "",
+    teamId: currentUser?.teamId || "",
+    name: "",
+    description: "",
+    category: "General",
+    icon: "request",
+    defaultType: "Service Request",
+    defaultPriority: "Medium",
+    defaultUrgency: "Medium",
+    requiresApproval: false,
+    approverMode: "role",
+    approverRole: "Admin",
+    approverId: "",
+    approverTeamId: "",
+  });
+
+  const teamMap = useMemo(() => Object.fromEntries(teams.map((team) => [team.id, team])), [teams]);
+  const approverCandidates = useMemo(() => {
+    const orgUsers = users.filter((user) => user.orgId === createForm.orgId);
+    if (createForm.approverMode === "user") return orgUsers;
+    if (createForm.approverMode === "team") {
+      const team = teamMap[createForm.approverTeamId];
+      return team ? orgUsers.filter((user) => user.teamId === team.id) : orgUsers;
+    }
+    return orgUsers;
+  }, [users, createForm.orgId, createForm.approverMode, createForm.approverTeamId, teamMap]);
 
   const categories = ["All", ...new Set(items.map((item) => item.category))];
   const filteredItems = useMemo(() => items.filter((item) => {
@@ -289,6 +330,9 @@ export function ServiceCatalogView({ items = [], currentUser, users, teams, orgs
           <p style={{ margin: "4px 0 0", color: t.text3, fontSize: 12 }}>Standardized request items, approvals, and fulfillment.</p>
         </div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+          <Btn variant="primary" onClick={() => setCreatingItem(true)}>
+            <I name="plus" size={12} /> Add catalog item
+          </Btn>
           <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search catalog" style={{ minWidth: isMobile ? "100%" : 240 }} />
           <Sel value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} style={{ width: isMobile ? "100%" : 180 }}>
             {categories.map((category) => <option key={category} value={category}>{category}</option>)}
@@ -322,8 +366,8 @@ export function ServiceCatalogView({ items = [], currentUser, users, teams, orgs
               const userRoles = Array.isArray(currentUser?.roles) && currentUser.roles.length ? currentUser.roles : [currentUser?.role].filter(Boolean);
               const allowed = userRoles.some((r) => (rolePerms[r] && rolePerms[r]["catalog.manage"]) ) || hasRole(currentUser, "Admin") || hasRole(currentUser, "Catalog Manager");
               return allowed ? (
-                <Btn variant="secondary" onClick={() => setManageItem(item)}>
-                  <I name="settings" size={12} /> Manage
+                <Btn variant="secondary" onClick={() => setManageItem(item)} style={{ border: `1px solid ${t.border}`, background: t.surface2 }}>
+                  <I name="settings" size={12} /> Manage catalog item
                 </Btn>
               ) : null;
             })()}
@@ -348,6 +392,129 @@ export function ServiceCatalogView({ items = [], currentUser, users, teams, orgs
           onClose={() => setActiveItem(null)}
           onSubmit={async (payload) => onRequestItem(activeItem, payload)}
         />
+      )}
+
+      {creatingItem && (
+        <Modal title="Add catalog item" onClose={() => { setCreatingItem(false); setCreateError(""); }} width={640}>
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
+              <div>
+                <Label>Organisation</Label>
+                <Sel value={createForm.orgId} onChange={(e) => setCreateForm((prev) => ({ ...prev, orgId: e.target.value, teamId: "", approverId: "", approverTeamId: "" }))}>
+                  {orgs.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
+                </Sel>
+              </div>
+              <div>
+                <Label>Team</Label>
+                <Sel value={createForm.teamId} onChange={(e) => setCreateForm((prev) => ({ ...prev, teamId: e.target.value }))}>
+                  <option value="">All teams</option>
+                  {teams.filter((team) => team.orgId === createForm.orgId).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+                </Sel>
+              </div>
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
+              <div>
+                <Label>Name</Label>
+                <Input value={createForm.name} onChange={(e) => setCreateForm((prev) => ({ ...prev, name: e.target.value }))} placeholder="e.g. New laptop request" />
+              </div>
+              <div>
+                <Label>Category</Label>
+                <Input value={createForm.category} onChange={(e) => setCreateForm((prev) => ({ ...prev, category: e.target.value }))} placeholder="e.g. Hardware" />
+              </div>
+            </div>
+            <div>
+              <Label>Description</Label>
+              <Input multiline rows={3} value={createForm.description} onChange={(e) => setCreateForm((prev) => ({ ...prev, description: e.target.value }))} placeholder="What is this item for?" />
+            </div>
+            <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr 1fr", gap: 12 }}>
+              <div>
+                <Label>Type</Label>
+                <Sel value={createForm.defaultType} onChange={(e) => setCreateForm((prev) => ({ ...prev, defaultType: e.target.value }))}>
+                  <option>Service Request</option>
+                  <option>Change Request</option>
+                  <option>Incident</option>
+                  <option>Task</option>
+                </Sel>
+              </div>
+              <div>
+                <Label>Priority</Label>
+                <Sel value={createForm.defaultPriority} onChange={(e) => setCreateForm((prev) => ({ ...prev, defaultPriority: e.target.value }))}>
+                  {["Critical", "High", "Medium", "Low"].map((priority) => <option key={priority}>{priority}</option>)}
+                </Sel>
+              </div>
+              <div>
+                <Label>Urgency</Label>
+                <Sel value={createForm.defaultUrgency} onChange={(e) => setCreateForm((prev) => ({ ...prev, defaultUrgency: e.target.value }))}>
+                  {["Critical", "High", "Medium", "Low"].map((urgency) => <option key={urgency}>{urgency}</option>)}
+                </Sel>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, padding: 12, borderRadius: 10, border: `1px solid ${t.border}`, background: t.surface2 }}>
+              <input type="checkbox" checked={createForm.requiresApproval} onChange={(e) => setCreateForm((prev) => ({ ...prev, requiresApproval: e.target.checked }))} />
+              <div>
+                <div style={{ fontSize: 13, fontWeight: 700, color: t.text }}>Require approval</div>
+                <div style={{ fontSize: 12, color: t.text3 }}>Turn this on to route new requests through an approver.</div>
+              </div>
+            </div>
+            {createForm.requiresApproval && (
+              <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
+                <div>
+                  <Label>Approver mode</Label>
+                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                    {[{ id: "role", label: "Role" }, { id: "user", label: "User" }, { id: "team", label: "Team" }].map((option) => (
+                      <Btn key={option.id} size="sm" variant={createForm.approverMode === option.id ? "primary" : "secondary"} onClick={() => setCreateForm((prev) => ({ ...prev, approverMode: option.id }))}>
+                        {option.label}
+                      </Btn>
+                    ))}
+                  </div>
+                </div>
+                {createForm.approverMode === "role" && (
+                  <div>
+                    <Label>Approver role</Label>
+                    <Sel value={createForm.approverRole} onChange={(e) => setCreateForm((prev) => ({ ...prev, approverRole: e.target.value }))}>
+                      {DEFAULT_TEAM_ROLES.map((role) => <option key={role.name} value={role.name}>{role.name}</option>)}
+                    </Sel>
+                  </div>
+                )}
+                {createForm.approverMode === "user" && (
+                  <div>
+                    <Label>Approver user</Label>
+                    <Sel value={createForm.approverId} onChange={(e) => setCreateForm((prev) => ({ ...prev, approverId: e.target.value }))}>
+                      <option value="">Select user</option>
+                      {approverCandidates.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
+                    </Sel>
+                  </div>
+                )}
+                {createForm.approverMode === "team" && (
+                  <div>
+                    <Label>Approver team</Label>
+                    <Sel value={createForm.approverTeamId} onChange={(e) => setCreateForm((prev) => ({ ...prev, approverTeamId: e.target.value }))}>
+                      <option value="">Select team</option>
+                      {teams.filter((team) => team.orgId === createForm.orgId).map((team) => <option key={team.id} value={team.id}>{team.name}</option>)}
+                    </Sel>
+                  </div>
+                )}
+              </div>
+            )}
+            {createError && <div style={{ color: t.redText, background: t.redBg, border: `1px solid ${t.red}33`, borderRadius: 8, padding: 10, fontSize: 12 }}>{createError}</div>}
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+              <Btn variant="secondary" onClick={() => { setCreatingItem(false); setCreateError(""); }}>Cancel</Btn>
+              <Btn variant="primary" disabled={createSaving} onClick={async () => {
+                try {
+                  setCreateSaving(true);
+                  setCreateError("");
+                  const created = await onCreateCatalogItem({ ...createForm });
+                  setCreateForm((prev) => ({ ...prev, name: "", description: "" }));
+                  if (created) setManageItem(created);
+                } catch (err) {
+                  setCreateError(err?.message || "Unable to create catalog item.");
+                } finally {
+                  setCreateSaving(false);
+                }
+              }}>{createSaving ? "Creating..." : "Create item"}</Btn>
+            </div>
+          </div>
+        </Modal>
       )}
 
       {manageItem && (
@@ -422,13 +589,12 @@ export function ApprovalsView({ approvals = [], catalogItems = [], tickets = [],
           const ticket = ticketMap[approval.ticketId];
           const assignee = users.find((user) => user.id === approval.approverId);
           const isTeamApproval = approval.approverMode === "team" && approval.approverTeamId;
-          const orgSetting = (orgSettings || []).find((s) => s.orgId === approval.orgId) || {};
-          const rolePerms = orgSetting.rolePermissions || {};
+          const teamApprovers = isTeamApproval ? users.filter((user) => user.teamId === approval.approverTeamId) : [];
           const userRoles = Array.isArray(currentUser?.roles) && currentUser.roles.length ? currentUser.roles : [currentUser?.role].filter(Boolean);
-          // permission: approvals.resolve
-          const roleAllowed = userRoles.some((r) => (rolePerms[r] && rolePerms[r]["approvals.resolve"]));
           const canAct = approval.status === "Pending" && (
-            roleAllowed || hasRole(currentUser, approval.approverRole) || hasRole(currentUser, "Admin") || approval.approverId === currentUser?.id || (isTeamApproval && currentUser?.teamId === approval.approverTeamId)
+            (approval.approverMode === "user" && approval.approverId === currentUser?.id) ||
+            (approval.approverMode === "team" && currentUser?.teamId === approval.approverTeamId) ||
+            (approval.approverMode === "role" && userRoles.includes(approval.approverRole))
           );
 
           return (
@@ -455,10 +621,31 @@ export function ApprovalsView({ approvals = [], catalogItems = [], tickets = [],
                     <span>Approver: {isTeamApproval ? `Team: ${teamMap[approval.approverTeamId]?.name || approval.approverTeamId}` : (assignee?.name || approval.approverRole)}</span>
                     {approval.dueAt && <span>Due: {new Date(approval.dueAt).toLocaleDateString("en-GB")}</span>}
                   </div>
+                  {isTeamApproval && teamApprovers.length > 0 && (
+                    <div style={{ marginTop: 10 }}>
+                      <div style={{ fontSize: 11, fontWeight: 700, color: t.text3, marginBottom: 6 }}>Eligible approvers</div>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+                        {teamApprovers.map((member) => (
+                          <div key={member.id} style={{ display: "flex", alignItems: "center", gap: 8, padding: "7px 10px", borderRadius: 8, background: t.surface2, border: `1px solid ${t.border}` }}>
+                            <Avatar name={member.name} size={22} fs={8} />
+                            <div style={{ minWidth: 0 }}>
+                              <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>{member.name}</div>
+                              <div style={{ fontSize: 11, color: t.text3 }}>{member.role || (Array.isArray(member.roles) ? member.roles.join(", ") : "Member")}</div>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
                 </div>
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 8, flexWrap: "wrap" }}>
                   <Btn variant="secondary" size="sm" onClick={() => onOpenTicket?.(ticket)} disabled={!ticket}>Open ticket</Btn>
                   {canAct && <Btn variant="primary" size="sm" onClick={() => setSelected({ approval, item, ticket })}>Review</Btn>}
+                  {!canAct && (
+                    <span style={{ fontSize: 12, color: t.text3, alignSelf: "center" }}>
+                      Ticket status: {ticket?.status || "Unknown"}
+                    </span>
+                  )}
                 </div>
               </div>
             </Card>

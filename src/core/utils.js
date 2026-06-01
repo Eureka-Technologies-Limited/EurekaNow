@@ -20,20 +20,23 @@ export const hrs = (h) => Date.now() - h * 3_600_000;
 // ── SLA helpers ───────────────────────────────────────────────────────────────
 
 /** Percentage of SLA elapsed (0–100, capped) */
-export const slaPct = (createdAt, slaHours) =>
-  Math.min(100, Math.round(((Date.now() - createdAt) / 3_600_000) / slaHours * 100));
+export const slaPct = (createdAt, slaHours, endAt = null) => {
+  const now = endAt || Date.now();
+  return Math.min(100, Math.round(((now - createdAt) / 3_600_000) / slaHours * 100));
+};
 
 /** Human-readable time remaining for a ticket's SLA */
-export const slaLeft = (createdAt, slaHours) => {
-  const remaining = slaHours - (Date.now() - createdAt) / 3_600_000;
+export const slaLeft = (createdAt, slaHours, endAt = null) => {
+  const now = endAt || Date.now();
+  const remaining = slaHours - (now - createdAt) / 3_600_000;
   if (remaining <= 0) return "Breached";
   if (remaining < 1)  return `${Math.round(remaining * 60)}m`;
   return `${Math.round(remaining)}h left`;
 };
 
 /** Returns the correct token colour for a given SLA percentage */
-export const slaColor = (createdAt, slaHours, tokens) => {
-  const pct = slaPct(createdAt, slaHours);
+export const slaColor = (createdAt, slaHours, tokens, endAt = null) => {
+  const pct = slaPct(createdAt, slaHours, endAt);
   if (pct >= 100) return tokens.red;
   if (pct >= 75)  return tokens.orange;
   if (pct >= 50)  return tokens.yellow;
