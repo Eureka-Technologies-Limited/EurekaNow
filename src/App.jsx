@@ -37,11 +37,11 @@ import { ThemeProvider, useTokens } from "./core/hooks.js";
 import { loginWithEmailPassword, getUserFromSession } from "./core/api.js";
 import { supabase } from "./core/supabase.js";
 import { ErrorBoundary } from "./ui/ErrorBoundary.jsx";
-import { LandingPage, LoginPage } from "./views/PublicPages.jsx";
+import { LoginPage } from "./views/PublicPages.jsx";
 import { AppShell } from "./layout/AppShell.jsx";
 
 function Root() {
-  const [page,        setPage]        = useState("landing"); // "landing" | "login" | "app"
+  const [page,        setPage]        = useState("login"); //  "login" | "app"
   const [currentUser, setCurrentUser] = useState(null);
   const [authReady,   setAuthReady]   = useState(false);
   const t = useTokens();
@@ -132,7 +132,7 @@ function Root() {
     setPage("app");
   };
 
-  const handleLogout = ()     => { setCurrentUser(null); setPage("landing"); };
+  const handleLogout = ()     => { setCurrentUser(null); setPage("login"); };
 
   try {
     return (
@@ -163,8 +163,7 @@ function Root() {
             Loading…
           </div>
         )}
-        {authReady && page === "landing" && <LandingPage onLogin={() => setPage("login")} />}
-        {authReady && page === "login"   && <LoginPage   onLogin={handleLogin} onBack={() => setPage("landing")} />}
+        {authReady && page === "login"   && <LoginPage   onLogin={handleLogin} />}
         {authReady && page === "app"     && currentUser  && <AppShell currentUser={currentUser} onLogout={handleLogout} />}
       </div>
     );

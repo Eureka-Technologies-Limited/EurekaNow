@@ -1,6 +1,7 @@
 {
   "name": "eurekanow",
   "version": "0.1.0",
+  "author": "Eureka Technologies Limited",
   "private": true,
   "dependencies": {
     "@capacitor/android": "^8.3.4",
