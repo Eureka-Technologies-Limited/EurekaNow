@@ -1150,6 +1150,10 @@ export function AppShell({ currentUser, onLogout }) {
 
   const handleCreateMember = async (payload) => {
     const created = await createMember(payload);
+    // If an invitation was sent, do not append a member row; return the invite marker
+    if (created && created.inviteSent) {
+      return created;
+    }
     setUsers((rows) => [...rows, created]);
     return created;
   };

@@ -1296,7 +1296,7 @@ function AddMemberForm({ teamId, teams, orgs, users = [], teamRoles, onSave, onC
     return Array.from(new Set(merged));
   }, [teamRoles]);
 
-  const [f, setF] = useState({ name: "", email: "", title: "", roles: [roleOptions[0] || "End User"] });
+  const [f, setF] = useState({ email: "", title: "", roles: [roleOptions[0] || "End User"] });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
@@ -1312,7 +1312,7 @@ function AddMemberForm({ teamId, teams, orgs, users = [], teamRoles, onSave, onC
   };
 
   const submit = async () => {
-    if (!f.name.trim() || !f.email.trim() || !team) return;
+    if (!f.email.trim() || !team) return;
     if (!f.roles.length) {
       setError("Select at least one role.");
       return;
@@ -1320,8 +1320,8 @@ function AddMemberForm({ teamId, teams, orgs, users = [], teamRoles, onSave, onC
 
     // Check for duplicate email in the organization
     const normalizedEmail = f.email.trim().toLowerCase();
-    const existingUser = users.find((u) => u.orgId === team.orgId && u.email.toLowerCase() === normalizedEmail);
-    if (existingUser) {
+    const existingUserInOrg = users.find((u) => u.orgId === team.orgId && u.email.toLowerCase() === normalizedEmail);
+    if (existingUserInOrg) {
       setError(`A user with email "${f.email.trim()}" already exists in this organization.`);
       return;
     }
@@ -1330,7 +1330,7 @@ function AddMemberForm({ teamId, teams, orgs, users = [], teamRoles, onSave, onC
     setError("");
     try {
       await onSave({
-        name: f.name.trim(),
+        // Name is not required for invites; backend will use existing user name if present
         email: f.email.trim(),
         title: f.title.trim(),
         role: f.roles[0],
@@ -1351,8 +1351,7 @@ function AddMemberForm({ teamId, teams, orgs, users = [], teamRoles, onSave, onC
           Adding to <strong>{team?.name}</strong> - {org.name}
         </div>
       )}
-      <div><Label>Full Name</Label><Input value={f.name} onChange={(e) => set("name", e.target.value)} placeholder="Jane Smith" autoFocus /></div>
-      <div><Label>Email</Label><Input value={f.email} onChange={(e) => set("email", e.target.value)} placeholder={`jane@${org?.domain || "company.com"}`} type="email" /></div>
+      <div><Label>Email</Label><Input value={f.email} onChange={(e) => set("email", e.target.value)} placeholder={`jane@${org?.domain || "company.com"}`} type="email" autoFocus /></div>
       <div><Label>Job Title</Label><Input value={f.title} onChange={(e) => set("title", e.target.value)} placeholder="Senior Engineer" /></div>
       <div>
         <Label>Roles (select one or more)</Label>
@@ -1384,7 +1383,7 @@ function AddMemberForm({ teamId, teams, orgs, users = [], teamRoles, onSave, onC
       {error && <div style={{ fontSize: 12, color: "#dc2626" }}>{error}</div>}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
         <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
-        <Btn variant="primary" onClick={submit} disabled={!f.name.trim() || !f.email.trim() || saving}>Add Member</Btn>
+        <Btn variant="primary" onClick={submit} disabled={!f.email.trim() || saving}>Add Member</Btn>
       </div>
     </div>
   );

@@ -1533,63 +1533,62 @@ export async function createTeam(payload) {
 export async function createMember(payload) {
   const roles = normalizeUserRoles(payload.roles, payload.role);
 
+  // Check if user already exists globally
+  const existing = await getExistingUserByEmail(payload.email || "");
+
   if (shouldUseDemoMode()) {
     const state = getDemoState();
-    const created = {
-      id: `u_${uid()}`,
-      name: payload.name,
-      email: payload.email,
-      role: roles[0] || "End User",
-      roles,
-      orgId: payload.orgId,
-      teamId: payload.teamId,
-      title: payload.title || "",
+
+    if (existing) {
+      // If they are already in this org, bail out
+      if (existing.orgId === payload.orgId) {
+        throw new Error("A user with this email already exists in this organization.");
+      }
+
+      // Create a demo invitation record (soft invite)
+      state.invitations = state.invitations || [];
+      state.invitations.push({ id: `inv_${uid()}`, email: payload.email, orgId: payload.orgId, teamId: payload.teamId || null, sentAt: Date.now(), status: "Pending" });
+      saveDemoState();
+      return { inviteSent: true, email: payload.email };
+    }
+
+    // For demo mode we do not auto-create accounts from invites; require registration first
+    throw new Error("User not registered. Ask them to register using the Sign In / Register page.");
+  }
+
+  // In production: if user does not exist, require them to register first
+  if (!existing) {
+    throw new Error("User not found. Ask them to register first at /signin.");
+  }
+
+  // If user exists and is already in the org, inform caller
+  if (existing.org_id === payload.orgId || existing.orgId === payload.orgId) {
+    throw new Error("A user with this email already exists in this organization.");
+  }
+
+  // Send an invite: record an activity log entry so admins can track invitations.
+  try {
+    const inviteRow = {
+      id: `al_${uid()}`,
+      org_id: payload.orgId,
+      team_id: payload.teamId || null,
+      user_id: null,
+      type: "invitation",
+      text: `Invitation sent to ${payload.email}`,
+      created_at: Date.now(),
     };
-    state.users.push(created);
-    saveDemoState();
-    return clone(created);
+
+    const { data: actData, error: actError } = await supabase.from(TABLES.activityLog).insert(inviteRow).select("*").single();
+    if (actError) {
+      // If activity log insert fails silently, continue — invite record is best-effort
+      console.warn("Failed to record invitation in activity log:", actError.message || actError);
+    }
+  } catch (er) {
+    // ignore activity log errors
   }
 
-  const row = {
-    id: `u_${uid()}`,
-    name: payload.name,
-    email: payload.email,
-    role: roles[0] || "End User",
-    roles,
-    org_id: payload.orgId,
-    team_id: payload.teamId,
-    title: payload.title || "",
-    password: payload.password || "changeme",
-  };
-
-  let data;
-  let error;
-
-  ({ data, error } = await supabase
-    .from(TABLES.users)
-    .insert(row)
-    .select("*")
-    .single());
-
-  if (error?.message?.toLowerCase().includes("roles") && error?.message?.toLowerCase().includes("column")) {
-    ({ data, error } = await supabase
-      .from(TABLES.users)
-      .insert({
-        id: row.id,
-        name: row.name,
-        email: row.email,
-        role: row.role,
-        org_id: row.org_id,
-        team_id: row.team_id,
-        title: row.title,
-        password: row.password,
-      })
-      .select("*")
-      .single());
-  }
-
-  fail(error, "Failed to add member.");
-  return toUser(data);
+  // Return an inviteSent marker to the caller; UI can handle closing and showing a message
+  return { inviteSent: true, email: payload.email };
 }
 
 export async function updateMemberRoles(userId, rolesInput) {
