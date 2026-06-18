@@ -866,7 +866,7 @@ export function AppShell({ currentUser, onLogout }) {
       setLoading(true);
       setLoadError("");
       try {
-        const data = await fetchAppData();
+        const data = await fetchAppData({ orgId: currentUser?.orgId, teamId: currentUser?.teamId });
         if (!mounted) return;
         setOrgs(data.orgs);
         setTeams(data.teams);
@@ -900,6 +900,7 @@ export function AppShell({ currentUser, onLogout }) {
     // Subscribe to ticket updates
     const unsubscribeTickets = subscribeToTicketUpdates((update) => {
       const { type, ticket } = update;
+      if (!ticket || ticket.org_id !== currentUser?.orgId) return;
       
       if (type === "insert") {
         setTickets((prev) => [ticket, ...prev]);
@@ -933,6 +934,7 @@ export function AppShell({ currentUser, onLogout }) {
     // Subscribe to approval updates
     const unsubscribeApprovals = subscribeToApprovals((update) => {
       const { type, approval } = update;
+      if (!approval || approval.org_id !== currentUser?.orgId) return;
       
       if (type === "insert" || type === "update") {
         setApprovals((prev) => [

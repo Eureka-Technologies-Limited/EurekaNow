@@ -28,6 +28,8 @@ export const DEMO_CREDENTIALS = {
   password: "demo123",
 };
 
+const normalizeEmail = (value) => String(value || "").trim().toLowerCase();
+
 const asArray = (value) => (Array.isArray(value) ? value : []);
 
 const normalizeUserRoles = (value, fallbackRole = "") => {
@@ -676,6 +678,32 @@ const getDemoState = () => {
 const isDemoLogin = (email, password) =>
   email.trim().toLowerCase() === DEMO_CREDENTIALS.email.toLowerCase() && password === DEMO_CREDENTIALS.password;
 
+const getExistingUserByEmail = async (email) => {
+  const normalizedEmail = normalizeEmail(email);
+
+  if (!normalizedEmail) {
+    return null;
+  }
+
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    return state.users.find((user) => normalizeEmail(user.email) === normalizedEmail) || null;
+  }
+
+  const { data, error } = await supabase
+    .from(TABLES.users)
+    .select("*")
+    .ilike("email", normalizedEmail)
+    .limit(1)
+    .maybeSingle();
+
+  if (error && error.code !== "PGRST116") {
+    throw new Error(error.message);
+  }
+
+  return data || null;
+};
+
 const shouldUseDemoMode = () => !SUPABASE_CONFIGURED || forceDemoMode;
 
 const isFetchFailure = (error) => {
@@ -695,7 +723,7 @@ const getDemoUser = () => {
 
 const ensureSupabaseOrDemo = () => {
   if (!SUPABASE_CONFIGURED) {
-    throw new Error(`Supabase is not configured. Use demo account: ${DEMO_CREDENTIALS.email} / ${DEMO_CREDENTIALS.password}`);
+    throw new Error("Supabase is not configured. Create a new account or set up REACT_APP_SUPABASE_URL and REACT_APP_SUPABASE_ANON_KEY.");
   }
 };
 
@@ -703,6 +731,17 @@ export async function loginWithEmailPassword(email, password) {
   if (isDemoLogin(email, password)) {
     forceDemoMode = true;
     return clone(getDemoUser());
+  }
+
+  if (shouldUseDemoMode()) {
+    const user = await getExistingUserByEmail(email);
+
+    if (!user || user.password !== password) {
+      throw new Error("Invalid email or password.");
+    }
+
+    forceDemoMode = true;
+    return clone(user);
   }
 
   forceDemoMode = false;
@@ -724,6 +763,48 @@ export async function loginWithEmailPassword(email, password) {
   }
 
   return toUser(data);
+}
+
+export async function registerWithEmailPassword(payload) {
+  const fullName = String(payload?.fullName || "").trim();
+  const email = normalizeEmail(payload?.email);
+  const password = String(payload?.password || "");
+  const organizationName = String(payload?.organizationName || "").trim() || `${fullName || email.split("@")[0] || "User"}'s Workspace`;
+  const teamName = String(payload?.teamName || "").trim();
+  const title = String(payload?.title || "").trim();
+
+  if (!fullName) throw new Error("Full name is required.");
+  if (!email) throw new Error("Email address is required.");
+  if (password.length < 8) throw new Error("Password must be at least 8 characters.");
+
+  const existingUser = await getExistingUserByEmail(email);
+  if (existingUser) {
+    throw new Error("An account with this email already exists.");
+  }
+
+  const organisation = await createOrganisation({
+    name: organizationName,
+    domain: email.split("@")[1] || "",
+    industry: "Other",
+    plan: "Starter",
+  });
+
+  const team = await createTeam({
+    orgId: organisation.id,
+    name: teamName || "General",
+    lead: fullName,
+    icon: "Team",
+  });
+
+  return createMember({
+    name: fullName,
+    email,
+    password,
+    role: "End User",
+    orgId: organisation.id,
+    teamId: team?.id || null,
+    title,
+  });
 }
 
 export async function loginWithGoogle() {
@@ -820,9 +901,48 @@ export async function handleAuthCallback() {
   return getUserFromSession(data?.session);
 }
 
-export async function fetchAppData() {
+export async function fetchAppData(scope = {}) {
+  const orgId = String(scope?.orgId || "").trim();
+  const teamId = String(scope?.teamId || "").trim();
+
   if (shouldUseDemoMode()) {
-    return clone(getDemoState());
+    const state = clone(getDemoState());
+    if (!orgId) {
+      return {
+        ...state,
+        orgs: [],
+        teams: [],
+        users: [],
+        tickets: [],
+        articles: [],
+        orgSettings: [],
+        teamSettings: [],
+        teamRoles: [],
+        postIncidentReviews: [],
+        closingTemplates: [],
+        pirFieldConfigs: [],
+        catalogItems: [],
+        approvals: [],
+      };
+    }
+
+    const teamScope = teamId ? [teamId] : state.teams.filter((team) => team.orgId === orgId).map((team) => team.id);
+    return {
+      ...state,
+      orgs: state.orgs.filter((org) => org.id === orgId),
+      teams: state.teams.filter((team) => team.orgId === orgId),
+      users: state.users.filter((user) => user.orgId === orgId),
+      tickets: state.tickets.filter((ticket) => ticket.orgId === orgId && (!teamScope.length || teamScope.includes(ticket.teamId || ""))),
+      articles: state.articles.filter((article) => article.orgId === orgId),
+      orgSettings: state.orgSettings.filter((settings) => settings.orgId === orgId),
+      teamSettings: state.teamSettings.filter((settings) => !teamScope.length || teamScope.includes(settings.teamId)),
+      teamRoles: state.teamRoles.filter((role) => !teamScope.length || teamScope.includes(role.teamId)),
+      postIncidentReviews: state.postIncidentReviews.filter((review) => review.orgId === orgId && (!teamScope.length || teamScope.includes(review.teamId || ""))),
+      closingTemplates: state.closingTemplates.filter((tmpl) => tmpl.orgId === orgId && (!teamScope.length || teamScope.includes(tmpl.teamId || ""))),
+      pirFieldConfigs: state.pirFieldConfigs.filter((cfg) => cfg.orgId === orgId && (!teamScope.length || teamScope.includes(cfg.teamId || ""))),
+      catalogItems: state.catalogItems.filter((item) => item.orgId === orgId && (!teamScope.length || teamScope.includes(item.teamId || ""))),
+      approvals: state.approvals.filter((approval) => approval.orgId === orgId && (!teamScope.length || teamScope.includes(approval.teamId || ""))),
+    };
   }
 
   try {
@@ -842,20 +962,20 @@ export async function fetchAppData() {
       catalogRes,
       approvalsRes,
     ] = await Promise.all([
-      supabase.from(TABLES.orgs).select("*").order("name", { ascending: true }),
-      supabase.from(TABLES.teams).select("*").order("name", { ascending: true }),
-      supabase.from(TABLES.users).select("*").order("name", { ascending: true }),
-      supabase.from(TABLES.tickets).select("*").order("created_at", { ascending: false }),
+      supabase.from(TABLES.orgs).select("*").eq("id", orgId).order("name", { ascending: true }),
+      supabase.from(TABLES.teams).select("*").eq("org_id", orgId).order("name", { ascending: true }),
+      supabase.from(TABLES.users).select("*").eq("org_id", orgId).order("name", { ascending: true }),
+      supabase.from(TABLES.tickets).select("*").eq("org_id", orgId).order("created_at", { ascending: false }),
       supabase.from(TABLES.comments).select("*").order("created_at", { ascending: true }),
-      supabase.from(TABLES.articles).select("*").order("created_at", { ascending: false }),
-      supabase.from(TABLES.orgSettings).select("*"),
-      supabase.from(TABLES.teamSettings).select("*"),
-      supabase.from(TABLES.teamRoles).select("*").order("created_at", { ascending: true }),
-      supabase.from(TABLES.postIncidentReviews).select("*").order("updated_at", { ascending: false }),
-      supabase.from(TABLES.closingTemplates).select("*").order("created_at", { ascending: true }),
-      supabase.from(TABLES.pirFieldConfigs).select("*"),
-      supabase.from(TABLES.catalogItems).select("*").order("created_at", { ascending: true }),
-      supabase.from(TABLES.approvals).select("*").order("created_at", { ascending: false }),
+      supabase.from(TABLES.articles).select("*").eq("org_id", orgId).order("created_at", { ascending: false }),
+      supabase.from(TABLES.orgSettings).select("*").eq("org_id", orgId),
+      supabase.from(TABLES.teamSettings).select("*").in("team_id", teamId ? [teamId] : []),
+      supabase.from(TABLES.teamRoles).select("*").in("team_id", teamId ? [teamId] : []),
+      supabase.from(TABLES.postIncidentReviews).select("*").eq("org_id", orgId).order("updated_at", { ascending: false }),
+      supabase.from(TABLES.closingTemplates).select("*").eq("org_id", orgId).order("created_at", { ascending: true }),
+      supabase.from(TABLES.pirFieldConfigs).select("*").eq("org_id", orgId),
+      supabase.from(TABLES.catalogItems).select("*").eq("org_id", orgId).order("created_at", { ascending: true }),
+      supabase.from(TABLES.approvals).select("*").eq("org_id", orgId).order("created_at", { ascending: false }),
     ]);
 
     fail(orgsRes.error, "Failed to load organizations.");
@@ -875,24 +995,31 @@ export async function fetchAppData() {
 
     const commentsByTicketId = {};
     for (const row of commentsRes.data || []) {
+      if (orgId && row.org_id && row.org_id !== orgId) continue;
       if (!commentsByTicketId[row.ticket_id]) commentsByTicketId[row.ticket_id] = [];
       commentsByTicketId[row.ticket_id].push(toComment(row));
     }
 
+    const filteredTeams = (teamsRes.data || []).filter((team) => team.org_id === orgId && (!teamId || team.id === teamId || !teamId));
+    const visibleTeamIds = new Set(filteredTeams.map((team) => team.id));
+    const tickets = (ticketsRes.data || [])
+      .filter((ticket) => ticket.org_id === orgId && (!teamId || !ticket.team_id || ticket.team_id === teamId || visibleTeamIds.has(ticket.team_id)))
+      .map((row) => toTicket(row, commentsByTicketId));
+
     return {
       orgs: (orgsRes.data || []).map(toOrg),
-      teams: (teamsRes.data || []).map(toTeam),
-      users: (usersRes.data || []).map(toUser),
-      tickets: (ticketsRes.data || []).map((row) => toTicket(row, commentsByTicketId)),
-      articles: (articlesRes.data || []).map(toArticle),
-      orgSettings: (orgSettingsRes.data || []).map(toOrgSettings),
-      teamSettings: (teamSettingsRes.data || []).map(toTeamSettings),
-      teamRoles: (teamRolesRes.data || []).map(toTeamRole),
-      postIncidentReviews: (reviewsRes.data || []).map(toPostIncidentReview),
-      closingTemplates: (templatesRes.data || []).map(toClosingTemplate),
-      pirFieldConfigs: (pirConfigsRes.data || []).map(toPirFieldConfig),
-      catalogItems: (catalogRes.data || []).map(toCatalogItem),
-      approvals: (approvalsRes.data || []).map(toApproval),
+      teams: filteredTeams.map(toTeam),
+      users: (usersRes.data || []).filter((user) => user.org_id === orgId).map(toUser),
+      tickets,
+      articles: (articlesRes.data || []).filter((article) => article.org_id === orgId).map(toArticle),
+      orgSettings: (orgSettingsRes.data || []).filter((settings) => settings.org_id === orgId).map(toOrgSettings),
+      teamSettings: (teamSettingsRes.data || []).filter((settings) => !teamId || settings.team_id === teamId).map(toTeamSettings),
+      teamRoles: (teamRolesRes.data || []).filter((role) => !teamId || role.team_id === teamId).map(toTeamRole),
+      postIncidentReviews: (reviewsRes.data || []).filter((review) => review.org_id === orgId && (!teamId || !review.team_id || review.team_id === teamId)).map(toPostIncidentReview),
+      closingTemplates: (templatesRes.data || []).filter((tmpl) => tmpl.org_id === orgId && (!teamId || !tmpl.team_id || tmpl.team_id === teamId)).map(toClosingTemplate),
+      pirFieldConfigs: (pirConfigsRes.data || []).filter((cfg) => cfg.org_id === orgId && (!teamId || !cfg.team_id || cfg.team_id === teamId)).map(toPirFieldConfig),
+      catalogItems: (catalogRes.data || []).filter((item) => item.org_id === orgId && (!teamId || !item.team_id || item.team_id === teamId)).map(toCatalogItem),
+      approvals: (approvalsRes.data || []).filter((approval) => approval.org_id === orgId && (!teamId || !approval.team_id || approval.team_id === teamId)).map(toApproval),
     };
   } catch (error) {
     if (isFetchFailure(error)) {
