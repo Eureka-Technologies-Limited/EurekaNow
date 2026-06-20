@@ -31,6 +31,7 @@ import {
   upsertPirFieldConfig,
   updateTicketFields,
   fetchOrgInvitationsForUser,
+  fetchUserOrgIds,
   acceptOrgInvitation,
   declineOrgInvitation,
 } from "../core/api.js";
@@ -893,7 +894,8 @@ export function AppShell({ currentUser, onLogout }) {
       setLoading(true);
       setLoadError("");
       try {
-        const data = await fetchAppData({ orgId: currentUser?.orgId, teamId: currentUser?.teamId });
+        const orgIds = await fetchUserOrgIds(currentUser.id, currentUser.email);
+        const data = await fetchAppData({ orgIds });
         if (!mounted) return;
         setOrgs(data.orgs);
         setTeams(data.teams);
@@ -924,6 +926,14 @@ export function AppShell({ currentUser, onLogout }) {
     load();
     return () => { mounted = false; };
   }, []);
+
+  // When the active org changes, reset team selection to the first team in that org.
+  // All org data is loaded upfront, so no reload is needed — just re-filter.
+  useEffect(() => {
+    if (!selectedOrgId) return;
+    const firstTeam = teams.find((t) => t.orgId === selectedOrgId);
+    setSelectedTeamId(firstTeam?.id || null);
+  }, [selectedOrgId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Set up real-time subscriptions for live updates
   useEffect(() => {
@@ -1031,6 +1041,24 @@ export function AppShell({ currentUser, onLogout }) {
   const effectiveUser = users.find((u) => u.id === currentUser.id) || currentUser;
   const currentOrg = orgs.find((o) => o.id === effectiveUser.orgId);
   const plan = normalizePlan(currentOrg?.plan);
+
+  // Filter tickets to the selected org + team (all org data is merged in state)
+  const visibleTickets = useMemo(() => {
+    const orgTickets = selectedOrgId ? tickets.filter((tk) => tk.orgId === selectedOrgId) : tickets;
+    if (!selectedTeamId) return orgTickets;
+    return orgTickets.filter((tk) => tk.teamId === selectedTeamId);
+  }, [tickets, selectedOrgId, selectedTeamId]);
+
+  // Users scoped to the active org for assignee/reporter dropdowns
+  const visibleUsers = useMemo(() => {
+    if (!selectedOrgId) return users;
+    const orgUsers = users.filter((u) => u.orgId === selectedOrgId);
+    // Include the logged-in user even if they joined this org via invitation
+    if (effectiveUser && !orgUsers.some((u) => u.id === effectiveUser.id)) {
+      return [effectiveUser, ...orgUsers];
+    }
+    return orgUsers;
+  }, [users, selectedOrgId, effectiveUser]);
 
   const isDefaultPriorityMap = (priorityMap = {}) => {
     const defaultEntries = Object.entries(PRIORITIES);
@@ -1191,14 +1219,33 @@ export function AppShell({ currentUser, onLogout }) {
   };
 
   const handleAcceptInvitation = async (invitationId) => {
-    await acceptOrgInvitation(invitationId, currentUser.id);
+    const result = await acceptOrgInvitation(invitationId);
     setOrgInvitations((prev) => prev.filter((i) => i.id !== invitationId));
-    // Reload app data so the new org context is reflected
-    const data = await fetchAppData({ orgId: currentUser?.orgId });
-    setOrgs(data.orgs);
-    setTeams(data.teams);
-    setUsers(data.users);
-    setTickets(data.tickets);
+    const newOrgId = result?.orgId;
+    if (!newOrgId) return;
+    // Load the new org's data and MERGE into state — don't wipe the existing orgs
+    const data = await fetchAppData({ orgIds: [newOrgId] });
+    const byOrgId = (prev, next) => [...prev.filter((r) => r.orgId !== newOrgId), ...next];
+    setOrgs((prev) => [...prev.filter((o) => o.id !== newOrgId), ...data.orgs]);
+    setTeams((prev) => byOrgId(prev, data.teams));
+    setUsers((prev) => byOrgId(prev, data.users));
+    setTickets((prev) => byOrgId(prev, data.tickets));
+    setArticles((prev) => byOrgId(prev, data.articles));
+    setOrgSettings((prev) => byOrgId(prev, data.orgSettings));
+    setTeamSettings((prev) => [
+      ...prev.filter((s) => !data.teamSettings.some((ns) => ns.teamId === s.teamId)),
+      ...data.teamSettings,
+    ]);
+    setTeamRoles((prev) => [
+      ...prev.filter((r) => !data.teamRoles.some((nr) => nr.teamId === r.teamId)),
+      ...data.teamRoles,
+    ]);
+    setPostReviews((prev) => byOrgId(prev, data.postIncidentReviews));
+    setClosingTemplates((prev) => byOrgId(prev, data.closingTemplates || []));
+    setPirFieldConfigs((prev) => byOrgId(prev, data.pirFieldConfigs || []));
+    setCatalogItems((prev) => byOrgId(prev, data.catalogItems || []));
+    setApprovals((prev) => byOrgId(prev, data.approvals || []));
+    setSelectedOrgId(newOrgId);
   };
 
   const handleDeclineInvitation = async (invitationId) => {
@@ -1500,7 +1547,7 @@ export function AppShell({ currentUser, onLogout }) {
         <DesktopSidebar
           view={view} setView={handleSetView}
           open={sidebarOpen} onToggle={handleToggleSidebar}
-          currentUser={effectiveUser} tickets={tickets} onLogout={onLogout}
+          currentUser={effectiveUser} tickets={visibleTickets} onLogout={onLogout}
           visibleNavItems={sidebarItems}
           onCustomizeSidebar={() => setShowSidebarPrefs(true)}
           plan={plan}
@@ -1511,7 +1558,7 @@ export function AppShell({ currentUser, onLogout }) {
       <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden", minWidth: 0 }}>
         <Topbar
           onToggle={handleToggleSidebar}
-          view={view} tickets={tickets}
+          view={view} tickets={visibleTickets}
           onNewTicket={() => handleNew(topbarType)}
           isMobile={isMobile}
           notifications={notifications}
@@ -1528,13 +1575,15 @@ export function AppShell({ currentUser, onLogout }) {
           selectedTeamId={selectedTeamId}
           onSelectOrg={setSelectedOrgId}
           onSelectTeam={setSelectedTeamId}
+          onAcceptInvitation={handleAcceptInvitation}
+          onDeclineInvitation={handleDeclineInvitation}
         />
 
         <main style={{ flex: 1, overflowY: "auto", padding: isMobile ? "16px 14px" : "22px", paddingBottom: isMobile ? "80px" : "22px", WebkitOverflowScrolling: "touch" }}>
           {view === "dashboard" && (
             <DashboardView
-              tickets={tickets} articles={articles}
-              users={users} currentUser={effectiveUser}
+              tickets={visibleTickets} articles={articles}
+              users={visibleUsers} currentUser={effectiveUser}
               layout={dashLayout}
               sizeOverrides={dashSizes}
               onLayoutChange={setDashLayout}
@@ -1549,11 +1598,11 @@ export function AppShell({ currentUser, onLogout }) {
             <ServiceCatalogView
               items={catalogItems}
               currentUser={effectiveUser}
-              users={users}
+              users={visibleUsers}
               teams={teams}
               orgs={orgs}
                 orgSettings={orgSettings}
-              tickets={tickets}
+              tickets={visibleTickets}
               onRequestItem={handleRequestCatalogItem}
               onCreateCatalogItem={handleCreateCatalogItem}
               onUpdateCatalogItem={handleUpdateCatalogItem}
@@ -1564,9 +1613,9 @@ export function AppShell({ currentUser, onLogout }) {
             <ApprovalsView
               approvals={approvals}
               catalogItems={catalogItems}
-              tickets={tickets}
+              tickets={visibleTickets}
               currentUser={effectiveUser}
-              users={users}
+              users={visibleUsers}
               orgSettings={orgSettings}
               teams={teams}
               onResolveApproval={handleResolveApproval}
@@ -1575,18 +1624,18 @@ export function AppShell({ currentUser, onLogout }) {
           )}
 
           {/* Per-type ticket views */}
-          {view === "all_tickets" && <TicketListView typeFilter={null}             tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew()} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
-          {view === "incidents"   && <TicketListView typeFilter="Incident"         tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Incident")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
-          {view === "requests"    && <TicketListView typeFilter="Service Request"  tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Service Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
-          {view === "changes"     && <TicketListView typeFilter="Change Request"   tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Change Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
-          {view === "problems"    && <TicketListView typeFilter="Problem"          tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Problem")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
-          {view === "tasks"       && <TicketListView typeFilter="Task"             tickets={tickets} users={users} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Task")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
+          {view === "all_tickets" && <TicketListView typeFilter={null}             tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew()} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
+          {view === "incidents"   && <TicketListView typeFilter="Incident"         tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Incident")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
+          {view === "requests"    && <TicketListView typeFilter="Service Request"  tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Service Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
+          {view === "changes"     && <TicketListView typeFilter="Change Request"   tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Change Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
+          {view === "problems"    && <TicketListView typeFilter="Problem"          tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Problem")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
+          {view === "tasks"       && <TicketListView typeFilter="Task"             tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Task")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
 
           {view === "kanban" && (
             canFeature(plan, "kanban") ? (
               <KanbanView
-                tickets={tickets}
-                users={users}
+                tickets={visibleTickets}
+                users={visibleUsers}
                 currentUser={effectiveUser}
                 priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)}
                 onOpenTicket={openTicket}
@@ -1601,7 +1650,7 @@ export function AppShell({ currentUser, onLogout }) {
             <TeamsView
               orgs={orgs}
               teams={teams}
-              users={users}
+              users={visibleUsers}
               tickets={tickets}
               orgSettings={orgSettings}
               teamSettings={teamSettings}
@@ -1628,7 +1677,7 @@ export function AppShell({ currentUser, onLogout }) {
             canFeature(plan, "kb") ? (
               <KBView
                 articles={articles}
-                users={users}
+                users={visibleUsers}
                 currentUser={effectiveUser}
                 orgSettings={orgSettings}
                 plan={plan}
@@ -1652,8 +1701,8 @@ export function AppShell({ currentUser, onLogout }) {
               </div>
             ) : (
               <ReportsView
-                tickets={tickets}
-                users={users}
+                tickets={visibleTickets}
+                users={visibleUsers}
                 currentUser={effectiveUser}
                 priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)}
               />
@@ -1662,7 +1711,7 @@ export function AppShell({ currentUser, onLogout }) {
           {view === "profile" && (
             <ProfileView
               currentUser={effectiveUser}
-              tickets={tickets}
+              tickets={visibleTickets}
               notifPrefs={notifPrefs}
               onUpdateNotifPrefs={handleUpdateNotifPrefs}
               launchView={shellPrefs.defaultView}
@@ -1682,7 +1731,7 @@ export function AppShell({ currentUser, onLogout }) {
       {isMobile && (
         <MobileNav
           view={view} setView={handleSetView}
-          currentUser={effectiveUser} tickets={tickets}
+          currentUser={effectiveUser} tickets={visibleTickets}
           onLogout={onLogout} onNewTicket={() => handleNew(topbarType)}
           visibleNavItems={sidebarItems}
           onCustomizeSidebar={() => setShowSidebarPrefs(true)}
@@ -1693,7 +1742,7 @@ export function AppShell({ currentUser, onLogout }) {
       {modal === "detail" && activeTicket && (
         <TicketDetailPanel
           ticket={activeTicket}
-          users={users}
+          users={visibleUsers}
           currentUser={effectiveUser}
           onClose={() => setModal(null)}
           onPatch={handlePatchTicket}
@@ -1715,7 +1764,7 @@ export function AppShell({ currentUser, onLogout }) {
       )}
       {modal === "new" && (
         <NewTicketModal
-          users={users}
+          users={visibleUsers}
           teams={teams}
           orgs={orgs}
           currentUser={effectiveUser}

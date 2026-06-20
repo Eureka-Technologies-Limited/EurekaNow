@@ -521,40 +521,57 @@ export async function handleAuthCallback() {
   return getUserFromSession(data?.session);
 }
 
-export async function fetchAppData(scope = {}) {
-  const orgId = String(scope?.orgId || "").trim();
-  const teamId = String(scope?.teamId || "").trim();
+// Returns every org ID the user belongs to: their primary org plus any they joined via invitation.
+export async function fetchUserOrgIds(userId, email) {
+  const normalizedEmail = normalizeEmail(email);
+  const [userRes, invitesRes] = await Promise.all([
+    supabase.from(TABLES.users).select("org_id").eq("id", userId).single(),
+    supabase.from(TABLES.orgInvitations)
+      .select("org_id")
+      .ilike("email", normalizedEmail)
+      .eq("status", "Accepted"),
+  ]);
+  const orgIds = new Set();
+  if (userRes.data?.org_id) orgIds.add(userRes.data.org_id);
+  for (const inv of invitesRes.data || []) {
+    if (inv.org_id) orgIds.add(inv.org_id);
+  }
+  return Array.from(orgIds);
+}
 
+export async function fetchAppData(scope = {}) {
+  // Accept either orgIds (array) or orgId (string, backward-compat)
+  const orgIds = Array.isArray(scope.orgIds)
+    ? scope.orgIds.map((id) => String(id).trim()).filter(Boolean)
+    : scope.orgId
+    ? [String(scope.orgId).trim()]
+    : [];
+
+  if (!orgIds.length) {
+    return {
+      orgs: [], teams: [], users: [], tickets: [], articles: [],
+      orgSettings: [], teamSettings: [], teamRoles: [], postIncidentReviews: [],
+      closingTemplates: [], pirFieldConfigs: [], catalogItems: [], approvals: [],
+    };
+  }
+
+  // Phase 1: fetch all org-scoped data in parallel.
   const [
-    orgsRes,
-    teamsRes,
-    usersRes,
-    ticketsRes,
-    commentsRes,
-    articlesRes,
-    orgSettingsRes,
-    teamSettingsRes,
-    teamRolesRes,
-    reviewsRes,
-    templatesRes,
-    pirConfigsRes,
-    catalogRes,
-    approvalsRes,
+    orgsRes, teamsRes, usersRes, ticketsRes, commentsRes, articlesRes,
+    orgSettingsRes, reviewsRes, templatesRes, pirConfigsRes, catalogRes, approvalsRes,
   ] = await Promise.all([
-    supabase.from(TABLES.orgs).select("*").eq("id", orgId).order("name", { ascending: true }),
-    supabase.from(TABLES.teams).select("*").eq("org_id", orgId).order("name", { ascending: true }),
-    supabase.from(TABLES.users).select("*").eq("org_id", orgId).order("name", { ascending: true }),
-    supabase.from(TABLES.tickets).select("*").eq("org_id", orgId).order("created_at", { ascending: false }),
+    supabase.from(TABLES.orgs).select("*").in("id", orgIds).order("name", { ascending: true }),
+    supabase.from(TABLES.teams).select("*").in("org_id", orgIds).order("name", { ascending: true }),
+    supabase.from(TABLES.users).select("*").in("org_id", orgIds).order("name", { ascending: true }),
+    supabase.from(TABLES.tickets).select("*").in("org_id", orgIds).order("created_at", { ascending: false }),
     supabase.from(TABLES.comments).select("*").order("created_at", { ascending: true }),
-    supabase.from(TABLES.articles).select("*").eq("org_id", orgId).order("created_at", { ascending: false }),
-    supabase.from(TABLES.orgSettings).select("*").eq("org_id", orgId),
-    supabase.from(TABLES.teamSettings).select("*").in("team_id", teamId ? [teamId] : []),
-    supabase.from(TABLES.teamRoles).select("*").in("team_id", teamId ? [teamId] : []),
-    supabase.from(TABLES.postIncidentReviews).select("*").eq("org_id", orgId).order("updated_at", { ascending: false }),
-    supabase.from(TABLES.closingTemplates).select("*").eq("org_id", orgId).order("created_at", { ascending: true }),
-    supabase.from(TABLES.pirFieldConfigs).select("*").eq("org_id", orgId),
-    supabase.from(TABLES.catalogItems).select("*").eq("org_id", orgId).order("created_at", { ascending: true }),
-    supabase.from(TABLES.approvals).select("*").eq("org_id", orgId).order("created_at", { ascending: false }),
+    supabase.from(TABLES.articles).select("*").in("org_id", orgIds).order("created_at", { ascending: false }),
+    supabase.from(TABLES.orgSettings).select("*").in("org_id", orgIds),
+    supabase.from(TABLES.postIncidentReviews).select("*").in("org_id", orgIds).order("updated_at", { ascending: false }),
+    supabase.from(TABLES.closingTemplates).select("*").in("org_id", orgIds).order("created_at", { ascending: true }),
+    supabase.from(TABLES.pirFieldConfigs).select("*").in("org_id", orgIds),
+    supabase.from(TABLES.catalogItems).select("*").in("org_id", orgIds).order("created_at", { ascending: true }),
+    supabase.from(TABLES.approvals).select("*").in("org_id", orgIds).order("created_at", { ascending: false }),
   ]);
 
   fail(orgsRes.error, "Failed to load organizations.");
@@ -564,41 +581,43 @@ export async function fetchAppData(scope = {}) {
   fail(commentsRes.error, "Failed to load comments.");
   fail(articlesRes.error, "Failed to load articles.");
   fail(orgSettingsRes.error, "Failed to load organization settings.");
-  fail(teamSettingsRes.error, "Failed to load team settings.");
-  fail(teamRolesRes.error, "Failed to load team roles.");
   fail(reviewsRes.error, "Failed to load post-incident reviews.");
   fail(templatesRes.error, "Failed to load templates.");
   fail(pirConfigsRes.error, "Failed to load PIR field configs.");
   fail(catalogRes.error, "Failed to load service catalog items.");
   fail(approvalsRes.error, "Failed to load approvals.");
 
+  // Phase 2: load team settings/roles for ALL teams in the org so team
+  // switching is instant (client-side filter, no extra round-trip).
+  const allTeamIds = (teamsRes.data || []).map((t) => t.id);
+  const safeIds = allTeamIds.length ? allTeamIds : ["__none__"];
+  const [teamSettingsRes, teamRolesRes] = await Promise.all([
+    supabase.from(TABLES.teamSettings).select("*").in("team_id", safeIds),
+    supabase.from(TABLES.teamRoles).select("*").in("team_id", safeIds),
+  ]);
+  fail(teamSettingsRes.error, "Failed to load team settings.");
+  fail(teamRolesRes.error, "Failed to load team roles.");
+
   const commentsByTicketId = {};
   for (const row of commentsRes.data || []) {
-    if (orgId && row.org_id && row.org_id !== orgId) continue;
     if (!commentsByTicketId[row.ticket_id]) commentsByTicketId[row.ticket_id] = [];
     commentsByTicketId[row.ticket_id].push(toComment(row));
   }
 
-  const filteredTeams = (teamsRes.data || []).filter((team) => team.org_id === orgId && (!teamId || team.id === teamId || !teamId));
-  const visibleTeamIds = new Set(filteredTeams.map((team) => team.id));
-  const tickets = (ticketsRes.data || [])
-    .filter((ticket) => ticket.org_id === orgId && (!teamId || !ticket.team_id || ticket.team_id === teamId || visibleTeamIds.has(ticket.team_id)))
-    .map((row) => toTicket(row, commentsByTicketId));
-
   return {
     orgs: (orgsRes.data || []).map(toOrg),
-    teams: filteredTeams.map(toTeam),
-    users: (usersRes.data || []).filter((user) => user.org_id === orgId).map(toUser),
-    tickets,
-    articles: (articlesRes.data || []).filter((article) => article.org_id === orgId).map(toArticle),
-    orgSettings: (orgSettingsRes.data || []).filter((settings) => settings.org_id === orgId).map(toOrgSettings),
-    teamSettings: (teamSettingsRes.data || []).filter((settings) => !teamId || settings.team_id === teamId).map(toTeamSettings),
-    teamRoles: (teamRolesRes.data || []).filter((role) => !teamId || role.team_id === teamId).map(toTeamRole),
-    postIncidentReviews: (reviewsRes.data || []).filter((review) => review.org_id === orgId && (!teamId || !review.team_id || review.team_id === teamId)).map(toPostIncidentReview),
-    closingTemplates: (templatesRes.data || []).filter((tmpl) => tmpl.org_id === orgId && (!teamId || !tmpl.team_id || tmpl.team_id === teamId)).map(toClosingTemplate),
-    pirFieldConfigs: (pirConfigsRes.data || []).filter((cfg) => cfg.org_id === orgId && (!teamId || !cfg.team_id || cfg.team_id === teamId)).map(toPirFieldConfig),
-    catalogItems: (catalogRes.data || []).filter((item) => item.org_id === orgId && (!teamId || !item.team_id || item.team_id === teamId)).map(toCatalogItem),
-    approvals: (approvalsRes.data || []).filter((approval) => approval.org_id === orgId && (!teamId || !approval.team_id || approval.team_id === teamId)).map(toApproval),
+    teams: (teamsRes.data || []).map(toTeam),
+    users: (usersRes.data || []).map(toUser),
+    tickets: (ticketsRes.data || []).map((row) => toTicket(row, commentsByTicketId)),
+    articles: (articlesRes.data || []).map(toArticle),
+    orgSettings: (orgSettingsRes.data || []).map(toOrgSettings),
+    teamSettings: (teamSettingsRes.data || []).map(toTeamSettings),
+    teamRoles: (teamRolesRes.data || []).map(toTeamRole),
+    postIncidentReviews: (reviewsRes.data || []).map(toPostIncidentReview),
+    closingTemplates: (templatesRes.data || []).map(toClosingTemplate),
+    pirFieldConfigs: (pirConfigsRes.data || []).map(toPirFieldConfig),
+    catalogItems: (catalogRes.data || []).map(toCatalogItem),
+    approvals: (approvalsRes.data || []).map(toApproval),
   };
 }
 
@@ -947,10 +966,10 @@ export async function fetchOrgInvitationsForUser(email) {
   }));
 }
 
-export async function acceptOrgInvitation(invitationId, userId) {
+export async function acceptOrgInvitation(invitationId) {
   const { data: inv, error: fetchInvError } = await supabase
     .from(TABLES.orgInvitations)
-    .select("org_id,team_id")
+    .select("org_id,team_id,role,roles")
     .eq("id", invitationId)
     .single();
 
@@ -963,17 +982,10 @@ export async function acceptOrgInvitation(invitationId, userId) {
 
   if (updateInvError) throw new Error("Failed to accept invitation.");
 
-  const updateFields = { org_id: inv.org_id };
-  if (inv.team_id) updateFields.team_id = inv.team_id;
-
-  const { error: updateUserError } = await supabase
-    .from(TABLES.users)
-    .update(updateFields)
-    .eq("id", userId);
-
-  if (updateUserError) throw new Error("Failed to update your organization. Please contact support.");
-
-  return { accepted: true };
+  // Keep users.org_id pointing at the user's primary (created) org.
+  // Additional org memberships are tracked through accepted org_invitations.
+  const invRoles = Array.isArray(inv.roles) && inv.roles.length ? inv.roles : [inv.role || "End User"];
+  return { accepted: true, orgId: inv.org_id, teamId: inv.team_id || null, role: invRoles[0], roles: invRoles };
 }
 
 export async function declineOrgInvitation(invitationId) {
