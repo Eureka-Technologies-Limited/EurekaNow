@@ -8,7 +8,7 @@ import { useBreakpoint } from "../core/hooks.js";
 import { I } from "../core/icons.jsx";
 import { Btn, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
 import { slaForPriority, uid } from "../core/utils.js";
-import { STATUSES, TICKET_TYPES, CATEGORIES } from "../core/constants.js";
+import { STATUSES, TICKET_TYPES } from "../core/constants.js";
 import { fetchCustomReports, saveCustomReport, deleteCustomReport } from "../core/api.js";
 
 // ── SVG Line Chart ────────────────────────────────────────────────────────────

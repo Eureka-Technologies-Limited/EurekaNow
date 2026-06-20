@@ -925,7 +925,7 @@ export function AppShell({ currentUser, onLogout }) {
 
     load();
     return () => { mounted = false; };
-  }, []);
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
   // When the active org changes, reset team selection to the first team in that org.
   // All org data is loaded upfront, so no reload is needed — just re-filter.
@@ -993,7 +993,7 @@ export function AppShell({ currentUser, onLogout }) {
       unsubscribeComments?.();
       unsubscribeApprovals?.();
     };
-  }, [activeTicket?.id, tickets.length]);
+  }, [activeTicket?.id, tickets.length]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Initialize selected org/team on data load
   useEffect(() => {
