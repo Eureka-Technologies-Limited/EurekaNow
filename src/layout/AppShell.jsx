@@ -4,7 +4,7 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTokens, useTheme, useBreakpoint } from "../core/hooks.js";
-import { VIEW_LABELS, VIEW_TO_TYPE, PRIORITIES, DEFAULT_URGENCIES } from "../core/constants.js";
+import { VIEW_LABELS, VIEW_TO_TYPE, PRIORITIES, DEFAULT_URGENCIES, DEFAULT_TICKET_TYPES } from "../core/constants.js";
 import {
   createArticle,
   createCatalogItem,
@@ -34,13 +34,15 @@ import {
   fetchUserOrgIds,
   acceptOrgInvitation,
   declineOrgInvitation,
+  joinOrgByCode,
 } from "../core/api.js";
 import { Avatar, Btn, Modal } from "../ui/primitives.jsx";
 import { canDo, slaForPriority, slaPct } from "../core/utils.js";
 import { I } from "../core/icons.jsx";
 import { ToastContainer, useToasts } from "../ui/Toast.jsx";
 import { UpgradeGate, PlansModal, PlanBadge } from "../ui/UpgradeGate.jsx";
-import { normalizePlan, canFeature, subscribeToTicketUpdates, subscribeToTicketComments, subscribeToApprovals } from "../core/subscriptions.js";
+import { normalizePlan, canFeature, subscribeToRealtime } from "../core/subscriptions.js";
+import { rowMappers } from "../core/api.js";
 import { DEFAULT_LAYOUT } from "../widgets/registry.js";
 import { DashboardView, DashCustomiser } from "../widgets/DashboardView.jsx";
 import { TicketListView }   from "../views/TicketListView.jsx";
@@ -384,6 +386,7 @@ export function MobileNav({ view, setView, currentUser, tickets, onLogout, onNew
       {/* FAB */}
       <button
         onClick={onNewTicket}
+        aria-label="Create new ticket"
         style={{ position: "fixed", bottom: 80, right: 18, width: 52, height: 52, borderRadius: "50%", background: t.accent, border: "none", cursor: "pointer", display: "flex", alignItems: "center", justifyContent: "center", boxShadow: "0 4px 20px rgba(0,0,0,0.3)", zIndex: 100, color: "#0f0f0e" }}
       >
         <I name="plus" size={22} />
@@ -433,10 +436,13 @@ const NOTIF_STYLES = {
   invitation:  { icon: "teams",     colorKey: "green"   },
 };
 
-export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile, notifications = [], unreadCount = 0, notifReadIds = new Set(), onMarkRead, onMarkAllRead, onOpenTicket, onOpenCommandPalette, currentUser, orgs = [], teams = [], selectedOrgId, selectedTeamId, onSelectOrg, onSelectTeam, onAcceptInvitation, onDeclineInvitation }) {
+export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile, notifications = [], unreadCount = 0, notifReadIds = new Set(), onMarkRead, onMarkAllRead, onOpenTicket, onOpenCommandPalette, currentUser, orgs = [], teams = [], selectedOrgId, selectedTeamId, onSelectOrg, onSelectTeam, onAcceptInvitation, onDeclineInvitation, onJoinByCode }) {
   const t = useTokens();
   const [notifOpen, setNotifOpen] = useState(false);
   const [orgTeamOpen, setOrgTeamOpen] = useState(false);
+  const [joinCode, setJoinCode] = useState("");
+  const [joinError, setJoinError] = useState("");
+  const [joinLoading, setJoinLoading] = useState(false);
   const bellRef     = useRef(null);
   const dropdownRef = useRef(null);
   const orgTeamRef = useRef(null);
@@ -469,7 +475,7 @@ export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile, notific
   return (
     <header style={{ background: t.surface, borderBottom: `1px solid ${t.border}`, height: 52, display: "flex", alignItems: "center", padding: "0 16px", gap: 12, flexShrink: 0, position: "relative", zIndex: 50 }}>
       {!isMobile && (
-        <button onClick={onToggle} style={{ background: "none", border: "none", cursor: "pointer", color: t.text2, display: "flex" }}>
+        <button onClick={onToggle} aria-label="Toggle sidebar" style={{ background: "none", border: "none", cursor: "pointer", color: t.text2, display: "flex" }}>
           <I name="menu" size={17} />
         </button>
       )}
@@ -558,7 +564,7 @@ export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile, notific
 
               {/* Team Select */}
               {orgTeams.length > 0 && (
-                <div style={{ padding: "12px 14px" }}>
+                <div style={{ padding: "12px 14px", borderBottom: `1px solid ${t.border}` }}>
                   <div style={{ fontSize: 11, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>Team</div>
                   <div style={{ display: "flex", flexDirection: "column", gap: 2, maxHeight: 240, overflowY: "auto" }}>
                     {orgTeams.map((team) => (
@@ -588,6 +594,66 @@ export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile, notific
                   </div>
                 </div>
               )}
+
+              {/* Join org by code */}
+              <div style={{ padding: "12px 14px" }}>
+                <div style={{ fontSize: 11, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>Join an Organization</div>
+                <form
+                  onSubmit={async (e) => {
+                    e.preventDefault();
+                    if (!joinCode.trim() || joinLoading) return;
+                    setJoinError("");
+                    setJoinLoading(true);
+                    try {
+                      await onJoinByCode?.(joinCode.trim());
+                      setJoinCode("");
+                      setOrgTeamOpen(false);
+                    } catch (err) {
+                      setJoinError(err.message || "Invalid join code.");
+                    } finally {
+                      setJoinLoading(false);
+                    }
+                  }}
+                  style={{ display: "flex", gap: 6 }}
+                >
+                  <input
+                    value={joinCode}
+                    onChange={(e) => { setJoinCode(e.target.value.toUpperCase()); setJoinError(""); }}
+                    placeholder="JOIN-XXXXXXXX"
+                    maxLength={13}
+                    style={{
+                      flex: 1,
+                      background: t.surface2,
+                      border: `1px solid ${joinError ? t.red : t.border}`,
+                      borderRadius: 6,
+                      padding: "6px 8px",
+                      fontFamily: t.font,
+                      fontSize: 12,
+                      color: t.text,
+                      outline: "none",
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={joinLoading || !joinCode.trim()}
+                    style={{
+                      background: t.accent,
+                      border: "none",
+                      borderRadius: 6,
+                      padding: "6px 10px",
+                      cursor: joinLoading || !joinCode.trim() ? "not-allowed" : "pointer",
+                      color: "#fff",
+                      fontFamily: t.font,
+                      fontSize: 12,
+                      fontWeight: 600,
+                      opacity: joinLoading || !joinCode.trim() ? 0.6 : 1,
+                    }}
+                  >
+                    {joinLoading ? "…" : "Join"}
+                  </button>
+                </form>
+                {joinError && <div style={{ fontSize: 11, color: t.red, marginTop: 5 }}>{joinError}</div>}
+              </div>
             </div>
           )}
         </div>
@@ -606,7 +672,7 @@ export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile, notific
       {/* Command palette trigger */}
       <button
         onClick={onOpenCommandPalette}
-        title="Search (Ctrl+K)"
+        aria-label="Search (Ctrl+K)"
         style={{ background: "none", border: `1px solid ${t.border}`, borderRadius: 8, cursor: "pointer", color: t.text2, display: "flex", alignItems: "center", gap: 6, padding: "5px 10px", fontFamily: t.font }}
       >
         <I name="search" size={14} />
@@ -618,7 +684,7 @@ export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile, notific
         <button
           ref={bellRef}
           onClick={() => setNotifOpen((o) => !o)}
-          title="Notifications"
+          aria-label="Notifications"
           style={{ background: notifOpen ? t.accentBg : "none", border: `1px solid ${notifOpen ? t.accent + "44" : "transparent"}`, borderRadius: 8, cursor: "pointer", color: unreadCount > 0 ? t.accent : t.text2, display: "flex", alignItems: "center", justifyContent: "center", width: 34, height: 34, position: "relative" }}
         >
           <I name="bell" size={16} />
@@ -813,18 +879,18 @@ export function AppShell({ currentUser, onLogout }) {
 
       if (tk.assignee === currentUser.id) {
         if (notifPrefs.slaBreaches && pct >= 100) {
-          result.push({ id: `sla_breach_${tk.id}`, type: "sla_breach", ticketId: tk.id, title: "SLA Breached", message: `${tk.id}: ${(tk.title || "").slice(0, 55)}`, time: tk.createdAt + slaHours * 3600000, severity: "error" });
+          result.push({ id: `sla_breach_${tk.id}`, type: "sla_breach", ticketId: tk.id, title: "SLA Breached", message: `${tk.number}: ${(tk.title || "").slice(0, 55)}`, time: tk.createdAt + slaHours * 3600000, severity: "error" });
         } else if (notifPrefs.slaRisk && pct >= 75) {
-          result.push({ id: `sla_risk_${tk.id}`, type: "sla_risk", ticketId: tk.id, title: "SLA At Risk", message: `${tk.id}: ${(tk.title || "").slice(0, 55)}`, time: now, severity: "warning" });
+          result.push({ id: `sla_risk_${tk.id}`, type: "sla_risk", ticketId: tk.id, title: "SLA At Risk", message: `${tk.number}: ${(tk.title || "").slice(0, 55)}`, time: now, severity: "warning" });
         }
         if (notifPrefs.newAssignments && now - tk.createdAt < 48 * 3600000) {
-          result.push({ id: `assigned_${tk.id}`, type: "assigned", ticketId: tk.id, title: "Ticket Assigned", message: `${tk.id}: ${(tk.title || "").slice(0, 55)}`, time: tk.createdAt, severity: "info" });
+          result.push({ id: `assigned_${tk.id}`, type: "assigned", ticketId: tk.id, title: "Ticket Assigned", message: `${tk.number}: ${(tk.title || "").slice(0, 55)}`, time: tk.createdAt, severity: "info" });
         }
       }
       if (notifPrefs.comments && (tk.assignee === currentUser.id || tk.reporter === currentUser.id)) {
         tk.comments?.forEach((c) => {
           if (c.userId !== currentUser.id && now - c.createdAt < 24 * 3600000) {
-            result.push({ id: `comment_${c.id}`, type: "comment", ticketId: tk.id, title: "New Comment", message: `On ${tk.id}: ${(c.text || "").slice(0, 45)}`, time: c.createdAt, severity: "info" });
+            result.push({ id: `comment_${c.id}`, type: "comment", ticketId: tk.id, title: "New Comment", message: `On ${tk.number}: ${(c.text || "").slice(0, 45)}`, time: c.createdAt, severity: "info" });
           }
         });
       }
@@ -935,65 +1001,125 @@ export function AppShell({ currentUser, onLogout }) {
     setSelectedTeamId(firstTeam?.id || null);
   }, [selectedOrgId]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Set up real-time subscriptions for live updates
+  // Unified realtime subscription — all tables, runs once orgs are loaded
   useEffect(() => {
-    if (tickets.length === 0) return;
-    
-    // Subscribe to ticket updates
-    const unsubscribeTickets = subscribeToTicketUpdates((update) => {
-      const { type, ticket } = update;
-      if (!ticket || ticket.org_id !== currentUser?.orgId) return;
-      
-      if (type === "insert") {
-        setTickets((prev) => [ticket, ...prev]);
-      } else if (type === "update") {
-        setTickets((prev) => prev.map((t) => t.id === ticket.id ? ticket : t));
-        // Update active ticket if it matches
-        if (activeTicket?.id === ticket.id) {
-          setActiveTicket(ticket);
+    if (!orgs.length) return;
+    const orgIds = orgs.map((o) => o.id);
+
+    const upsert = (setter, mapped, idKey = "id") =>
+      setter((prev) => {
+        const exists = prev.some((r) => r[idKey] === mapped[idKey]);
+        return exists ? prev.map((r) => r[idKey] === mapped[idKey] ? mapped : r) : [mapped, ...prev];
+      });
+
+    const remove = (setter, id, idKey = "id") =>
+      setter((prev) => prev.filter((r) => r[idKey] !== id));
+
+    const cleanup = subscribeToRealtime(orgIds, {
+      onTicket: (evt, row) => {
+        const mapped = rowMappers.ticket(row);
+        if (evt === "delete") {
+          remove(setTickets, mapped.id);
+        } else {
+          // Preserve existing comments on the ticket when updating
+          setTickets((prev) => {
+            const existing = prev.find((t) => t.id === mapped.id);
+            const next = existing ? { ...mapped, comments: existing.comments } : mapped;
+            return existing ? prev.map((t) => t.id === mapped.id ? next : t) : [next, ...prev];
+          });
+          // Keep open detail panel in sync
+          setActiveTicket((prev) => prev?.id === mapped.id ? { ...mapped, comments: prev.comments } : prev);
         }
-      } else if (type === "delete") {
-        setTickets((prev) => prev.filter((t) => t.id !== ticket.id));
-      }
+      },
+
+      onComment: (evt, row) => {
+        const comment = rowMappers.comment(row);
+        const merge = (comments = []) =>
+          evt === "delete"
+            ? comments.filter((c) => c.id !== comment.id)
+            : [...comments.filter((c) => c.id !== comment.id), comment]
+                .sort((a, b) => a.createdAt - b.createdAt);
+        setTickets((prev) =>
+          prev.map((t) => t.id === comment.ticketId ? { ...t, comments: merge(t.comments) } : t)
+        );
+        setActiveTicket((prev) =>
+          prev?.id === comment.ticketId ? { ...prev, comments: merge(prev.comments) } : prev
+        );
+      },
+
+      onApproval: (evt, row) => {
+        const mapped = rowMappers.approval(row);
+        evt === "delete" ? remove(setApprovals, mapped.id) : upsert(setApprovals, mapped);
+      },
+
+      onUser: (evt, row) => {
+        const mapped = rowMappers.user(row);
+        evt === "delete" ? remove(setUsers, mapped.id) : upsert(setUsers, mapped);
+      },
+
+      onOrg: (evt, row) => {
+        const mapped = rowMappers.org(row);
+        evt === "delete" ? remove(setOrgs, mapped.id) : upsert(setOrgs, mapped);
+      },
+
+      onTeam: (evt, row) => {
+        const mapped = rowMappers.team(row);
+        evt === "delete" ? remove(setTeams, mapped.id) : upsert(setTeams, mapped);
+      },
+
+      onArticle: (evt, row) => {
+        const mapped = rowMappers.article(row);
+        evt === "delete" ? remove(setArticles, mapped.id) : upsert(setArticles, mapped);
+      },
+
+      onOrgSettings: (evt, row) => {
+        const mapped = rowMappers.orgSettings(row);
+        evt === "delete"
+          ? remove(setOrgSettings, mapped.orgId, "orgId")
+          : setOrgSettings((prev) => {
+              const exists = prev.some((s) => s.orgId === mapped.orgId);
+              return exists ? prev.map((s) => s.orgId === mapped.orgId ? mapped : s) : [mapped, ...prev];
+            });
+      },
+
+      onTeamSettings: (evt, row) => {
+        const mapped = rowMappers.teamSettings(row);
+        evt === "delete"
+          ? remove(setTeamSettings, mapped.teamId, "teamId")
+          : setTeamSettings((prev) => {
+              const exists = prev.some((s) => s.teamId === mapped.teamId);
+              return exists ? prev.map((s) => s.teamId === mapped.teamId ? mapped : s) : [mapped, ...prev];
+            });
+      },
+
+      onCatalogItem: (evt, row) => {
+        const mapped = rowMappers.catalogItem(row);
+        evt === "delete" ? remove(setCatalogItems, mapped.id) : upsert(setCatalogItems, mapped);
+      },
+
+      onTeamRole: (evt, row) => {
+        const mapped = rowMappers.teamRole(row);
+        evt === "delete" ? remove(setTeamRoles, mapped.id) : upsert(setTeamRoles, mapped);
+      },
+
+      onClosingTemplate: (evt, row) => {
+        const mapped = rowMappers.closingTemplate(row);
+        evt === "delete" ? remove(setClosingTemplates, mapped.id) : upsert(setClosingTemplates, mapped);
+      },
+
+      onPirFieldConfig: (evt, row) => {
+        const mapped = rowMappers.pirFieldConfig(row);
+        evt === "delete" ? remove(setPirFieldConfigs, mapped.id) : upsert(setPirFieldConfigs, mapped);
+      },
+
+      onPostReview: (evt, row) => {
+        const mapped = rowMappers.postReview(row);
+        evt === "delete" ? remove(setPostReviews, mapped.id) : upsert(setPostReviews, mapped);
+      },
     });
 
-    // Subscribe to comment updates
-    const unsubscribeComments = subscribeToTicketComments(activeTicket?.id, (update) => {
-      if (update.type === "insert" || update.type === "update") {
-        setActiveTicket((prev) => {
-          if (!prev) return prev;
-          return {
-            ...prev,
-            comments: [
-              ...(prev.comments || []).filter((c) => c.id !== update.comment.id),
-              update.comment,
-            ],
-          };
-        });
-      }
-    });
-
-    // Subscribe to approval updates
-    const unsubscribeApprovals = subscribeToApprovals((update) => {
-      const { type, approval } = update;
-      if (!approval || approval.org_id !== currentUser?.orgId) return;
-      
-      if (type === "insert" || type === "update") {
-        setApprovals((prev) => [
-          ...prev.filter((a) => a.id !== approval.id),
-          approval,
-        ]);
-      } else if (type === "delete") {
-        setApprovals((prev) => prev.filter((a) => a.id !== approval.id));
-      }
-    });
-
-    return () => {
-      unsubscribeTickets?.();
-      unsubscribeComments?.();
-      unsubscribeApprovals?.();
-    };
-  }, [activeTicket?.id, tickets.length]); // eslint-disable-line react-hooks/exhaustive-deps
+    return cleanup;
+  }, [orgs.map((o) => o.id).join(",")]); // eslint-disable-line react-hooks/exhaustive-deps
 
   // Initialize selected org/team on data load
   useEffect(() => {
@@ -1039,7 +1165,7 @@ export function AppShell({ currentUser, onLogout }) {
   }, [loading]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const effectiveUser = users.find((u) => u.id === currentUser.id) || currentUser;
-  const currentOrg = orgs.find((o) => o.id === effectiveUser.orgId);
+  const currentOrg = orgs.find((o) => o.id === (selectedOrgId || effectiveUser.orgId));
   const plan = normalizePlan(currentOrg?.plan);
 
   // Filter tickets to the selected org + team (all org data is merged in state)
@@ -1102,6 +1228,11 @@ export function AppShell({ currentUser, onLogout }) {
     if (orgUrgencies.length) return orgUrgencies;
     if (teamUrgencies.length) return teamUrgencies;
     return ["Critical", "High", "Medium", "Low"];
+  };
+
+  const getTicketTypesForOrg = (orgId) => {
+    const org = orgSettings.find((s) => s.orgId === orgId);
+    return org?.ticketTypes?.length ? org.ticketTypes : DEFAULT_TICKET_TYPES;
   };
 
   const openTicket = (tk) => {
@@ -1253,6 +1384,28 @@ export function AppShell({ currentUser, onLogout }) {
     setOrgInvitations((prev) => prev.filter((i) => i.id !== invitationId));
   };
 
+  const handleJoinByCode = async (code) => {
+    const result = await joinOrgByCode(code, effectiveUser.email);
+    const newOrgId = result.orgId;
+    const data = await fetchAppData({ orgIds: [newOrgId] });
+    const byOrgId = (prev, next) => [...prev.filter((r) => r.orgId !== newOrgId), ...next];
+    setOrgs((prev) => [...prev.filter((o) => o.id !== newOrgId), ...data.orgs]);
+    setTeams((prev) => byOrgId(prev, data.teams));
+    setUsers((prev) => byOrgId(prev, data.users));
+    setTickets((prev) => byOrgId(prev, data.tickets));
+    setArticles((prev) => byOrgId(prev, data.articles));
+    setOrgSettings((prev) => byOrgId(prev, data.orgSettings));
+    setTeamSettings((prev) => [...prev.filter((s) => !data.teamSettings.some((ns) => ns.teamId === s.teamId)), ...data.teamSettings]);
+    setTeamRoles((prev) => [...prev.filter((r) => !data.teamRoles.some((nr) => nr.teamId === r.teamId)), ...data.teamRoles]);
+    setPostReviews((prev) => byOrgId(prev, data.postIncidentReviews));
+    setClosingTemplates((prev) => byOrgId(prev, data.closingTemplates || []));
+    setPirFieldConfigs((prev) => byOrgId(prev, data.pirFieldConfigs || []));
+    setCatalogItems((prev) => byOrgId(prev, data.catalogItems || []));
+    setApprovals((prev) => byOrgId(prev, data.approvals || []));
+    setSelectedOrgId(newOrgId);
+    return result;
+  };
+
   const handleUpdateMemberRoles = async (payload) => {
     const saved = await updateMemberRoles(payload.userId, payload.roles);
     setUsers((rows) => rows.map((row) => row.id === saved.id ? saved : row));
@@ -1339,6 +1492,7 @@ export function AppShell({ currentUser, onLogout }) {
       estimateHours: payload.estimateHours || null,
       spentHours: 0,
       tags: ["catalog", item.id].filter(Boolean),
+      customFields: payload.customFields || {},
     });
 
     setTickets((rows) => [createdTicket, ...rows]);
@@ -1577,6 +1731,7 @@ export function AppShell({ currentUser, onLogout }) {
           onSelectTeam={setSelectedTeamId}
           onAcceptInvitation={handleAcceptInvitation}
           onDeclineInvitation={handleDeclineInvitation}
+          onJoinByCode={handleJoinByCode}
         />
 
         <main style={{ flex: 1, overflowY: "auto", padding: isMobile ? "16px 14px" : "22px", paddingBottom: isMobile ? "80px" : "22px", WebkitOverflowScrolling: "touch" }}>
@@ -1624,12 +1779,12 @@ export function AppShell({ currentUser, onLogout }) {
           )}
 
           {/* Per-type ticket views */}
-          {view === "all_tickets" && <TicketListView typeFilter={null}             tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew()} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
-          {view === "incidents"   && <TicketListView typeFilter="Incident"         tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Incident")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
-          {view === "requests"    && <TicketListView typeFilter="Service Request"  tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Service Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
-          {view === "changes"     && <TicketListView typeFilter="Change Request"   tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Change Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
-          {view === "problems"    && <TicketListView typeFilter="Problem"          tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Problem")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
-          {view === "tasks"       && <TicketListView typeFilter="Task"             tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Task")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} />}
+          {view === "all_tickets" && <TicketListView typeFilter={null}             tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew()} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} ticketTypes={getTicketTypesForOrg(selectedOrgId)} />}
+          {view === "incidents"   && <TicketListView typeFilter="Incident"         tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Incident")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} ticketTypes={getTicketTypesForOrg(selectedOrgId)} />}
+          {view === "requests"    && <TicketListView typeFilter="Service Request"  tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Service Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} ticketTypes={getTicketTypesForOrg(selectedOrgId)} />}
+          {view === "changes"     && <TicketListView typeFilter="Change Request"   tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Change Request")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} ticketTypes={getTicketTypesForOrg(selectedOrgId)} />}
+          {view === "problems"    && <TicketListView typeFilter="Problem"          tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Problem")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} ticketTypes={getTicketTypesForOrg(selectedOrgId)} />}
+          {view === "tasks"       && <TicketListView typeFilter="Task"             tickets={visibleTickets} users={visibleUsers} currentUser={effectiveUser} onOpenTicket={openTicket} onNewTicket={() => handleNew("Task")} priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)} onBulkUpdate={handleBulkUpdate} plan={plan} onUpgrade={() => setShowPlansModal(true)} ticketTypes={getTicketTypesForOrg(selectedOrgId)} />}
 
           {view === "kanban" && (
             canFeature(plan, "kanban") ? (
@@ -1638,6 +1793,7 @@ export function AppShell({ currentUser, onLogout }) {
                 users={visibleUsers}
                 currentUser={effectiveUser}
                 priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)}
+                ticketTypes={getTicketTypesForOrg(selectedOrgId)}
                 onOpenTicket={openTicket}
                 onPatchTicket={handlePatchTicket}
               />
@@ -1749,6 +1905,7 @@ export function AppShell({ currentUser, onLogout }) {
           onComment={handleAddComment}
           priorityCatalog={getPriorityCatalog(activeTicket.orgId, activeTicket.teamId)}
           urgencyLevels={getUrgencyLevels(activeTicket.orgId, activeTicket.teamId)}
+          ticketTypes={getTicketTypesForOrg(activeTicket.orgId)}
           review={postReviews.find((row) => row.ticketId === activeTicket.id) || null}
           onSaveReview={handleSavePostIncidentReview}
           closingTemplates={closingTemplates.filter((tmpl) => tmpl.orgId === activeTicket.orgId && (!tmpl.teamId || tmpl.teamId === activeTicket.teamId))}
@@ -1760,6 +1917,7 @@ export function AppShell({ currentUser, onLogout }) {
           approvals={approvals.filter((a) => a.ticketId === activeTicket.id)}
           onResolveApproval={handleResolveApproval}
           onAddApproval={handleAddApprovalToTicket}
+          orgSettings={orgSettings}
         />
       )}
       {modal === "new" && (
@@ -1773,6 +1931,7 @@ export function AppShell({ currentUser, onLogout }) {
           defaultType={defaultType}
           priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)}
           urgencyLevels={getUrgencyLevels(effectiveUser.orgId, effectiveUser.teamId)}
+          ticketTypes={getTicketTypesForOrg(effectiveUser.orgId)}
           orgSettings={orgSettings}
           teamSettings={teamSettings}
           allTickets={tickets}

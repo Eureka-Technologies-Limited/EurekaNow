@@ -87,6 +87,12 @@ alter table tickets add column if not exists parent_id text;
   alter table tickets add column if not exists due_date bigint;
   alter table tickets add column if not exists estimate_hours numeric;
   alter table tickets add column if not exists spent_hours numeric not null default 0;
+-- Separate display number (e.g. INC-0001) from the internal primary key.
+alter table tickets add column if not exists number text not null default '';
+-- Structured request data from service catalog submissions.
+alter table tickets add column if not exists custom_fields jsonb not null default '{}'::jsonb;
+-- Backfill: existing tickets whose id is already in sequential format keep that as their number.
+update tickets set number = id where number = '' and id ~ '^[A-Z]+-[0-9]+$';
 
 -- Ensure `category` has a safe default and backfill any existing NULLs so
 -- inserting rows without an explicit category doesn't fail with a NOT NULL
@@ -135,6 +141,23 @@ create table if not exists org_settings (
 alter table org_settings add column if not exists
   categories jsonb not null default '["Network","Software","Hardware","Security","Access Management","Onboarding","Facilities","Healthcare","Engineering","Finance","Legal","Other"]'::jsonb;
 alter table org_settings add column if not exists approval_mode text not null default 'all';
+alter table org_settings add column if not exists ticket_types jsonb not null default '[]'::jsonb;
+alter table org_settings add column if not exists org_roles jsonb not null default '[]'::jsonb;
+-- Custom request field definitions per catalog item.
+alter table service_catalog_items add column if not exists request_fields jsonb not null default '[]'::jsonb;
+
+create table if not exists api_keys (
+  id           text    primary key,
+  org_id       text    not null references organizations(id) on delete cascade,
+  name         text    not null,
+  key_value    text    not null,
+  key_prefix   text    not null,
+  created_by   text,
+  created_at   bigint  not null,
+  last_used_at bigint,
+  is_active    boolean not null default true
+);
+create index if not exists idx_api_keys_org_id on api_keys(org_id);
 
 create table if not exists team_settings (
   team_id    text   primary key,
@@ -278,8 +301,8 @@ create table if not exists ticket_sequences (
   primary key (org_id, prefix)
 );
 
--- Atomic increment function. Seeds from existing tickets on first call per
--- org+prefix so migrations from old random IDs keep counting upward correctly.
+-- Atomic increment function. Seeds from the number column on first call per
+-- org+prefix so migrated databases never repeat a number.
 create or replace function next_ticket_seq(p_org_id text, p_prefix text)
 returns integer
 language plpgsql
@@ -287,17 +310,16 @@ as $$
 declare
   v_next integer;
 begin
-  -- Ensure a row exists; seed last_val from the highest existing ticket ID
-  -- so that resuming a live database never repeats a number.
+  -- Ensure a row exists; seed last_val from the highest existing ticket number.
   insert into ticket_sequences (org_id, prefix, last_val)
   select
     p_org_id,
     p_prefix,
     coalesce(
-      (select max(substring(id from '\d+$')::integer)
+      (select max(substring(number from '\d+$')::integer)
        from   tickets
        where  org_id = p_org_id
-         and  id ~ ('^' || p_prefix || '-\d+$')),
+         and  number ~ ('^' || p_prefix || '-[0-9]+$')),
       0
     )
   where not exists (

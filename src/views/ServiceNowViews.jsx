@@ -16,28 +16,52 @@ function RequestModal({ item, currentUser, users, teams, orgs, onClose, onSubmit
     requestedFor: currentUser?.id || "",
     priority: item?.defaultPriority || "Medium",
     urgency: item?.defaultUrgency || "Medium",
-    description: "",
+    shortDescription: "",
     justification: "",
+    customValues: {},
   }));
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const orgTeams = teams.filter((team) => team.orgId === form.orgId);
   const orgUsers = users.filter((user) => user.orgId === form.orgId);
+  const extraFields = Array.isArray(item?.requestFields) ? item.requestFields : [];
+
+  const setCustom = (key, value) =>
+    setForm((prev) => ({ ...prev, customValues: { ...prev.customValues, [key]: value } }));
 
   const submit = async () => {
     if (saving) return;
+    // Validate required custom fields
+    for (const f of extraFields) {
+      if (f.required && !String(form.customValues[f.key] || "").trim()) {
+        setError(`"${f.label}" is required.`);
+        return;
+      }
+    }
     setSaving(true);
     setError("");
-      try {
+    try {
+      const customFields = {
+        shortDescription: form.shortDescription.trim(),
+        justification: form.justification.trim(),
+        ...Object.fromEntries(extraFields.map((f) => [f.key, String(form.customValues[f.key] || "").trim()])),
+      };
+      // Keep plain text description for list views / backward compat
+      const plainDescription = [
+        form.shortDescription.trim(),
+        form.justification.trim(),
+        ...extraFields.map((f) => `${f.label}: ${form.customValues[f.key] || ""}`),
+      ].filter(Boolean).join("\n\n");
       await onSubmit(item, {
         title: item.name,
-        description: [item.description || "", form.description.trim(), form.justification.trim()].filter(Boolean).join("\n\n"),
+        description: plainDescription,
         orgId: form.orgId,
         teamId: form.teamId,
         requestedFor: form.requestedFor || currentUser?.id,
         priority: form.priority,
         urgency: form.urgency,
+        customFields,
       });
       onClose();
     } catch (err) {
@@ -49,6 +73,7 @@ function RequestModal({ item, currentUser, users, teams, orgs, onClose, onSubmit
   return (
     <Modal title={`Request: ${item.name}`} onClose={onClose} width={620}>
       <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+        {/* Item summary */}
         <div style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 12, padding: 14 }}>
           <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 8 }}>
             <div style={{ width: 34, height: 34, borderRadius: 10, background: t.accentBg, display: "grid", placeItems: "center", color: t.accent }}>
@@ -66,24 +91,11 @@ function RequestModal({ item, currentUser, users, teams, orgs, onClose, onSubmit
           </div>
         </div>
 
-          <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
-          <div>
-            <Label>Request item</Label>
-            <div style={{ padding: 10, borderRadius: 8, background: t.surface3 }}>{item.name}</div>
-          </div>
+        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
           <div>
             <Label>Requested for</Label>
             <Sel value={form.requestedFor} onChange={(e) => setForm((prev) => ({ ...prev, requestedFor: e.target.value }))}>
               {orgUsers.map((user) => <option key={user.id} value={user.id}>{user.name}</option>)}
-            </Sel>
-          </div>
-        </div>
-
-        <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
-          <div>
-            <Label>Organisation</Label>
-            <Sel value={form.orgId} onChange={(e) => setForm((prev) => ({ ...prev, orgId: e.target.value, teamId: "", requestedFor: "" }))}>
-              {orgs.map((org) => <option key={org.id} value={org.id}>{org.name}</option>)}
             </Sel>
           </div>
           <div>
@@ -99,29 +111,47 @@ function RequestModal({ item, currentUser, users, teams, orgs, onClose, onSubmit
           <div>
             <Label>Priority</Label>
             <Sel value={form.priority} onChange={(e) => setForm((prev) => ({ ...prev, priority: e.target.value }))}>
-              {["Critical","High","Medium","Low"].map((priority) => <option key={priority} value={priority}>{priority}</option>)}
+              {["Critical","High","Medium","Low"].map((p) => <option key={p} value={p}>{p}</option>)}
             </Sel>
           </div>
           <div>
-            <Label>Item description</Label>
-            <div style={{ padding: 10, borderRadius: 8, background: t.surface3, fontSize: 13, color: t.text2 }}>{item.description}</div>
+            <Label>Urgency</Label>
+            <Sel value={form.urgency} onChange={(e) => setForm((prev) => ({ ...prev, urgency: e.target.value }))}>
+              {["Critical","High","Medium","Low"].map((u) => <option key={u} value={u}>{u}</option>)}
+            </Sel>
           </div>
         </div>
 
+        {/* Default fields: always shown */}
         <div>
           <Label>Short description</Label>
-          <Input multiline rows={3} value={form.description} onChange={(e) => setForm((prev) => ({ ...prev, description: e.target.value }))} placeholder="What do you need and why?" />
+          <Input multiline rows={2} value={form.shortDescription} onChange={(e) => setForm((prev) => ({ ...prev, shortDescription: e.target.value }))} placeholder="What do you need?" />
         </div>
-
         <div>
           <Label>Justification</Label>
-          <Input multiline rows={3} value={form.justification} onChange={(e) => setForm((prev) => ({ ...prev, justification: e.target.value }))} placeholder="Add context that helps the approver decide." />
+          <Input multiline rows={2} value={form.justification} onChange={(e) => setForm((prev) => ({ ...prev, justification: e.target.value }))} placeholder="Why do you need this? Add context for the approver." />
         </div>
+
+        {/* Custom fields defined per catalog item */}
+        {extraFields.map((f) => (
+          <div key={f.key}>
+            <Label>{f.label}{f.required && " *"}</Label>
+            {f.type === "textarea" ? (
+              <Input multiline rows={3} value={form.customValues[f.key] || ""} onChange={(e) => setCustom(f.key, e.target.value)} placeholder={f.placeholder || ""} />
+            ) : f.type === "select" && Array.isArray(f.options) ? (
+              <Sel value={form.customValues[f.key] || ""} onChange={(e) => setCustom(f.key, e.target.value)}>
+                <option value="">— Select —</option>
+                {f.options.map((o) => <option key={o} value={o}>{o}</option>)}
+              </Sel>
+            ) : (
+              <Input type={f.type === "date" ? "date" : "text"} value={form.customValues[f.key] || ""} onChange={(e) => setCustom(f.key, e.target.value)} placeholder={f.placeholder || ""} />
+            )}
+          </div>
+        ))}
 
         {error && (
           <div style={{ background: t.redBg, border: `1px solid ${t.red}44`, borderRadius: 8, padding: "8px 12px", fontSize: 12, color: t.redText }}>{error}</div>
         )}
-
         <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
           <Btn variant="secondary" onClick={onClose} disabled={saving}>Cancel</Btn>
           <Btn variant="primary" onClick={submit} disabled={saving || !item?.name}>{saving ? "Submitting..." : "Submit request"}</Btn>
@@ -182,24 +212,46 @@ function ApprovalDecisionModal({ approval, item, ticket, currentUser, onClose, o
   );
 }
 
+const FIELD_TYPES = ["text", "textarea", "select", "date"];
+
 function ManageCatalogModal({ item, users = [], teams = [], onClose, onSave }) {
   const t = useTokens();
+  const { isMobile } = useBreakpoint();
+  const [tab, setTab] = useState("approver");
   const [approverRole, setApproverRole] = useState(item.approverRole || "Admin");
   const [approverId, setApproverId] = useState(item.approverId || "");
-  const [approverMode, setApproverMode] = useState(item.approverMode || "role"); // 'role' | 'user' | 'team'
+  const [approverMode, setApproverMode] = useState(item.approverMode || "role");
   const [approverTeamId, setApproverTeamId] = useState(item.approverTeamId || "");
+  const [requestFields, setRequestFields] = useState(() =>
+    Array.isArray(item.requestFields) ? item.requestFields.map((f) => ({ ...f })) : []
+  );
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
   const orgUsers = users.filter((u) => u.orgId === item.orgId);
   const orgTeams = teams.filter((tm) => tm.orgId === item.orgId);
 
+  const addField = () =>
+    setRequestFields((prev) => [
+      ...prev,
+      { key: `field_${Date.now()}`, label: "", type: "text", required: false, placeholder: "", options: [] },
+    ]);
+
+  const updateField = (i, patch) =>
+    setRequestFields((prev) => prev.map((f, idx) => idx === i ? { ...f, ...patch } : f));
+
+  const removeField = (i) =>
+    setRequestFields((prev) => prev.filter((_, idx) => idx !== i));
+
   const submit = async () => {
     if (saving) return;
+    for (const f of requestFields) {
+      if (!f.label.trim()) { setError("All custom fields need a label."); return; }
+    }
     setSaving(true);
     setError("");
     try {
-      await onSave({ approverRole, approverId, approverMode, approverTeamId });
+      await onSave({ approverRole, approverId, approverMode, approverTeamId, requestFields });
       onClose();
     } catch (err) {
       setError(err?.message || "Unable to save catalog item.");
@@ -207,56 +259,116 @@ function ManageCatalogModal({ item, users = [], teams = [], onClose, onSave }) {
     }
   };
 
+  const tabs = [
+    { id: "approver", label: "Approver" },
+    { id: "fields", label: "Request fields" },
+  ];
+
   return (
-    <Modal title={`Manage: ${item.name}`} onClose={onClose} width={560}>
-      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-        <div>
-          <Label>Approver type</Label>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {[
-              { id: "role", label: "Role" },
-              { id: "user", label: "User" },
-              { id: "team", label: "Team" },
-            ].map((option) => (
-              <Btn
-                key={option.id}
-                variant={approverMode === option.id ? "primary" : "secondary"}
-                size="sm"
-                onClick={() => setApproverMode(option.id)}
-              >
-                {option.label}
-              </Btn>
-            ))}
-          </div>
+    <Modal title={`Manage: ${item.name}`} onClose={onClose} width={640}>
+      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
+        {/* Tab bar */}
+        <div style={{ display: "flex", borderBottom: `1px solid ${t.border}`, gap: 4 }}>
+          {tabs.map((tb) => (
+            <button key={tb.id} onClick={() => setTab(tb.id)} style={{
+              background: "none", border: "none", cursor: "pointer", fontFamily: t.font,
+              fontSize: 13, fontWeight: 700, color: tab === tb.id ? t.accent : t.text3,
+              borderBottom: `2px solid ${tab === tb.id ? t.accent : "transparent"}`,
+              padding: "8px 14px 10px", marginBottom: -1,
+            }}>{tb.label}</button>
+          ))}
         </div>
 
-        {approverMode === 'role' && (
-          <div>
-            <Label>Approver role</Label>
-            <Sel value={approverRole} onChange={(e) => setApproverRole(e.target.value)}>
-              {DEFAULT_TEAM_ROLES.map((r) => <option key={r.name} value={r.name}>{r.name}</option>)}
-            </Sel>
+        {tab === "approver" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+            <div>
+              <Label>Approver type</Label>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {[{ id: "role", label: "Role" }, { id: "user", label: "User" }, { id: "team", label: "Team" }].map((option) => (
+                  <Btn key={option.id} variant={approverMode === option.id ? "primary" : "secondary"} size="sm" onClick={() => setApproverMode(option.id)}>
+                    {option.label}
+                  </Btn>
+                ))}
+              </div>
+            </div>
+            {approverMode === "role" && (
+              <div>
+                <Label>Approver role</Label>
+                <Sel value={approverRole} onChange={(e) => setApproverRole(e.target.value)}>
+                  {DEFAULT_TEAM_ROLES.map((r) => <option key={r.name} value={r.name}>{r.name}</option>)}
+                </Sel>
+              </div>
+            )}
+            {approverMode === "user" && (
+              <div>
+                <Label>Specific approver (optional)</Label>
+                <Sel value={approverId} onChange={(e) => setApproverId(e.target.value)}>
+                  <option value="">— Select user —</option>
+                  {orgUsers.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
+                </Sel>
+              </div>
+            )}
+            {approverMode === "team" && (
+              <div>
+                <Label>Approver team</Label>
+                <Sel value={approverTeamId} onChange={(e) => setApproverTeamId(e.target.value)}>
+                  <option value="">— Select team —</option>
+                  {orgTeams.map((tm) => <option key={tm.id} value={tm.id}>{tm.name}</option>)}
+                </Sel>
+                <div style={{ fontSize: 12, color: t.text3, marginTop: 6 }}>Any member of the selected team can approve; only one approval is needed.</div>
+              </div>
+            )}
           </div>
         )}
 
-        {approverMode === 'user' && (
-          <div>
-            <Label>Specific approver (optional)</Label>
-            <Sel value={approverId} onChange={(e) => setApproverId(e.target.value)}>
-              <option value="">— Select user —</option>
-              {orgUsers.map((u) => <option key={u.id} value={u.id}>{u.name} ({u.email})</option>)}
-            </Sel>
-          </div>
-        )}
-
-        {approverMode === 'team' && (
-          <div>
-            <Label>Approver team</Label>
-            <Sel value={approverTeamId} onChange={(e) => setApproverTeamId(e.target.value)}>
-              <option value="">— Select team —</option>
-              {orgTeams.map((tm) => <option key={tm.id} value={tm.id}>{tm.name}</option>)}
-            </Sel>
-            <div style={{ fontSize: 12, color: t.text3, marginTop: 6 }}>Team approvals allow any member of the selected team to approve; only one approval is required.</div>
+        {tab === "fields" && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div style={{ fontSize: 12, color: t.text3, lineHeight: 1.5 }}>
+              Add extra fields that requesters must fill in. <strong>Short description</strong> and <strong>Justification</strong> are always included.
+            </div>
+            {requestFields.map((f, i) => (
+              <div key={f.key} style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
+                  <div>
+                    <Label>Label</Label>
+                    <Input value={f.label} onChange={(e) => updateField(i, { label: e.target.value })} placeholder="e.g. Department" />
+                  </div>
+                  <div>
+                    <Label>Type</Label>
+                    <Sel value={f.type} onChange={(e) => updateField(i, { type: e.target.value })}>
+                      {FIELD_TYPES.map((ft) => <option key={ft} value={ft}>{ft}</option>)}
+                    </Sel>
+                  </div>
+                </div>
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "2fr 1fr auto", gap: 8, alignItems: "flex-end" }}>
+                  <div>
+                    <Label>Placeholder</Label>
+                    <Input value={f.placeholder || ""} onChange={(e) => updateField(i, { placeholder: e.target.value })} placeholder="Helper text shown inside the field" />
+                  </div>
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, paddingBottom: 2 }}>
+                    <input type="checkbox" id={`req-${i}`} checked={!!f.required} onChange={(e) => updateField(i, { required: e.target.checked })} />
+                    <label htmlFor={`req-${i}`} style={{ fontSize: 12, color: t.text2, cursor: "pointer" }}>Required</label>
+                  </div>
+                  <Btn variant="secondary" size="sm" onClick={() => removeField(i)} aria-label="Remove field">
+                    <I name="trash" size={12} />
+                  </Btn>
+                </div>
+                {f.type === "select" && (
+                  <div>
+                    <Label>Options (one per line)</Label>
+                    <Input
+                      multiline rows={3}
+                      value={(f.options || []).join("\n")}
+                      onChange={(e) => updateField(i, { options: e.target.value.split("\n") })}
+                      placeholder={"Option A\nOption B\nOption C"}
+                    />
+                  </div>
+                )}
+              </div>
+            ))}
+            <Btn variant="secondary" size="sm" onClick={addField} style={{ alignSelf: "flex-start" }}>
+              <I name="plus" size={12} /> Add field
+            </Btn>
           </div>
         )}
 
@@ -296,6 +408,7 @@ export function ServiceCatalogView({ items = [], currentUser, users, teams, orgs
     approverRole: "Admin",
     approverId: "",
     approverTeamId: "",
+    requestFields: [],
   });
 
   const teamMap = useMemo(() => Object.fromEntries(teams.map((team) => [team.id, team])), [teams]);
@@ -320,20 +433,52 @@ export function ServiceCatalogView({ items = [], currentUser, users, teams, orgs
 
   return (
     <div>
-      <div style={{ display: "flex", alignItems: isMobile ? "stretch" : "center", justifyContent: "space-between", gap: 10, marginBottom: 16, flexDirection: isMobile ? "column" : "row" }}>
+      {/* Header row: title + add button */}
+      <div style={{ display: "flex", alignItems: isMobile ? "stretch" : "center", justifyContent: "space-between", gap: 10, marginBottom: 14, flexDirection: isMobile ? "column" : "row" }}>
         <div>
           <h1 style={{ margin: 0, color: t.text, fontSize: isMobile ? 20 : 22, fontWeight: 800 }}>Service Catalog</h1>
-          <p style={{ margin: "4px 0 0", color: t.text3, fontSize: 12 }}>Standardized request items, approvals, and fulfillment.</p>
+          <p style={{ margin: "4px 0 0", color: t.text3, fontSize: 12 }}>Standardised request items, approvals, and fulfillment.</p>
         </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <Btn variant="primary" onClick={() => setCreatingItem(true)}>
-            <I name="plus" size={12} /> Add catalog item
-          </Btn>
-          <Input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="Search catalog" style={{ minWidth: isMobile ? "100%" : 240 }} />
-          <Sel value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)} style={{ width: isMobile ? "100%" : 180 }}>
-            {categories.map((category) => <option key={category} value={category}>{category}</option>)}
-          </Sel>
-        </div>
+        <Btn variant="primary" onClick={() => setCreatingItem(true)}>
+          <I name="plus" size={12} /> Add catalog item
+        </Btn>
+      </div>
+
+      {/* Full-width search bar */}
+      <div style={{ position: "relative", marginBottom: 10 }}>
+        <span style={{ position: "absolute", left: 11, top: "50%", transform: "translateY(-50%)", color: t.text3, pointerEvents: "none" }}>
+          <I name="search" size={13} />
+        </span>
+        <input
+          value={query}
+          onChange={(e) => setQuery(e.target.value)}
+          placeholder="Search catalog…"
+          style={{
+            width: "100%", boxSizing: "border-box",
+            background: t.surface2, border: `1px solid ${t.border}`,
+            borderRadius: 9, padding: "9px 12px 9px 34px",
+            fontSize: 13, color: t.text, fontFamily: t.font, outline: "none",
+          }}
+        />
+      </div>
+
+      {/* Category filter chips */}
+      <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 16 }}>
+        {categories.map((cat) => (
+          <button
+            key={cat}
+            onClick={() => setSelectedCategory(cat)}
+            style={{
+              background: selectedCategory === cat ? t.accentBg : t.surface2,
+              color: selectedCategory === cat ? t.accentText : t.text2,
+              border: `1px solid ${selectedCategory === cat ? t.accent : t.border}`,
+              borderRadius: 99, padding: "5px 13px",
+              fontSize: 12, fontWeight: 600, cursor: "pointer", fontFamily: t.font,
+            }}
+          >
+            {cat}
+          </button>
+        ))}
       </div>
 
       <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "repeat(auto-fill, minmax(260px, 1fr))", gap: 12 }}>
@@ -384,7 +529,7 @@ export function ServiceCatalogView({ items = [], currentUser, users, teams, orgs
           teams={teams}
           orgs={orgs}
           onClose={() => setActiveItem(null)}
-          onSubmit={async (payload) => onRequestItem(activeItem, payload)}
+          onSubmit={async (_item, payload) => onRequestItem(activeItem, payload)}
         />
       )}
 

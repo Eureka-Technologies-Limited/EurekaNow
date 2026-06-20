@@ -115,7 +115,7 @@ export function SLAAlerts({ tickets, priorityCatalog, users }) {
                     {ticket.title}
                   </div>
                   <div style={{ fontSize: 11, color: t.text2, marginTop: 4 }}>
-                    #{ticket.id.slice(0, 8)} • {ticket.status}
+                    #{ticket.number} • {ticket.status}
                   </div>
                 </div>
                 <div

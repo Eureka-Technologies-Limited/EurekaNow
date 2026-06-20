@@ -86,7 +86,7 @@ export function CriticalList({ tickets, onOpenTicket, priorityCatalog }) {
                   <div style={{ fontSize: 12, fontWeight: 600, color: t.redText, flex: 1, minWidth: 0, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{tk.title}</div>
                   <StatusBadge status={tk.status} />
                 </div>
-                <div style={{ fontSize: 10, color: t.text3 }}>{tk.id}</div>
+                <div style={{ fontSize: 10, color: t.text3 }}>{tk.number}</div>
                 <SLABar priority={tk.priority} createdAt={tk.createdAt} slaHours={(findPriorityCfg(catalog, tk.priority) && Number(findPriorityCfg(catalog, tk.priority).sla) > 0) ? Number(findPriorityCfg(catalog, tk.priority).sla) : slaForPriority(tk.priority)} endAt={tk.resolvedAt} />
               </button>
             ))}

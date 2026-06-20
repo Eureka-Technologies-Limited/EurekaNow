@@ -71,17 +71,23 @@ export function StatusBadge({ status }) {
   return <Badge label={status} color={color} bg={bg} />;
 }
 
-export function TypeBadge({ type }) {
+export function TypeBadge({ type, ticketTypes }) {
   const t = useTokens();
-  const map = {
-    "Incident":       { color: t.redText,    bg: t.redBg    },
-    "Service Request":{ color: t.greenText,  bg: t.greenBg  },
-    "Change Request": { color: t.orangeText, bg: t.orangeBg },
-    "Problem":        { color: t.purpleText, bg: t.purpleBg },
-    "Task":           { color: t.grayText,   bg: t.grayBg   },
+  const builtinMap = {
+    "Incident":        { color: t.redText,    bg: t.redBg    },
+    "Service Request": { color: t.greenText,  bg: t.greenBg  },
+    "Change Request":  { color: t.orangeText, bg: t.orangeBg },
+    "Problem":         { color: t.purpleText, bg: t.purpleBg },
+    "Task":            { color: t.grayText,   bg: t.grayBg   },
   };
-  const { color, bg } = map[type] || { color: "#888", bg: "#eee" };
-  return <Badge label={type} color={color} bg={bg} />;
+  if (builtinMap[type]) {
+    const { color, bg } = builtinMap[type];
+    return <Badge label={type} color={color} bg={bg} />;
+  }
+  // Custom type: use the hex color stored in the type definition
+  const custom = (ticketTypes || []).find((tt) => tt.name === type);
+  const hex = custom?.color || "#718096";
+  return <Badge label={type} color={hex} bg={`${hex}26`} />;
 }
 
 // ── SLA Bar ───────────────────────────────────────────────────────────────────

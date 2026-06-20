@@ -42,6 +42,16 @@ export const TICKET_TYPES = [
   "Task",
 ];
 
+// Full definitions for the built-in ticket types.
+// When an org has no custom types configured, these are the defaults.
+export const DEFAULT_TICKET_TYPES = [
+  { name: "Incident",        prefix: "INC", color: "#e53e3e" },
+  { name: "Service Request", prefix: "REQ", color: "#38a169" },
+  { name: "Change Request",  prefix: "CHG", color: "#dd6b20" },
+  { name: "Problem",         prefix: "PRB", color: "#805ad5" },
+  { name: "Task",            prefix: "TSK", color: "#718096" },
+];
+
 export const CATEGORIES = [
   "Network", "Software", "Hardware", "Security",
   "Access Management", "Onboarding", "Facilities",

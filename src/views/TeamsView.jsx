@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { DEFAULT_URGENCIES, PERMISSION_GROUPS, PRIORITIES, ROLE_COLORS, ROLE_PERMISSION_DEFAULTS, TICKET_TYPES } from "../core/constants.js";
+import { DEFAULT_TICKET_TYPES, DEFAULT_URGENCIES, PERMISSION_GROUPS, PRIORITIES, ROLE_COLORS, ROLE_PERMISSION_DEFAULTS, TICKET_TYPES } from "../core/constants.js";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { Avatar, Badge, Btn, Card, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 import { PlansModal, PlanBadge } from "../ui/UpgradeGate.jsx";
+import { fetchOrgInvitationsForOrg, sendOrgInvitation, cancelOrgInvitation, fetchApiKeys, createApiKey, revokeApiKey } from "../core/api.js";
 
 const TEAM_ICONS = ["IT","ENG","OPS","APP","NET","SEC","DATA","QA","PM","UX","HR","FIN"];
 const FALLBACK_ROLES = ["Admin", "Agent", "End User"];
@@ -17,6 +18,24 @@ const defaultPriorityRows = () => Object.entries(PRIORITIES).map(([name, cfg]) =
 const isValidHexColor = (color) => {
   const hex = String(color || "").trim();
   return /^#[0-9A-Fa-f]{6}$/.test(hex);
+};
+
+// Merge existing org setting with tab-specific changes to prevent cross-field wipeout
+const mergeOrgSetting = (orgSetting, changes) => ({
+  priorities: normalizePriorityRows(orgSetting?.priorities),
+  urgencies: orgSetting?.urgencies?.length ? orgSetting.urgencies : DEFAULT_URGENCIES,
+  categories: orgSetting?.categories?.length ? orgSetting.categories : [],
+  rolePermissions: orgSetting?.rolePermissions || {},
+  requireApprovals: orgSetting?.requireApprovals || false,
+  approvalMode: orgSetting?.approvalMode || "all",
+  ticketTypes: orgSetting?.ticketTypes || [],
+  orgRoles: orgSetting?.orgRoles || [],
+  ...changes,
+});
+
+const fmtDate = (ts) => {
+  if (!ts) return "—";
+  return new Date(Number(ts)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 };
 
 const normalizePriorityRows = (rows) => {
@@ -368,6 +387,7 @@ export function TeamsView({
                 { id: "permissions", label: "Permissions" },
                 { id: "orgroles", label: "Org Roles" },
                 { id: "categories", label: "Categories" },
+                { id: "ticket_types", label: "Ticket Types" },
                 { id: "templates", label: "Templates" },
                 { id: "pir", label: "PIR Fields" },
                 { id: "invitations", label: "Invitations" },
@@ -392,7 +412,7 @@ export function TeamsView({
                   defaultPriorities={normalizePriorityRows(orgSetting?.priorities)}
                   defaultUrgencies={orgSetting?.urgencies || DEFAULT_URGENCIES}
                   onSave={async (settings) => {
-                    await onSaveOrgSettings({ orgId: org.id, ...settings });
+                    await onSaveOrgSettings(mergeOrgSetting(orgSetting, { orgId: org.id, ...settings }));
                     setSettingsOrgOpen(false);
                     setSettingsTab("sla");
                   }}
@@ -408,7 +428,7 @@ export function TeamsView({
                   teamRoles={teamRoles}
                   onCancel={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }}
                   onSave={async (settings) => {
-                    await onSaveOrgSettings({ orgId: org.id, priorities: normalizePriorityRows(orgSetting?.priorities), urgencies: orgSetting?.urgencies || DEFAULT_URGENCIES, ...settings });
+                    await onSaveOrgSettings(mergeOrgSetting(orgSetting, { orgId: org.id, ...settings }));
                     setSettingsOrgOpen(false);
                     setSettingsTab("sla");
                   }}
@@ -417,39 +437,31 @@ export function TeamsView({
               )}
 
               {settingsTab === "orgroles" && (
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Organization Roles</div>
-                  <div style={{ fontSize: 12, color: t.text3, marginBottom: 16, lineHeight: 1.6 }}>
-                    Create custom organization-level roles that can be assigned to members. These roles appear alongside team roles in the permissions system.
-                  </div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {[
-                      { name: "Org Admin", desc: "Full organization access including billing and member management", color: t.redBg },
-                      { name: "Org Member", desc: "Standard member access across all teams", color: t.accentBg },
-                      { name: "Org Viewer", desc: "Read-only access to organization data", color: t.surface2 },
-                    ].map((role) => (
-                      <div key={role.name} style={{ background: role.color, border: `1px solid ${t.border}`, borderRadius: 8, padding: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                        <div>
-                          <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>{role.name}</div>
-                          <div style={{ fontSize: 11, color: t.text3, marginTop: 4 }}>{role.desc}</div>
-                        </div>
-                        <Btn variant="secondary" size="sm" onClick={() => {}}>
-                          <I name="edit" size={12} /> Edit
-                        </Btn>
-                      </div>
-                    ))}
-                  </div>
-                  <Btn variant="primary" full style={{ marginTop: 12 }}>
-                    <I name="plus" size={12} /> Add Custom Role
-                  </Btn>
-                </div>
+                <OrgRolesTab
+                  orgSetting={orgSetting}
+                  onSave={async (orgRoles) => {
+                    await onSaveOrgSettings(mergeOrgSetting(orgSetting, { orgId: org.id, orgRoles }));
+                  }}
+                />
               )}
 
               {settingsTab === "categories" && (
                 <CategoriesForm
                   defaultCategories={orgSetting?.categories || []}
                   onSave={async (settings) => {
-                    await onSaveOrgSettings({ orgId: org.id, priorities: normalizePriorityRows(orgSetting?.priorities), urgencies: orgSetting?.urgencies || DEFAULT_URGENCIES, ...settings });
+                    await onSaveOrgSettings(mergeOrgSetting(orgSetting, { orgId: org.id, ...settings }));
+                    setSettingsOrgOpen(false);
+                    setSettingsTab("sla");
+                  }}
+                  onCancel={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }}
+                />
+              )}
+
+              {settingsTab === "ticket_types" && (
+                <TicketTypesForm
+                  defaultTypes={orgSetting?.ticketTypes?.length ? orgSetting.ticketTypes : DEFAULT_TICKET_TYPES}
+                  onSave={async (ticketTypes) => {
+                    await onSaveOrgSettings(mergeOrgSetting(orgSetting, { orgId: org.id, ticketTypes }));
                     setSettingsOrgOpen(false);
                     setSettingsTab("sla");
                   }}
@@ -547,78 +559,11 @@ export function TeamsView({
               )}
 
               {settingsTab === "invitations" && (
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Member Invitations</div>
-                  <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                    <div style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 12 }}>
-                      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
-                        <Input placeholder="email@example.com" style={{ flex: 1, padding: "8px 10px", fontSize: 12 }} />
-                        <Btn variant="primary" size="sm">Send Invite</Btn>
-                      </div>
-                      <div style={{ fontSize: 11, color: t.text3 }}>
-                        Invited members will receive an email with a link to join. They can create an account or sign in with an existing account.
-                      </div>
-                    </div>
-
-                    <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>Pending & Accepted Invitations</div>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                      {[
-                        { email: "pending@company.com", status: "Pending", sentAt: "Today 3:45 PM" },
-                        { email: "accepted@company.com", status: "Accepted", sentAt: "Yesterday", joinedAt: "Today 2:15 PM" },
-                      ].map((inv, idx) => (
-                        <div key={idx} style={{ display: "flex", justifyContent: "space-between", padding: 10, border: `1px solid ${t.border}`, borderRadius: 8, alignItems: "center" }}>
-                          <div>
-                            <div style={{ fontSize: 12, fontWeight: 600, color: t.text }}>{inv.email}</div>
-                            <div style={{ fontSize: 11, color: t.text3 }}>
-                              {inv.status === "Accepted" ? `Joined ${inv.joinedAt}` : `Sent ${inv.sentAt}`}
-                            </div>
-                          </div>
-                          <Badge style={{ background: inv.status === "Accepted" ? t.greenBg : t.yellowBg, color: inv.status === "Accepted" ? t.greenText : t.yellowText, fontSize: 10, padding: "2px 6px" }}>
-                            {inv.status}
-                          </Badge>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                </div>
+                <InvitationsTab orgId={org.id} teams={teams.filter((tm) => tm.orgId === org.id)} />
               )}
 
               {settingsTab === "apikeys" && (
-                <div>
-                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>API Keys</div>
-                  <div style={{ fontSize: 12, color: t.text3, marginBottom: 16, lineHeight: 1.6 }}>
-                    Create API keys for programmatic access to your organization. Keys have full organization permissions.
-                  </div>
-                  <Btn variant="primary" full style={{ marginBottom: 16 }}>
-                    <I name="plus" size={12} /> Generate New Key
-                  </Btn>
-                  
-                  <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-                    {[
-                      { name: "Billing Integration", created: "May 15, 2026", lastUsed: "Today 2:30 PM", status: "Active" },
-                      { name: "Mobile App", created: "March 22, 2026", lastUsed: "5 days ago", status: "Active" },
-                    ].map((key, idx) => (
-                      <div key={idx} style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 12 }}>
-                        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 8 }}>
-                          <div>
-                            <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>{key.name}</div>
-                            <div style={{ fontSize: 11, color: t.text3, marginTop: 4 }}>
-                              Created {key.created} • Last used {key.lastUsed}
-                            </div>
-                          </div>
-                          <div style={{ display: "flex", gap: 8 }}>
-                            <Btn variant="secondary" size="sm" onClick={() => navigator.clipboard.writeText("sk_live_" + Math.random().toString(36).slice(2))}>
-                              <I name="copy" size={12} /> Copy
-                            </Btn>
-                            <Btn variant="danger" size="sm">
-                              <I name="trash" size={12} /> Revoke
-                            </Btn>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                </div>
+                <ApiKeysTab orgId={org.id} currentUserId={users.find((u) => u.orgId === org.id)?.id} />
               )}
             </div>
           </div>
@@ -949,8 +894,9 @@ function PermissionsForm({ orgSetting, teamRoles, onSave, onCancel }) {
 
   const roleOptions = useMemo(() => {
     const custom = (teamRoles || []).map((r) => r.name).filter(Boolean);
-    return Array.from(new Set([...FALLBACK_ROLES, ...custom]));
-  }, [teamRoles]);
+    const orgCustom = (orgSetting?.orgRoles || []).map((r) => r.name).filter(Boolean);
+    return Array.from(new Set([...FALLBACK_ROLES, ...custom, ...orgCustom]));
+  }, [teamRoles, orgSetting?.orgRoles]);
 
   // Seed with saved permissions; fall back to defaults when empty
   const [rolePermissions, setRolePermissions] = useState(() => {
@@ -1465,6 +1411,385 @@ function TemplateEditor({ orgId, teamId, template, onClose, onCreate, onUpdate }
         </div>
       </div>
     </Modal>
+  );
+}
+
+function TicketTypesForm({ defaultTypes, onSave, onCancel }) {
+  const t = useTokens();
+  const [types, setTypes] = useState(() => (defaultTypes || DEFAULT_TICKET_TYPES).map((tt) => ({ ...tt })));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const update = (i, field, value) =>
+    setTypes((rows) => rows.map((row, idx) => idx === i ? { ...row, [field]: value } : row));
+
+  const remove = (i) => setTypes((rows) => rows.filter((_, idx) => idx !== i));
+
+  const add = () => setTypes((rows) => [...rows, { name: "", prefix: "", color: "#718096" }]);
+
+  const submit = async () => {
+    const next = types.map((tt) => ({
+      name: String(tt.name || "").trim(),
+      prefix: String(tt.prefix || "").trim().toUpperCase(),
+      color: String(tt.color || "#718096").trim(),
+    }));
+    const invalid = next.find((tt) => !tt.name || !tt.prefix);
+    if (invalid) { setError("Every type needs a name and a prefix."); return; }
+    const prefixes = next.map((tt) => tt.prefix);
+    if (new Set(prefixes).size !== prefixes.length) { setError("Prefixes must be unique."); return; }
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(next);
+    } catch (err) {
+      setError(err?.message || "Failed to save ticket types.");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ fontSize: 12, color: t.text3, lineHeight: 1.5 }}>
+        Define the ticket types available in your organisation. Each type needs a unique prefix used for ticket numbering (e.g. INC, REQ).
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 80px auto", gap: 6, alignItems: "center" }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.08em" }}>Name</div>
+        <div style={{ fontSize: 10, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.08em" }}>Prefix</div>
+        <div style={{ fontSize: 10, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.08em" }}>Color</div>
+        <div />
+        {types.map((tt, i) => (
+          <>
+            <Input key={`name-${i}`} value={tt.name} onChange={(e) => update(i, "name", e.target.value)} placeholder="e.g. Incident" />
+            <Input key={`prefix-${i}`} value={tt.prefix} onChange={(e) => update(i, "prefix", e.target.value)} placeholder="INC" style={{ textTransform: "uppercase" }} />
+            <input
+              key={`color-${i}`}
+              type="color"
+              value={tt.color || "#718096"}
+              onChange={(e) => update(i, "color", e.target.value)}
+              style={{ width: "100%", height: 38, border: `1px solid ${t.border}`, borderRadius: 9, cursor: "pointer", padding: 2, background: t.surface2 }}
+            />
+            <Btn key={`del-${i}`} variant="secondary" size="sm" onClick={() => remove(i)} aria-label="Remove type">
+              <I name="trash" size={12} />
+            </Btn>
+          </>
+        ))}
+      </div>
+      <div>
+        <Btn variant="secondary" size="sm" onClick={add}><I name="plus" size={12} /> Add type</Btn>
+      </div>
+      {error && <div style={{ fontSize: 12, color: "#dc2626" }}>{error}</div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
+        <Btn variant="primary" onClick={submit} disabled={saving}>{saving ? "Saving…" : "Save Types"}</Btn>
+      </div>
+    </div>
+  );
+}
+
+const BUILTIN_ROLES = [
+  { name: "Admin",           color: "#e53e3e", description: "Full access — can manage all org settings, members, and tickets." },
+  { name: "Agent",           color: "#3182ce", description: "Can create, assign, and resolve tickets. Cannot manage org settings." },
+  { name: "Catalog Manager", color: "#805ad5", description: "Can create and manage catalog items and approvals." },
+  { name: "End User",        color: "#38a169", description: "Can create tickets and view the service catalog." },
+];
+
+function OrgRolesTab({ orgSetting, onSave }) {
+  const t = useTokens();
+  const [customRoles, setCustomRoles] = useState(() => (orgSetting?.orgRoles || []).map((r) => ({ ...r })));
+  const [addOpen, setAddOpen] = useState(false);
+  const [editIdx, setEditIdx] = useState(null);
+  const [form, setForm] = useState({ name: "", color: "#3182ce", description: "" });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const openAdd = () => { setForm({ name: "", color: "#3182ce", description: "" }); setEditIdx(null); setErr(""); setAddOpen(true); };
+  const openEdit = (idx) => { setForm({ ...customRoles[idx] }); setEditIdx(idx); setErr(""); setAddOpen(true); };
+
+  const saveForm = async () => {
+    const name = form.name.trim();
+    if (!name) { setErr("Role name is required."); return; }
+    const allNames = [...BUILTIN_ROLES.map((r) => r.name.toLowerCase()), ...customRoles.map((r, i) => i === editIdx ? null : r.name.toLowerCase()).filter(Boolean)];
+    if (allNames.includes(name.toLowerCase())) { setErr("A role with that name already exists."); return; }
+    const next = editIdx !== null
+      ? customRoles.map((r, i) => i === editIdx ? { ...form, name } : r)
+      : [...customRoles, { ...form, name }];
+    setSaving(true);
+    try { await onSave(next); setCustomRoles(next); setAddOpen(false); } catch { setErr("Failed to save."); } finally { setSaving(false); }
+  };
+
+  const removeRole = async (idx) => {
+    const next = customRoles.filter((_, i) => i !== idx);
+    setSaving(true);
+    try { await onSave(next); setCustomRoles(next); } finally { setSaving(false); }
+  };
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Organization Roles</div>
+      <div style={{ fontSize: 12, color: t.text3, marginBottom: 16, lineHeight: 1.6 }}>
+        Built-in roles cannot be removed. Custom roles appear in the Permissions tab for permission assignment.
+      </div>
+
+      <div style={{ fontSize: 11, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>Built-in</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+        {BUILTIN_ROLES.map((role) => (
+          <div key={role.name} style={{ display: "flex", alignItems: "center", gap: 10, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "10px 12px" }}>
+            <div style={{ width: 10, height: 10, borderRadius: "50%", background: role.color, flexShrink: 0 }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>{role.name}</div>
+              <div style={{ fontSize: 11, color: t.text3, marginTop: 2 }}>{role.description}</div>
+            </div>
+            <Badge style={{ fontSize: 10, padding: "2px 6px", background: t.surface, color: t.text3 }}>Built-in</Badge>
+          </div>
+        ))}
+      </div>
+
+      {customRoles.length > 0 && (
+        <>
+          <div style={{ fontSize: 11, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>Custom</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+            {customRoles.map((role, idx) => (
+              <div key={idx} style={{ display: "flex", alignItems: "center", gap: 10, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "10px 12px" }}>
+                <div style={{ width: 10, height: 10, borderRadius: "50%", background: role.color || "#718096", flexShrink: 0 }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>{role.name}</div>
+                  {role.description && <div style={{ fontSize: 11, color: t.text3, marginTop: 2 }}>{role.description}</div>}
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <Btn variant="secondary" size="sm" onClick={() => openEdit(idx)}><I name="edit" size={11} /> Edit</Btn>
+                  <Btn variant="danger" size="sm" disabled={saving} onClick={() => removeRole(idx)}><I name="trash" size={11} /></Btn>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {!addOpen && (
+        <Btn variant="primary" size="sm" onClick={openAdd}><I name="plus" size={12} /> Add Custom Role</Btn>
+      )}
+
+      {addOpen && (
+        <div style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 10 }}>{editIdx !== null ? "Edit Role" : "New Custom Role"}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div>
+              <Label>Role Name</Label>
+              <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Security Analyst" />
+            </div>
+            <div>
+              <Label>Description</Label>
+              <Input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="What can this role do?" />
+            </div>
+            <div>
+              <Label>Colour</Label>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="color" value={form.color || "#3182ce"} onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
+                  style={{ width: 36, height: 28, border: "none", background: "none", cursor: "pointer", padding: 0 }} />
+                <span style={{ fontSize: 12, color: t.text3, fontFamily: "monospace" }}>{form.color}</span>
+              </div>
+            </div>
+          </div>
+          {err && <div style={{ fontSize: 11, color: t.red, marginTop: 8 }}>{err}</div>}
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <Btn variant="primary" size="sm" disabled={saving} onClick={saveForm}>{saving ? "Saving…" : "Save Role"}</Btn>
+            <Btn variant="secondary" size="sm" onClick={() => setAddOpen(false)}>Cancel</Btn>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InvitationsTab({ orgId, teams }) {
+  const t = useTokens();
+  const [invitations, setInvitations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("End User");
+  const [teamId, setTeamId] = useState("");
+  const [sendErr, setSendErr] = useState("");
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    fetchOrgInvitationsForOrg(orgId).then((data) => { if (mounted) { setInvitations(data); setLoading(false); } });
+    return () => { mounted = false; };
+  }, [orgId]);
+
+  const handleSend = async () => {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) { setSendErr("Enter a valid email address."); return; }
+    setSendErr(""); setSending(true);
+    try {
+      const inv = await sendOrgInvitation(orgId, trimmed, role, teamId || null);
+      setInvitations((prev) => [inv, ...prev]);
+      setEmail(""); setRole("End User"); setTeamId("");
+    } catch (e) { setSendErr(e.message || "Failed to send."); } finally { setSending(false); }
+  };
+
+  const handleCancel = async (id) => {
+    await cancelOrgInvitation(id);
+    setInvitations((prev) => prev.map((i) => i.id === id ? { ...i, status: "Cancelled" } : i));
+  };
+
+  const statusStyle = (status) => ({
+    Pending:   { bg: t.yellowBg,  text: t.yellowText },
+    Accepted:  { bg: t.greenBg,   text: t.greenText  },
+    Declined:  { bg: t.redBg,     text: t.red        },
+    Cancelled: { bg: t.surface2,  text: t.text3      },
+  }[status] || { bg: t.surface2, text: t.text3 });
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Member Invitations</div>
+      <div style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 12, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+          <Input value={email} onChange={(e) => { setEmail(e.target.value); setSendErr(""); }}
+            placeholder="email@example.com" style={{ flex: "1 1 180px", padding: "7px 10px", fontSize: 12 }} />
+          <Sel value={role} onChange={(e) => setRole(e.target.value)} style={{ fontSize: 12, padding: "7px 10px" }}>
+            {["Admin", "Agent", "Catalog Manager", "End User"].map((r) => <option key={r}>{r}</option>)}
+          </Sel>
+          {teams.length > 0 && (
+            <Sel value={teamId} onChange={(e) => setTeamId(e.target.value)} style={{ fontSize: 12, padding: "7px 10px" }}>
+              <option value="">No specific team</option>
+              {teams.map((tm) => <option key={tm.id} value={tm.id}>{tm.name}</option>)}
+            </Sel>
+          )}
+          <Btn variant="primary" size="sm" disabled={sending || !email.trim()} onClick={handleSend}>
+            {sending ? "Sending…" : "Send Invite"}
+          </Btn>
+        </div>
+        {sendErr && <div style={{ fontSize: 11, color: t.red }}>{sendErr}</div>}
+        <div style={{ fontSize: 11, color: t.text3 }}>
+          Invited members will see the invitation in their notification panel when they log in.
+        </div>
+      </div>
+
+      <div style={{ fontSize: 12, fontWeight: 700, color: t.text, marginBottom: 8 }}>All Invitations</div>
+      {loading ? (
+        <div style={{ fontSize: 12, color: t.text3 }}>Loading…</div>
+      ) : invitations.length === 0 ? (
+        <div style={{ fontSize: 12, color: t.text3 }}>No invitations sent yet.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {invitations.map((inv) => {
+            const st = statusStyle(inv.status);
+            return (
+              <div key={inv.id} style={{ display: "flex", justifyContent: "space-between", padding: "9px 12px", border: `1px solid ${t.border}`, borderRadius: 8, alignItems: "center", gap: 10 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{inv.email}</div>
+                  <div style={{ fontSize: 11, color: t.text3, marginTop: 2 }}>
+                    {inv.role} • Sent {fmtDate(inv.sentAt)}
+                    {inv.acceptedAt ? ` • Joined ${fmtDate(inv.acceptedAt)}` : ""}
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                  <Badge style={{ background: st.bg, color: st.text, fontSize: 10, padding: "2px 7px" }}>{inv.status}</Badge>
+                  {inv.status === "Pending" && (
+                    <Btn variant="danger" size="sm" onClick={() => handleCancel(inv.id)}>Cancel</Btn>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ApiKeysTab({ orgId, currentUserId }) {
+  const t = useTokens();
+  const [keys, setKeys] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createErr, setCreateErr] = useState("");
+  const [justCreated, setJustCreated] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    fetchApiKeys(orgId).then((data) => { if (mounted) { setKeys(data); setLoading(false); } });
+    return () => { mounted = false; };
+  }, [orgId]);
+
+  const handleCreate = async () => {
+    if (!newName.trim()) { setCreateErr("Key name is required."); return; }
+    setCreateErr(""); setCreating(true);
+    try {
+      const created = await createApiKey(orgId, newName.trim(), currentUserId);
+      setKeys((prev) => [{ id: created.id, orgId: created.orgId, name: created.name, keyPrefix: created.keyPrefix, createdAt: created.createdAt, isActive: true }, ...prev]);
+      setJustCreated(created);
+      setNewName("");
+    } catch (e) { setCreateErr(e.message || "Failed to create key."); } finally { setCreating(false); }
+  };
+
+  const handleRevoke = async (id) => {
+    await revokeApiKey(id);
+    setKeys((prev) => prev.filter((k) => k.id !== id));
+    if (justCreated?.id === id) setJustCreated(null);
+  };
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>API Keys</div>
+      <div style={{ fontSize: 12, color: t.text3, marginBottom: 14, lineHeight: 1.6 }}>
+        API keys allow programmatic access to your organization's data.
+      </div>
+
+      <div style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 12, marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Generate New Key</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Input value={newName} onChange={(e) => { setNewName(e.target.value); setCreateErr(""); }}
+            placeholder="Key name, e.g. Monitoring Integration"
+            style={{ flex: 1, padding: "7px 10px", fontSize: 12 }} />
+          <Btn variant="primary" size="sm" disabled={creating || !newName.trim()} onClick={handleCreate}>
+            {creating ? "Creating…" : "Generate"}
+          </Btn>
+        </div>
+        {createErr && <div style={{ fontSize: 11, color: t.red, marginTop: 6 }}>{createErr}</div>}
+      </div>
+
+      {justCreated && (
+        <div style={{ background: t.greenBg, border: `1px solid ${t.greenText}44`, borderRadius: 8, padding: 12, marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: t.greenText, marginBottom: 6 }}>Key created — copy it now, it won't be shown again</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <code style={{ flex: 1, fontSize: 11, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 4, padding: "6px 8px", color: t.text, wordBreak: "break-all", fontFamily: "monospace" }}>
+              {justCreated.fullKey}
+            </code>
+            <Btn variant="secondary" size="sm" onClick={() => navigator.clipboard.writeText(justCreated.fullKey)}>
+              <I name="copy" size={12} /> Copy
+            </Btn>
+          </div>
+        </div>
+      )}
+
+      <div style={{ fontSize: 12, fontWeight: 700, color: t.text, marginBottom: 8 }}>Active Keys</div>
+      {loading ? (
+        <div style={{ fontSize: 12, color: t.text3 }}>Loading…</div>
+      ) : keys.length === 0 ? (
+        <div style={{ fontSize: 12, color: t.text3 }}>No API keys yet.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {keys.map((key) => (
+            <div key={key.id} style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ color: t.text3, flexShrink: 0, display: "flex" }}><I name="lock" size={14} /></span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>{key.name}</div>
+                <div style={{ fontSize: 11, color: t.text3, marginTop: 2, fontFamily: "monospace" }}>
+                  {key.keyPrefix} • Created {fmtDate(key.createdAt)}
+                  {key.lastUsedAt ? ` • Last used ${fmtDate(key.lastUsedAt)}` : " • Never used"}
+                </div>
+              </div>
+              <Btn variant="danger" size="sm" onClick={() => handleRevoke(key.id)}><I name="trash" size={11} /> Revoke</Btn>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

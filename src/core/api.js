@@ -127,6 +127,7 @@ const toComment = (row) => ({
 
 const toTicket = (row, commentsByTicketId = {}) => ({
   id: row.id,
+  number: row.number || row.id,
   title: row.title,
   description: row.description || "",
   type: row.type,
@@ -146,6 +147,7 @@ const toTicket = (row, commentsByTicketId = {}) => ({
   dueDate: row.due_date ? Number(row.due_date) : null,
   estimateHours: row.estimate_hours != null ? Number(row.estimate_hours) : null,
   spentHours: row.spent_hours != null ? Number(row.spent_hours) : 0,
+  customFields: (row.custom_fields && typeof row.custom_fields === "object" && !Array.isArray(row.custom_fields)) ? row.custom_fields : {},
   comments: commentsByTicketId[row.id] || [],
 });
 
@@ -176,6 +178,8 @@ const toOrgSettings = (row) => {
     rolePermissions: row?.role_permissions || {},
     requireApprovals: Boolean(row?.require_approvals),
     approvalMode: row?.approval_mode || "all",
+    ticketTypes: Array.isArray(row?.ticket_types) && row.ticket_types.length ? row.ticket_types : [],
+    orgRoles: Array.isArray(row?.org_roles) ? row.org_roles : [],
     updatedAt: Number(row?.updated_at || 0),
   };
 };
@@ -253,6 +257,7 @@ const toCatalogItem = (row) => ({
   approverMode: row.approver_mode || "role", // 'role' | 'user' | 'team'
   approverTeamId: row.approver_team_id || "",
   active: row.active !== false,
+  requestFields: Array.isArray(row.request_fields) ? row.request_fields : [],
   createdAt: Number(row.created_at),
   updatedAt: Number(row.updated_at),
 });
@@ -275,6 +280,7 @@ export async function createCatalogItem(payload) {
     approver_mode: payload.approverMode || "role",
     approver_team_id: payload.approverTeamId || null,
     active: payload.active !== false,
+    request_fields: Array.isArray(payload.requestFields) ? payload.requestFields : [],
     created_at: Date.now(),
     updated_at: Date.now(),
   };
@@ -296,6 +302,7 @@ export async function updateCatalogItem(itemId, payload) {
   if ("approverMode" in payload) patch.approver_mode = payload.approverMode || "role";
   if ("approverTeamId" in payload) patch.approver_team_id = payload.approverTeamId || null;
   if ("active" in payload) patch.active = !!payload.active;
+  if ("requestFields" in payload) patch.request_fields = Array.isArray(payload.requestFields) ? payload.requestFields : [];
 
   if (!Object.keys(patch).length) {
     const { data, error } = await supabase.from(TABLES.catalogItems).select("*").eq("id", itemId).single();
@@ -334,17 +341,18 @@ const fail = (error, fallback) => {
   }
 };
 
-// Returns the next sequential ticket ID for an org, e.g. INC-0042.
-// Production: atomic DB increment via RPC.
-async function nextTicketId(type, orgId) {
-  const prefix = TICKET_PREFIX[type] || "TKT";
+// Returns the next sequential ticket number for an org, e.g. INC-0042.
+// resolvedPrefix is passed explicitly from the ticket type definition so custom
+// types don't need entries in TICKET_PREFIX.
+async function nextTicketId(type, orgId, prefix) {
+  const resolvedPrefix = prefix || TICKET_PREFIX[type] || "TKT";
 
   const { data, error } = await supabase.rpc("next_ticket_seq", {
     p_org_id: orgId,
-    p_prefix: prefix,
+    p_prefix: resolvedPrefix,
   });
   if (error) throw new Error(error.message);
-  return `${prefix}-${String(data).padStart(4, "0")}`;
+  return `${resolvedPrefix}-${String(data).padStart(4, "0")}`;
 }
 
 const getExistingUserByEmail = async (email) => {
@@ -623,7 +631,8 @@ export async function fetchAppData(scope = {}) {
 
 export async function createTicket(payload) {
   const row = {
-    id: await nextTicketId(payload.type, payload.orgId),
+    id: `tkt_${uid()}`,
+    number: await nextTicketId(payload.type, payload.orgId, payload.prefix),
     title: payload.title,
     description: payload.description || "",
     type: payload.type,
@@ -642,6 +651,7 @@ export async function createTicket(payload) {
     estimate_hours: payload.estimateHours != null && payload.estimateHours !== "" ? Number(payload.estimateHours) : null,
     spent_hours: payload.spentHours != null && payload.spentHours !== "" ? Number(payload.spentHours) : 0,
     resolved_at: payload.resolvedAt == null ? null : Number(payload.resolvedAt),
+    custom_fields: (payload.customFields && typeof payload.customFields === "object") ? payload.customFields : {},
   };
 
   const { data, error } = await supabase
@@ -998,6 +1008,144 @@ export async function declineOrgInvitation(invitationId) {
   return { declined: true };
 }
 
+export async function joinOrgByCode(code, userEmail) {
+  const cleaned = String(code || "").trim().toUpperCase().replace(/^JOIN-?/i, "").replace(/-/g, "");
+  if (cleaned.length !== 8) throw new Error("Invalid join code — expected format: JOIN-XXXXXXXX");
+
+  // UUID first segment is always 8 hex chars before the first dash
+  const { data: orgs, error } = await supabase
+    .from(TABLES.orgs)
+    .select("id, name")
+    .ilike("id", `${cleaned.toLowerCase()}%`);
+  if (error) throw new Error("Failed to look up join code.");
+  if (!orgs?.length) throw new Error("No organization found with that join code.");
+  const org = orgs[0];
+
+  const email = normalizeEmail(userEmail);
+
+  // Check for existing invitation
+  const { data: existing } = await supabase
+    .from(TABLES.orgInvitations)
+    .select("id, status")
+    .eq("org_id", org.id)
+    .ilike("email", email)
+    .maybeSingle();
+
+  if (existing?.status === "Accepted") {
+    throw new Error("You're already a member of this organization.");
+  }
+
+  if (existing) {
+    const { error: updErr } = await supabase
+      .from(TABLES.orgInvitations)
+      .update({ status: "Accepted" })
+      .eq("id", existing.id);
+    if (updErr) throw new Error("Failed to join organization.");
+  } else {
+    const { error: insErr } = await supabase
+      .from(TABLES.orgInvitations)
+      .insert({ id: `inv_${uid()}`, org_id: org.id, email, role: "End User", status: "Accepted", sent_at: Date.now() });
+    if (insErr) throw new Error("Failed to join organization.");
+  }
+
+  return { orgId: org.id, orgName: org.name };
+}
+
+export async function fetchOrgInvitationsForOrg(orgId) {
+  const { data, error } = await supabase
+    .from(TABLES.orgInvitations)
+    .select("*")
+    .eq("org_id", orgId)
+    .order("sent_at", { ascending: false });
+  if (error) return [];
+  return (data || []).map((row) => ({
+    id: row.id,
+    orgId: row.org_id,
+    teamId: row.team_id,
+    email: row.email,
+    role: row.role,
+    status: row.status,
+    sentAt: row.sent_at,
+    acceptedAt: row.accepted_at,
+  }));
+}
+
+export async function sendOrgInvitation(orgId, email, role = "End User", teamId = null) {
+  const row = {
+    id: `inv_${uid()}`,
+    org_id: orgId,
+    team_id: teamId || null,
+    email: normalizeEmail(email),
+    role,
+    status: "Pending",
+    sent_at: Date.now(),
+    accepted_at: null,
+  };
+  const { data, error } = await supabase.from(TABLES.orgInvitations).insert(row).select("*").single();
+  if (error) throw new Error("Failed to send invitation.");
+  return { id: data.id, orgId: data.org_id, email: data.email, role: data.role, status: data.status, sentAt: data.sent_at };
+}
+
+export async function cancelOrgInvitation(invitationId) {
+  const { error } = await supabase
+    .from(TABLES.orgInvitations)
+    .update({ status: "Cancelled" })
+    .eq("id", invitationId);
+  if (error) throw new Error("Failed to cancel invitation.");
+  return { cancelled: true };
+}
+
+export async function fetchApiKeys(orgId) {
+  const { data, error } = await supabase
+    .from("api_keys")
+    .select("id, org_id, name, key_prefix, created_by, created_at, last_used_at, is_active")
+    .eq("org_id", orgId)
+    .order("created_at", { ascending: false });
+  if (error) return [];
+  return (data || []).map((row) => ({
+    id: row.id,
+    orgId: row.org_id,
+    name: row.name,
+    keyPrefix: row.key_prefix,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+    isActive: row.is_active,
+  }));
+}
+
+export async function createApiKey(orgId, name, createdBy) {
+  const rawKey = `enk_${uid()}${uid()}`.slice(0, 40);
+  const row = {
+    id: `key_${uid()}`,
+    org_id: orgId,
+    name,
+    key_value: rawKey,
+    key_prefix: `${rawKey.slice(0, 12)}...`,
+    created_by: createdBy || null,
+    created_at: Date.now(),
+    last_used_at: null,
+    is_active: true,
+  };
+  const { data, error } = await supabase.from("api_keys").insert(row).select("*").single();
+  if (error) throw new Error("Failed to create API key.");
+  return {
+    id: data.id,
+    orgId: data.org_id,
+    name: data.name,
+    keyPrefix: data.key_prefix,
+    fullKey: rawKey,
+    createdAt: data.created_at,
+    isActive: data.is_active,
+  };
+}
+
+export async function revokeApiKey(keyId) {
+  const { error } = await supabase.from("api_keys").delete().eq("id", keyId);
+  if (error) throw new Error("Failed to revoke API key.");
+  return { revoked: true };
+}
+
 // ── Custom Reports ────────────────────────────────────────────────────────────
 
 export async function fetchCustomReports(orgId) {
@@ -1067,6 +1215,8 @@ export async function upsertOrgSettings(payload) {
     role_permissions: payload.rolePermissions || {},
     require_approvals: !!payload.requireApprovals,
     approval_mode: payload.approvalMode || "all",
+    ticket_types: Array.isArray(payload.ticketTypes) ? payload.ticketTypes : [],
+    org_roles: Array.isArray(payload.orgRoles) ? payload.orgRoles : [],
     updated_at: Date.now(),
   };
 
@@ -1341,3 +1491,24 @@ export function findSLAAtRisk(tickets, priorityCatalog = {}) {
     })
     .filter(({ slaStatus }) => slaStatus.isRisk && !slaStatus.isBreached);
 }
+
+// Row mappers exposed for use in realtime subscription handlers.
+// These transform raw Supabase postgres_changes payloads (snake_case DB rows)
+// into the same camelCase objects that fetchAppData produces.
+export const rowMappers = {
+  ticket:         (row) => toTicket(row, {}),
+  comment:        toComment,
+  user:           toUser,
+  org:            toOrg,
+  team:           toTeam,
+  article:        toArticle,
+  orgSettings:    toOrgSettings,
+  teamSettings:   toTeamSettings,
+  teamRole:       toTeamRole,
+  postReview:     toPostIncidentReview,
+  closingTemplate: toClosingTemplate,
+  pirFieldConfig: toPirFieldConfig,
+  catalogItem:    toCatalogItem,
+  approval:       toApproval,
+};
+

@@ -59,7 +59,7 @@ function persistColumnMap(orgId, teamId, map) {
 
 // ── KanbanCard ────────────────────────────────────────────────────────────────
 
-function KanbanCard({ ticket, users, catalog, cardFields, onOpenTicket, onDragStart, onDragEnd, isDragging, isChild, isParent, isCollapsed, onToggleChildren }) {
+function KanbanCard({ ticket, users, catalog, cardFields, onOpenTicket, onDragStart, onDragEnd, isDragging, isChild, isParent, isCollapsed, onToggleChildren, ticketTypes = [] }) {
   const t = useTokens();
   const assignee = users.find((u) => u.id === ticket.assignee);
   const cfg = findPriorityCfg(catalog, ticket.priority);
@@ -102,13 +102,13 @@ function KanbanCard({ ticket, users, catalog, cardFields, onOpenTicket, onDragSt
       </div>
 
       <div style={{ fontSize: 10, color: t.text3, fontFamily: t.mono, marginBottom: cardFields.length > 0 ? 8 : 0 }}>
-        {ticket.id}
+        {ticket.number}
       </div>
 
       {(cardFields.includes("priority") || cardFields.includes("type") || cardFields.includes("status") || cardFields.includes("assignee")) && (
         <div style={{ display: "flex", alignItems: "center", gap: 5, flexWrap: "wrap", marginBottom: cardFields.includes("sla") ? 8 : 0 }}>
           {cardFields.includes("priority") && <PriorityBadge priority={ticket.priority} catalog={catalog} />}
-          {cardFields.includes("type")     && <TypeBadge     type={ticket.type} />}
+          {cardFields.includes("type")     && <TypeBadge     type={ticket.type} ticketTypes={ticketTypes} />}
           {cardFields.includes("status")   && <StatusBadge   status={ticket.status} />}
           {cardFields.includes("assignee") && assignee && (
             <div style={{ display: "flex", alignItems: "center", gap: 4, marginLeft: "auto" }}>
@@ -127,7 +127,7 @@ function KanbanCard({ ticket, users, catalog, cardFields, onOpenTicket, onDragSt
 
 // ── KanbanColumn ──────────────────────────────────────────────────────────────
 
-function KanbanColumn({ col, tickets, users, catalog, cardFields, isOver, onOpenTicket, onDragStart, onDragEnd, draggingId, onDragOver, onDragLeave, onDrop, onUpdateColumn }) {
+function KanbanColumn({ col, tickets, users, catalog, cardFields, isOver, onOpenTicket, onDragStart, onDragEnd, draggingId, onDragOver, onDragLeave, onDrop, onUpdateColumn, ticketTypes = [] }) {
   const t = useTokens();
   const atWip = col.wipLimit !== null && tickets.length >= col.wipLimit;
   const overWip = col.wipLimit !== null && tickets.length > col.wipLimit;
@@ -207,6 +207,7 @@ function KanbanColumn({ col, tickets, users, catalog, cardFields, isOver, onOpen
               onToggleChildren={toggleParent}
               onDragStart={(e) => { e.dataTransfer.setData("kanban_ticket", root.id); onDragStart(root.id); }}
               onDragEnd={onDragEnd}
+              ticketTypes={ticketTypes}
             />
 
             {childrenMap[root.id] && !collapsedParents.has(root.id) && (
@@ -222,6 +223,7 @@ function KanbanColumn({ col, tickets, users, catalog, cardFields, isOver, onOpen
                   isChild={true}
                   onDragStart={(e) => { e.dataTransfer.setData("kanban_ticket", child.id); onDragStart(child.id); }}
                   onDragEnd={onDragEnd}
+                  ticketTypes={ticketTypes}
                 />
               ))
             )}
@@ -245,7 +247,7 @@ function KanbanColumn({ col, tickets, users, catalog, cardFields, isOver, onOpen
 
 // ── KanbanView ────────────────────────────────────────────────────────────────
 
-export function KanbanView({ tickets, users, currentUser, priorityCatalog, onOpenTicket, onPatchTicket }) {
+export function KanbanView({ tickets, users, currentUser, priorityCatalog, onOpenTicket, onPatchTicket, ticketTypes = [] }) {
   const t = useTokens();
   const [board, setBoard] = useState(() => loadBoard(currentUser?.orgId, currentUser?.teamId));
   const [columnMap, setColumnMap] = useState(() => loadColumnMap(currentUser?.orgId, currentUser?.teamId));
@@ -279,14 +281,20 @@ export function KanbanView({ tickets, users, currentUser, priorityCatalog, onOpe
     return true;
   });
 
+  // Tickets explicitly parked in a blank (no-status) column must be excluded
+  // from status-mapped columns, otherwise they appear in both simultaneously.
+  const parkedInBlankCol = new Set(
+    board.columns
+      .filter((c) => c.statusMap.length === 0)
+      .flatMap((c) => columnMap[c.id] || [])
+  );
+
   const getColTickets = (col) => {
-    // If no statuses mapped, use column-specific ticket map
     if (col.statusMap.length === 0) {
       const ticketIds = columnMap[col.id] || [];
       return ticketIds.map((id) => tickets.find((t) => t.id === id)).filter(Boolean);
     }
-    // Otherwise filter by status
-    return boardTickets.filter((tk) => col.statusMap.includes(tk.status));
+    return boardTickets.filter((tk) => col.statusMap.includes(tk.status) && !parkedInBlankCol.has(tk.id));
   };
 
   const handleDrop = async (e, targetColId) => {
@@ -380,6 +388,7 @@ export function KanbanView({ tickets, users, currentUser, priorityCatalog, onOpe
             }}
             onDrop={(e) => handleDrop(e, col.id)}
             onUpdateColumn={updateColumn}
+            ticketTypes={ticketTypes}
           />
         ))}
 
