@@ -41,17 +41,17 @@ export function CommandPalette({ open, onClose, tickets, articles, setView, onOp
         ...tickets
           .filter((tk) => !["Resolved", "Closed"].includes(tk.status))
           .slice(0, 5)
-          .map((tk) => ({ type: "ticket", id: tk.id, label: tk.title, sub: `${tk.id} · ${tk.status} · ${tk.priority}`, ticket: tk })),
+          .map((tk) => ({ type: "ticket", id: tk.id, label: tk.title, sub: `${tk.number} · ${tk.status} · ${tk.priority}`, ticket: tk })),
       ];
     }
     const ticketResults = tickets
       .filter((tk) =>
         tk.title.toLowerCase().includes(q) ||
-        tk.id.toLowerCase().includes(q) ||
+        tk.number.toLowerCase().includes(q) ||
         (tk.description || "").toLowerCase().includes(q)
       )
       .slice(0, 7)
-      .map((tk) => ({ type: "ticket", id: tk.id, label: tk.title, sub: `${tk.id} · ${tk.status} · ${tk.priority}`, ticket: tk }));
+      .map((tk) => ({ type: "ticket", id: tk.id, label: tk.title, sub: `${tk.number} · ${tk.status} · ${tk.priority}`, ticket: tk }));
     const articleResults = articles
       .filter((a) => a.title.toLowerCase().includes(q) || a.category.toLowerCase().includes(q))
       .slice(0, 4)

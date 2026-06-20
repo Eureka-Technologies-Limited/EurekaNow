@@ -34,7 +34,7 @@
 
 import { useState, useEffect } from "react";
 import { ThemeProvider, useTokens } from "./core/hooks.js";
-import { loginWithEmailPassword, getUserFromSession } from "./core/api.js";
+import { loginWithEmailPassword, registerWithEmailPassword, getUserFromSession } from "./core/api.js";
 import { supabase } from "./core/supabase.js";
 import { ErrorBoundary } from "./ui/ErrorBoundary.jsx";
 import { LandingPage, LoginPage } from "./views/PublicPages.jsx";
@@ -132,6 +132,12 @@ function Root() {
     setPage("app");
   };
 
+  const handleSignup = async (payload) => {
+    const user = await registerWithEmailPassword(payload);
+    setCurrentUser(user);
+    setPage("app");
+  };
+
   const handleLogout = ()     => { setCurrentUser(null); setPage("landing"); };
 
   try {
@@ -163,8 +169,8 @@ function Root() {
             Loading…
           </div>
         )}
-        {authReady && page === "landing" && <LandingPage onLogin={() => setPage("login")} />}
-        {authReady && page === "login"   && <LoginPage   onLogin={handleLogin} onBack={() => setPage("landing")} />}
+        {authReady && page === "landing" && <LandingPage onSignIn={() => setPage("login")} />}
+        {authReady && page === "login"   && <LoginPage   onLogin={handleLogin} onSignUp={handleSignup} onBack={() => setPage("landing")} />}
         {authReady && page === "app"     && currentUser  && <AppShell currentUser={currentUser} onLogout={handleLogout} />}
       </div>
     );

@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
-import { PRIORITIES, DEFAULT_URGENCIES, TICKET_TYPES } from "../core/constants.js";
+import { PRIORITIES, DEFAULT_URGENCIES, DEFAULT_TICKET_TYPES } from "../core/constants.js";
 import { Btn, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
-import { getTicketTypes } from "../core/subscriptions.js";
+import { getTicketTypes, canFeature } from "../core/subscriptions.js";
 import { I } from "../core/icons.jsx";
 
-export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCreate, defaultType, priorityCatalog, urgencyLevels, orgSettings = [], teamSettings = [], allTickets = [], plan = "Free" }) {
+export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCreate, defaultType, priorityCatalog, urgencyLevels, orgSettings = [], teamSettings = [], allTickets = [], plan = "Free", ticketTypes = DEFAULT_TICKET_TYPES }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
 
@@ -76,7 +76,7 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
   const parentResults = parentQuery.length >= 1
     ? allTickets
         .filter((tk) =>
-          tk.id.toLowerCase().includes(parentQuery.toLowerCase()) ||
+          tk.number.toLowerCase().includes(parentQuery.toLowerCase()) ||
           tk.title.toLowerCase().includes(parentQuery.toLowerCase())
         )
         .slice(0, 6)
@@ -141,10 +141,12 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
 
     try {
       const dueDateMs = form.dueDate ? new Date(`${form.dueDate}T23:59:59`).getTime() : null;
+      const activeType = ticketTypes.find((tt) => tt.name === form.type);
       await onCreate({
         title: form.title.trim(),
         description: form.description.trim(),
         type: form.type,
+        prefix: activeType?.prefix,
         category: form.category,
         priority: form.priority,
         urgency: form.urgency,
@@ -180,24 +182,27 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
         <div>
           <Label>Ticket Type</Label>
           <div style={{ display: "grid", gridTemplateColumns: isMobile ? "repeat(2,1fr)" : "repeat(3,1fr)", gap: 7 }}>
-            {TICKET_TYPES.map((tp) => {
+            {ticketTypes.map((tt) => {
+              const name = tt.name;
+              const isBuiltin = DEFAULT_TICKET_TYPES.some((d) => d.name === name);
               const allowed = getTicketTypes(plan);
-              const locked = !allowed.includes(tp);
+              // Built-ins respect the per-plan allowed list; custom org types need Basic+
+              const locked = isBuiltin ? !allowed.includes(name) : !canFeature(plan, "allTicketTypes");
               return (
                 <button
-                  key={tp}
-                  onClick={() => !locked && set("type", tp)}
+                  key={name}
+                  onClick={() => !locked && set("type", name)}
                   title={locked ? "Requires Basic plan" : ""}
                   style={{
-                    border: `1.5px solid ${form.type === tp ? t.accent : locked ? t.border : t.border}`,
+                    border: `1.5px solid ${form.type === name ? t.accent : t.border}`,
                     borderRadius: 9, padding: "8px 6px",
-                    background: form.type === tp ? t.accentBg : locked ? t.surface3 : t.surface2,
+                    background: form.type === name ? t.accentBg : locked ? t.surface3 : t.surface2,
                     cursor: locked ? "not-allowed" : "pointer",
                     fontFamily: t.font, textAlign: "center", position: "relative", opacity: locked ? 0.55 : 1,
                   }}
                 >
-                  <div style={{ fontSize: 12, fontWeight: 700, color: form.type === tp ? t.accentText : t.text2 }}>
-                    {tp.split(" ")[0]}
+                  <div style={{ fontSize: 12, fontWeight: 700, color: form.type === name ? t.accentText : t.text2 }}>
+                    {name.split(" ")[0]}
                   </div>
                   {locked && (
                     <span style={{ position: "absolute", top: 4, right: 5, color: t.text3 }}>
@@ -208,7 +213,7 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
               );
             })}
           </div>
-          {getTicketTypes(plan).length < TICKET_TYPES.length && (
+          {getTicketTypes(plan).length < DEFAULT_TICKET_TYPES.length && ticketTypes.length <= DEFAULT_TICKET_TYPES.length && (
             <div style={{ fontSize: 11, color: t.text3, marginTop: 6 }}>
               <I name="lock" size={10} /> Change Requests, Problems &amp; Tasks require the <strong>Basic</strong> plan.
             </div>

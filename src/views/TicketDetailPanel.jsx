@@ -7,12 +7,12 @@
 import { useEffect, useState } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { PRIORITIES, STATUSES } from "../core/constants.js";
-import { fmtTs, slaForPriority, findPriorityCfg } from "../core/utils.js";
+import { fmtTs, slaForPriority, findPriorityCfg, canDo } from "../core/utils.js";
 import { Avatar, Btn, Card, Input, TypeBadge, SLABar, StatusBadge } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 import { canFeature } from "../core/subscriptions.js";
 
-export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch, onComment, priorityCatalog, urgencyLevels, review, onSaveReview, closingTemplates = [], pirFieldConfig = null, allTickets = [], onOpenTicket, plan = "Free", onUpgrade, approvals = [], onResolveApproval, onAddApproval }) {
+export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch, onComment, priorityCatalog, urgencyLevels, review, onSaveReview, closingTemplates = [], pirFieldConfig = null, allTickets = [], onOpenTicket, plan = "Free", onUpgrade, approvals = [], onResolveApproval, onAddApproval, ticketTypes = [], orgSettings = [] }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
   const catalog = (priorityCatalog && Object.keys(priorityCatalog).length) ? priorityCatalog : PRIORITIES;
@@ -179,19 +179,21 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
   const currentUserRoles = Array.isArray(currentUser?.roles) && currentUser.roles.length
     ? currentUser.roles
     : [currentUser?.role].filter(Boolean);
+  const orgSetting = orgSettings.find((s) => s.orgId === tk.orgId);
   const ticketApprovals = (approvals || []).filter((a) => a.ticketId === tk.id);
   const pendingApproverIds = new Set(
     ticketApprovals
       .filter((a) => a.status === "Pending" && a.approverId)
       .map((a) => a.approverId)
   );
-  const addableApprovers = agents.filter((u) => !pendingApproverIds.has(u.id));
+  // Only users who have the approvals.resolve permission are valid approvers
+  const addableApprovers = agents.filter(
+    (u) => !pendingApproverIds.has(u.id) && canDo(u, orgSetting, "approvals.resolve")
+  );
   const canManageApprovals = Boolean(
     currentUser?.id === tk.reporter ||
     currentUser?.id === tk.assignee ||
-    currentUserRoles.includes("Admin") ||
-    currentUserRoles.includes("Manager") ||
-    currentUserRoles.includes("Team Lead")
+    canDo(currentUser, orgSetting, "approvals.resolve")
   );
 
   const overlay = isMobile
@@ -234,10 +236,9 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
   // ── Tabs config ────────────────────────────────────────────────────────────
   const tabs = [
     { id: "activity", label: "Activity",     badge: tk.comments.length || null },
-    { id: "related",  label: "Related",      badge: relatedCount || null },
+    { id: "related",    label: "Related",           badge: relatedCount || null },
+    { id: "approvals",  label: "Approvals",          badge: ticketApprovals.filter((a) => a.status === "Pending").length || null },
     ...(showPIR ? [{ id: "pir", label: "Post-Incident Review" }] : []),
-    // Show approvals tab for request tickets and approval-based requests
-    ...((tk.type === "Service Request" || tk.type === "Change Request" || tk.status === "Awaiting Approval" || (approvals || []).length > 0 || tk.catalogItemId) ? [{ id: "approvals", label: "Approvals", badge: ticketApprovals.length || null }] : []),
   ];
 
   const tabBtn = (tb) => (
@@ -277,8 +278,8 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start" }}>
             <div style={{ flex: 1 }}>
               <div style={{ display: "flex", gap: 6, marginBottom: 6, flexWrap: "wrap", alignItems: "center" }}>
-                <span style={{ fontFamily: t.mono, fontSize: 10, color: t.text3 }}>{tk.id}</span>
-                <TypeBadge type={tk.type} />
+                <span style={{ fontFamily: t.mono, fontSize: 10, color: t.text3 }}>{tk.number}</span>
+                <TypeBadge type={tk.type} ticketTypes={ticketTypes} />
                 {tk.parentId && (
                   <span style={{ fontSize: 9, fontWeight: 700, background: t.surface3, color: t.text3, borderRadius: 99, padding: "2px 7px", border: `1px solid ${t.border}` }}>
                     child ticket
@@ -411,36 +412,51 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
             {/* ── ACTIVITY tab ──────────────────────────────────────────────── */}
             {tab === "activity" && (
               <div>
-                {tk.description && (
-                  (() => {
-                    // For service requests created from catalog items we often append a justification paragraph.
-                    // When possible, split the description on blank lines and surface the last paragraph as a dedicated justification.
-                    const isRequestLike = !!tk.catalogItemId || tk.type === "Service Request" || tk.type === "Service request";
-                    if (isRequestLike) {
-                      const parts = String(tk.description || "").split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
-                      if (parts.length > 1) {
-                        const desc = parts.slice(0, parts.length - 1).join("\n\n");
-                        const just = parts[parts.length - 1];
-                        return (
-                          <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${t.border}` }}>
-                            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 6 }}>Description</div>
-                            <div style={{ fontSize: 13, color: t.text2, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{desc}</div>
-                            <div style={{ marginTop: 12 }}>
-                              <div style={{ fontSize: 11, color: t.text3, marginBottom: 6, fontWeight: 700 }}>Reason / Business justification</div>
-                              <div style={{ fontSize: 13, color: t.text2, whiteSpace: "pre-wrap" }}>{just}</div>
-                            </div>
-                          </div>
-                        );
-                      }
-                    }
+                {(() => {
+                  // Structured custom fields (new catalog requests) take priority over plain description
+                  const cf = tk.customFields || {};
+                  const cfKeys = Object.keys(cf).filter((k) => cf[k]);
+                  if (cfKeys.length > 0) {
+                    const fieldOrder = ["shortDescription", "justification", ...cfKeys.filter((k) => k !== "shortDescription" && k !== "justification")];
+                    const fieldLabel = { shortDescription: "Short description", justification: "Justification" };
                     return (
-                      <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${t.border}` }}>
-                        <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 6 }}>Description</div>
-                        <div style={{ fontSize: 13, color: t.text2, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{tk.description}</div>
+                      <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${t.border}`, display: "flex", flexDirection: "column", gap: 12 }}>
+                        {fieldOrder.filter((k) => cf[k]).map((k) => (
+                          <div key={k}>
+                            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 4 }}>
+                              {fieldLabel[k] || k}
+                            </div>
+                            <div style={{ fontSize: 13, color: t.text2, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{cf[k]}</div>
+                          </div>
+                        ))}
                       </div>
                     );
-                  })()
-                )}
+                  }
+                  // Fallback: plain description (old tickets or non-catalog tickets)
+                  if (!tk.description) return null;
+                  const isRequestLike = !!tk.catalogItemId || tk.type === "Service Request";
+                  if (isRequestLike) {
+                    const parts = String(tk.description).split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+                    if (parts.length > 1) {
+                      return (
+                        <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${t.border}` }}>
+                          <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 6 }}>Short description</div>
+                          <div style={{ fontSize: 13, color: t.text2, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{parts.slice(0, -1).join("\n\n")}</div>
+                          <div style={{ marginTop: 12 }}>
+                            <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 4 }}>Justification</div>
+                            <div style={{ fontSize: 13, color: t.text2, whiteSpace: "pre-wrap" }}>{parts[parts.length - 1]}</div>
+                          </div>
+                        </div>
+                      );
+                    }
+                  }
+                  return (
+                    <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${t.border}` }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 6 }}>Description</div>
+                      <div style={{ fontSize: 13, color: t.text2, lineHeight: 1.6, whiteSpace: "pre-wrap" }}>{tk.description}</div>
+                    </div>
+                  );
+                })()}
 
                 {/* Show requestedFor / requested for user when present (catalog requests) */}
                 {tk.requestedFor && tk.requestedFor !== tk.reporter && (

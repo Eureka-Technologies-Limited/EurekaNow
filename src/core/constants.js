@@ -42,6 +42,16 @@ export const TICKET_TYPES = [
   "Task",
 ];
 
+// Full definitions for the built-in ticket types.
+// When an org has no custom types configured, these are the defaults.
+export const DEFAULT_TICKET_TYPES = [
+  { name: "Incident",        prefix: "INC", color: "#e53e3e" },
+  { name: "Service Request", prefix: "REQ", color: "#38a169" },
+  { name: "Change Request",  prefix: "CHG", color: "#dd6b20" },
+  { name: "Problem",         prefix: "PRB", color: "#805ad5" },
+  { name: "Task",            prefix: "TSK", color: "#718096" },
+];
+
 export const CATEGORIES = [
   "Network", "Software", "Hardware", "Security",
   "Access Management", "Onboarding", "Facilities",
@@ -69,6 +79,91 @@ export const VIEW_TO_TYPE = {
   changes:   "Change Request",
   problems:  "Problem",
   tasks:     "Task",
+};
+
+// ── PERMISSION SYSTEM ───────────────────────────────────────────────────────
+
+export const PERMISSION_GROUPS = [
+  {
+    id: "tickets",
+    label: "Tickets",
+    permissions: [
+      { key: "tickets.create", label: "Create tickets",        description: "Submit new incidents, requests, and changes" },
+      { key: "tickets.edit",   label: "Edit tickets",          description: "Update fields, status, and priority on any ticket" },
+      { key: "tickets.assign", label: "Assign tickets",        description: "Assign or reassign tickets to team members" },
+      { key: "tickets.close",  label: "Close & resolve",       description: "Mark tickets as resolved or closed" },
+    ],
+  },
+  {
+    id: "catalog",
+    label: "Service Catalog",
+    permissions: [
+      { key: "catalog.request", label: "Request from catalog", description: "Submit requests via the service catalog" },
+      { key: "catalog.edit",    label: "Edit catalog items",   description: "Edit catalog descriptions and settings" },
+      { key: "catalog.manage",  label: "Manage catalog",       description: "Create, publish, and configure catalog items" },
+    ],
+  },
+  {
+    id: "approvals",
+    label: "Approvals",
+    permissions: [
+      { key: "approvals.resolve", label: "Resolve approvals", description: "Approve or reject pending service requests" },
+    ],
+  },
+  {
+    id: "kb",
+    label: "Knowledge Base",
+    permissions: [
+      { key: "kb.view",   label: "View articles",  description: "Read knowledge base articles" },
+      { key: "kb.create", label: "Write articles", description: "Create and publish knowledge base articles" },
+    ],
+  },
+  {
+    id: "admin",
+    label: "Administration",
+    permissions: [
+      { key: "members.invite", label: "Invite members",  description: "Add new members to the organisation" },
+      { key: "reports.view",   label: "View reports",    description: "Access analytics and reporting dashboards" },
+    ],
+  },
+];
+
+// Default permissions for each built-in role
+export const ROLE_PERMISSION_DEFAULTS = {
+  "Admin": {
+    "tickets.create": true, "tickets.edit": true, "tickets.assign": true, "tickets.close": true,
+    "catalog.request": true, "catalog.edit": true, "catalog.manage": true,
+    "approvals.resolve": true,
+    "kb.view": true, "kb.create": true,
+    "members.invite": true, "reports.view": true,
+  },
+  "Agent": {
+    "tickets.create": true, "tickets.edit": true, "tickets.assign": true, "tickets.close": true,
+    "catalog.request": true,
+    "approvals.resolve": true,
+    "kb.view": true, "kb.create": true,
+    "reports.view": true,
+  },
+  "Catalog Manager": {
+    "tickets.create": true,
+    "catalog.request": true, "catalog.edit": true, "catalog.manage": true,
+    "approvals.resolve": true,
+    "kb.view": true,
+    "members.invite": true,
+  },
+  "End User": {
+    "tickets.create": true,
+    "catalog.request": true,
+    "kb.view": true,
+  },
+};
+
+// Role accent colours used in the permissions UI
+export const ROLE_COLORS = {
+  "Admin":           "#e53e3e",
+  "Agent":           "#3182ce",
+  "Catalog Manager": "#805ad5",
+  "End User":        "#38a169",
 };
 
 export const VIEW_LABELS = {

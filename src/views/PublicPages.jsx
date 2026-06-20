@@ -3,9 +3,9 @@
 // Public-facing pages shown before authentication.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useTokens, useTheme, useBreakpoint } from "../core/hooks.js";
-import { DEMO_CREDENTIALS, loginWithGoogle } from "../core/api.js";
+import { loginWithGoogle } from "../core/api.js";
 import { Btn, Card, Input, Label } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 
@@ -13,7 +13,7 @@ import { I } from "../core/icons.jsx";
 // LANDING PAGE
 // ═════════════════════════════════════════════════════════════════════════════
 
-export function LandingPage({ onLogin }) {
+export function LandingPage({ onSignIn }) {
   const t = useTokens();
   const { dark, toggle } = useTheme();
   const { isMobile } = useBreakpoint();
@@ -41,8 +41,8 @@ export function LandingPage({ onLogin }) {
           <button onClick={toggle} style={{ background: "none", border: "none", cursor: "pointer", color: t.text2, display: "flex", padding: 6 }}>
             <I name={dark ? "sun" : "moon"} size={15} />
           </button>
-          {!isMobile && <Btn variant="secondary" size="sm" onClick={onLogin}>Sign in</Btn>}
-          <Btn variant="primary" size="sm" onClick={onLogin}>Get started</Btn>
+          {!isMobile && <Btn variant="secondary" size="sm" onClick={onSignIn}>Sign in</Btn>}
+          <Btn variant="primary" size="sm" onClick={onSignIn}>Get started</Btn>
         </div>
       </nav>
 
@@ -57,11 +57,11 @@ export function LandingPage({ onLogin }) {
           <span style={{ color: t.accent }}>adapts to every workflow.</span>
         </h1>
         <p style={{ fontSize: isMobile ? 14 : 17, color: t.text2, maxWidth: 480, margin: "0 auto 32px", lineHeight: 1.7 }}>
-          One platform for IT, clinical ops, engineering, and HR. Each workspace stays personal, clear, and easy to tailor.
+          One platform for IT, clinical ops, engineering, and HR. Sign in to your workspace and tailor it to your team.
         </p>
         <div style={{ display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
-          <Btn variant="primary" size={isMobile ? "md" : "lg"} onClick={onLogin}>Open the app →</Btn>
-          <Btn variant="secondary" size={isMobile ? "md" : "lg"} onClick={onLogin}>Use the demo</Btn>
+          <Btn variant="secondary" size={isMobile ? "md" : "lg"} onClick={onSignIn}>Sign in</Btn>
+          <Btn variant="primary" size={isMobile ? "md" : "lg"} onClick={onSignIn}>Open the app →</Btn>
         </div>
       </div>
 
@@ -99,9 +99,9 @@ export function LandingPage({ onLogin }) {
       <div style={{ textAlign: "center", padding: isMobile ? "40px 20px" : "60px 40px", borderTop: `1px solid ${t.border}` }}>
         <h2 style={{ fontSize: isMobile ? 22 : 28, fontWeight: 800, marginBottom: 12, color: t.text }}>Ready to try it?</h2>
         <p style={{ color: t.text2, marginBottom: 24, fontSize: 13 }}>
-          Instant demo login: <span style={{ fontFamily: t.mono }}>{DEMO_CREDENTIALS.email} / {DEMO_CREDENTIALS.password}</span>
+          Sign in with your workspace account to continue.
         </p>
-        <Btn variant="primary" size="lg" onClick={onLogin}>Open the app →</Btn>
+        <Btn variant="primary" size="lg" onClick={onSignIn}>Open the app →</Btn>
       </div>
 
       <footer style={{ borderTop: `1px solid ${t.border}`, padding: "16px 20px", textAlign: "center" }}>
@@ -115,24 +115,52 @@ export function LandingPage({ onLogin }) {
 // LOGIN PAGE
 // ═════════════════════════════════════════════════════════════════════════════
 
-export function LoginPage({ onLogin, onBack }) {
+export function LoginPage({ onLogin, onSignUp, onBack }) {
   const t = useTokens();
   const { dark, toggle } = useTheme();
   const { isMobile } = useBreakpoint();
 
-  const [email,         setEmail]         = useState("");
-  const [password,      setPassword]      = useState("");
-  const [error,         setError]         = useState("");
-  const [loading,       setLoading]       = useState(false);
+  const [mode, setMode] = useState("signin");
+  const [fullName, setFullName] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
+  const [teamName, setTeamName] = useState("");
+  const [title, setTitle] = useState("");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
+  const [confirmPassword, setConfirmPassword] = useState("");
+
+  const [error, setError] = useState("");
+  const [loading, setLoading] = useState(false);
   const [googleLoading, setGoogleLoading] = useState(false);
+
+  useEffect(() => {
+    setError("");
+    setLoading(false);
+    setGoogleLoading(false);
+  }, [mode]);
 
   const attempt = async () => {
     setError("");
     setLoading(true);
     try {
-      await onLogin({ email, password });
+      if (mode === "signup") {
+        if (password !== confirmPassword) {
+          throw new Error("Passwords do not match.");
+        }
+
+        await onSignUp({
+          fullName,
+          email,
+          password,
+          organizationName,
+          teamName,
+          title,
+        });
+      } else {
+        await onLogin({ email, password });
+      }
     } catch (err) {
-      setError(err?.message || "Unable to sign in.");
+      setError(err?.message || (mode === "signup" ? "Unable to create account." : "Unable to sign in."));
       setLoading(false);
     }
   };
@@ -161,51 +189,129 @@ export function LoginPage({ onLogin, onBack }) {
       </nav>
 
       <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: isMobile ? "16px" : "24px" }}>
-        <div style={{ width: "100%", maxWidth: 400 }}>
-          {/* Logo */}
+        <div style={{ width: "100%", maxWidth: 420 }}>
           <div style={{ textAlign: "center", marginBottom: 28 }}>
             <div style={{ width: 44, height: 44, borderRadius: 13, background: t.accent, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 12 }}>
               <span style={{ fontWeight: 900, fontSize: 20, color: "#0f0f0e" }}>E</span>
             </div>
             <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.5px", margin: 0, color: t.text }}>EurekaNow</h1>
-            <p style={{ fontSize: 13, color: t.text2, marginTop: 5 }}>Sign in to your workspace</p>
+            <p style={{ fontSize: 13, color: t.text2, marginTop: 5 }}>
+              {mode === "signup" ? "Create your workspace account" : "Sign in to your workspace"}
+            </p>
           </div>
 
-          {/* Login form */}
-          <Card style={{ marginBottom: 16 }}>
+          <Card style={{ marginBottom: 16, boxShadow: dark ? "0 16px 40px rgba(0,0,0,0.25)" : "0 16px 40px rgba(15, 34, 58, 0.08)" }}>
             <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <div style={{ display: "flex", gap: 6, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 12, padding: 4 }}>
+                <button
+                  type="button"
+                  onClick={() => setMode("signin")}
+                  style={{
+                    flex: 1,
+                    border: "none",
+                    borderRadius: 9,
+                    padding: "8px 12px",
+                    background: mode === "signin" ? t.accent : "transparent",
+                    color: mode === "signin" ? "#0f0f0e" : t.text2,
+                    fontFamily: t.font,
+                    fontSize: 12,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                  }}
+                >
+                  Sign in
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setMode("signup")}
+                  style={{
+                    flex: 1,
+                    border: "none",
+                    borderRadius: 9,
+                    padding: "8px 12px",
+                    background: mode === "signup" ? t.accent : "transparent",
+                    color: mode === "signup" ? "#0f0f0e" : t.text2,
+                    fontFamily: t.font,
+                    fontSize: 12,
+                    fontWeight: 800,
+                    cursor: "pointer",
+                  }}
+                >
+                  Sign up
+                </button>
+              </div>
+
+              {mode === "signup" && (
+                <>
+                  <div>
+                    <Label>Full name</Label>
+                    <Input value={fullName} onChange={(e) => setFullName(e.target.value)} placeholder="Jordan Smith" autoFocus />
+                  </div>
+                  <div>
+                    <Label>Organisation name</Label>
+                    <Input value={organizationName} onChange={(e) => setOrganizationName(e.target.value)} placeholder="Acme Health" />
+                  </div>
+                </>
+              )}
+
               <div>
                 <Label>Email address</Label>
-                <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" type="email" autoFocus onKeyDown={(e) => e.key === "Enter" && attempt()} />
+                <Input value={email} onChange={(e) => setEmail(e.target.value)} placeholder="you@company.com" type="email" autoFocus={mode === "signin"} onKeyDown={(e) => e.key === "Enter" && attempt()} />
               </div>
+              {mode === "signup" && (
+                <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 12 }}>
+                  <div>
+                    <Label>Team name</Label>
+                    <Input value={teamName} onChange={(e) => setTeamName(e.target.value)} placeholder="General" />
+                  </div>
+                  <div>
+                    <Label>Job title</Label>
+                    <Input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Service Desk Manager" />
+                  </div>
+                </div>
+              )}
               <div>
                 <Label>Password</Label>
                 <Input value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••" type="password" onKeyDown={(e) => e.key === "Enter" && attempt()} />
               </div>
+              {mode === "signup" && (
+                <div>
+                  <Label>Confirm password</Label>
+                  <Input value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} placeholder="••••••••" type="password" onKeyDown={(e) => e.key === "Enter" && attempt()} />
+                </div>
+              )}
               {error && (
                 <div style={{ background: t.redBg, border: `1px solid ${t.red}44`, borderRadius: 8, padding: "8px 12px", fontSize: 12, color: t.redText }}>
                   {error}
                 </div>
               )}
-              <Btn variant="primary" onClick={attempt} disabled={!email || !password || loading} full>
-                {loading ? "Signing in…" : "Sign in →"}
+              <Btn
+                variant="primary"
+                onClick={attempt}
+                disabled={
+                  loading ||
+                  !email ||
+                  !password ||
+                  (mode === "signup" && (!fullName || !organizationName || !confirmPassword))
+                }
+                full
+              >
+                {loading ? (mode === "signup" ? "Creating account…" : "Signing in…") : (mode === "signup" ? "Create account →" : "Sign in →")}
               </Btn>
-              
-              {/* Divider */}
+
               <div style={{ display: "flex", alignItems: "center", gap: 10, margin: "8px 0 0" }}>
                 <div style={{ flex: 1, height: "1px", background: t.border }} />
                 <span style={{ fontSize: 11, color: t.text3, fontWeight: 500 }}>or</span>
                 <div style={{ flex: 1, height: "1px", background: t.border }} />
               </div>
-              
-              {/* Google Sign-In Button */}
-              <button 
-                onClick={attemptGoogle} 
+
+              <button
+                onClick={attemptGoogle}
                 disabled={googleLoading}
-                style={{ 
-                  display: "flex", 
-                  alignItems: "center", 
-                  justifyContent: "center", 
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
                   gap: 8,
                   width: "100%",
                   padding: "10px 12px",
@@ -219,37 +325,35 @@ export function LoginPage({ onLogin, onBack }) {
                   cursor: googleLoading ? "not-allowed" : "pointer",
                   transition: "all 0.2s ease",
                   opacity: googleLoading ? 0.7 : 1,
-                  boxShadow: dark 
-                    ? "0 1px 3px rgba(0,0,0,0.3)" 
+                  boxShadow: dark
+                    ? "0 1px 3px rgba(0,0,0,0.3)"
                     : "0 1px 2px rgba(0,0,0,0.05)",
                 }}
                 onMouseEnter={(e) => {
                   if (!googleLoading) {
-                    e.target.style.boxShadow = dark 
-                      ? "0 4px 12px rgba(0,0,0,0.4)" 
+                    e.currentTarget.style.boxShadow = dark
+                      ? "0 4px 12px rgba(0,0,0,0.4)"
                       : "0 4px 12px rgba(0,0,0,0.1)";
-                    e.target.style.transform = "translateY(-1px)";
+                    e.currentTarget.style.transform = "translateY(-1px)";
                   }
                 }}
                 onMouseLeave={(e) => {
-                  e.target.style.boxShadow = dark 
-                    ? "0 1px 3px rgba(0,0,0,0.3)" 
+                  e.currentTarget.style.boxShadow = dark
+                    ? "0 1px 3px rgba(0,0,0,0.3)"
                     : "0 1px 2px rgba(0,0,0,0.05)";
-                  e.target.style.transform = "translateY(0)";
+                  e.currentTarget.style.transform = "translateY(0)";
                 }}
               >
                 <I name="google" size={14} />
                 {googleLoading ? "Signing in…" : "Sign in with Google"}
               </button>
+              <div style={{ fontSize: 11, color: t.text3, textAlign: "center", lineHeight: 1.6 }}>
+                {mode === "signup"
+                  ? "We will create your organization, team, and user profile after you submit."
+                  : "Use your workspace email and password to continue."}
+              </div>
             </div>
           </Card>
-          <div style={{ fontSize: 11, color: t.text3, textAlign: "center", lineHeight: 1.6 }}>
-            Demo (no Supabase needed):<br />
-            <span style={{ fontFamily: t.mono }}>{DEMO_CREDENTIALS.email} / {DEMO_CREDENTIALS.password}</span>
-            <br /><br />
-            Supabase mode: run supabase/schema.sql, then sign in with<br />
-            <span style={{ fontFamily: t.mono }}>admin@example.com / admin123</span>
-          </div>
         </div>
       </div>
     </div>

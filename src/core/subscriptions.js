@@ -3,6 +3,8 @@
 // Three plans: Free · Basic · Pro
 // ─────────────────────────────────────────────────────────────────────────────
 
+import { supabase } from "./supabase.js";
+
 export const PLANS = {
   Free: {
     label: "Free",
@@ -157,4 +159,114 @@ export function minPlanFor(feature) {
     if (PLANS[key].features[feature]) return key;
   }
   return "Pro";
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// REALTIME SUBSCRIPTIONS — unified live updates for all tables
+// ─────────────────────────────────────────────────────────────────────────────
+
+const pg = (table) => ({ event: "*", schema: "public", table });
+
+/**
+ * Subscribe to realtime changes across every app table.
+ *
+ * @param {string[]} orgIds    All org IDs the current user belongs to
+ * @param {object}   handlers  { onTicket, onComment, onApproval, onUser,
+ *                               onOrg, onTeam, onArticle, onOrgSettings,
+ *                               onTeamSettings, onCatalogItem, onTeamRole,
+ *                               onClosingTemplate, onPirFieldConfig, onPostReview }
+ *                             Each handler is (eventType, rawRow) => void
+ *                             eventType is "insert" | "update" | "delete"
+ * @returns {Function} cleanup — call to remove the channel
+ */
+export function subscribeToRealtime(orgIds, handlers) {
+  if (!supabase || !orgIds?.length) return () => {};
+
+  const orgSet = new Set(orgIds);
+  const inOrg  = (row, col = "org_id") => orgSet.has(row?.[col]);
+  const fire   = (name, row, eventType) => handlers[name]?.(eventType, row);
+
+  let channel;
+  try {
+    channel = supabase
+      .channel("eurekanow_live")
+
+      .on("postgres_changes", pg("tickets"), ({ eventType, new: n, old: o }) => {
+        const row = n || o;
+        if (inOrg(row)) fire("onTicket", row, eventType.toLowerCase());
+      })
+
+      .on("postgres_changes", pg("ticket_comments"), ({ eventType, new: n, old: o }) => {
+        // Comments have no org_id — filter by ticket membership happens in AppShell
+        fire("onComment", n || o, eventType.toLowerCase());
+      })
+
+      .on("postgres_changes", pg("approvals"), ({ eventType, new: n, old: o }) => {
+        const row = n || o;
+        if (inOrg(row)) fire("onApproval", row, eventType.toLowerCase());
+      })
+
+      .on("postgres_changes", pg("users"), ({ eventType, new: n, old: o }) => {
+        const row = n || o;
+        if (inOrg(row)) fire("onUser", row, eventType.toLowerCase());
+      })
+
+      .on("postgres_changes", pg("organizations"), ({ eventType, new: n, old: o }) => {
+        const row = n || o;
+        if (orgSet.has(row?.id)) fire("onOrg", row, eventType.toLowerCase());
+      })
+
+      .on("postgres_changes", pg("teams"), ({ eventType, new: n, old: o }) => {
+        const row = n || o;
+        if (inOrg(row)) fire("onTeam", row, eventType.toLowerCase());
+      })
+
+      .on("postgres_changes", pg("articles"), ({ eventType, new: n, old: o }) => {
+        const row = n || o;
+        if (inOrg(row)) fire("onArticle", row, eventType.toLowerCase());
+      })
+
+      .on("postgres_changes", pg("org_settings"), ({ eventType, new: n, old: o }) => {
+        const row = n || o;
+        if (orgSet.has(row?.org_id)) fire("onOrgSettings", row, eventType.toLowerCase());
+      })
+
+      .on("postgres_changes", pg("team_settings"), ({ eventType, new: n, old: o }) => {
+        fire("onTeamSettings", n || o, eventType.toLowerCase());
+      })
+
+      .on("postgres_changes", pg("service_catalog_items"), ({ eventType, new: n, old: o }) => {
+        const row = n || o;
+        if (inOrg(row)) fire("onCatalogItem", row, eventType.toLowerCase());
+      })
+
+      .on("postgres_changes", pg("team_roles"), ({ eventType, new: n, old: o }) => {
+        fire("onTeamRole", n || o, eventType.toLowerCase());
+      })
+
+      .on("postgres_changes", pg("closing_templates"), ({ eventType, new: n, old: o }) => {
+        const row = n || o;
+        if (inOrg(row)) fire("onClosingTemplate", row, eventType.toLowerCase());
+      })
+
+      .on("postgres_changes", pg("pir_field_configs"), ({ eventType, new: n, old: o }) => {
+        const row = n || o;
+        if (inOrg(row)) fire("onPirFieldConfig", row, eventType.toLowerCase());
+      })
+
+      .on("postgres_changes", pg("post_incident_reviews"), ({ eventType, new: n, old: o }) => {
+        const row = n || o;
+        if (inOrg(row)) fire("onPostReview", row, eventType.toLowerCase());
+      })
+
+      .subscribe((status) => {
+        if (status === "CHANNEL_ERROR") {
+          console.warn("Realtime channel error — live updates unavailable.");
+        }
+      });
+  } catch (err) {
+    console.warn("Realtime not available:", err.message);
+  }
+
+  return () => { if (channel) supabase.removeChannel(channel); };
 }

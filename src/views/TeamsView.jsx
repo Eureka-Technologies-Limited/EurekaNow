@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useState } from "react";
-import { DEFAULT_URGENCIES, PRIORITIES, TICKET_TYPES } from "../core/constants.js";
+import { DEFAULT_TICKET_TYPES, DEFAULT_URGENCIES, PERMISSION_GROUPS, PRIORITIES, ROLE_COLORS, ROLE_PERMISSION_DEFAULTS, TICKET_TYPES } from "../core/constants.js";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { Avatar, Badge, Btn, Card, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 import { PlansModal, PlanBadge } from "../ui/UpgradeGate.jsx";
+import { fetchOrgInvitationsForOrg, sendOrgInvitation, cancelOrgInvitation, fetchApiKeys, createApiKey, revokeApiKey } from "../core/api.js";
 
 const TEAM_ICONS = ["IT","ENG","OPS","APP","NET","SEC","DATA","QA","PM","UX","HR","FIN"];
 const FALLBACK_ROLES = ["Admin", "Agent", "End User"];
@@ -17,6 +18,24 @@ const defaultPriorityRows = () => Object.entries(PRIORITIES).map(([name, cfg]) =
 const isValidHexColor = (color) => {
   const hex = String(color || "").trim();
   return /^#[0-9A-Fa-f]{6}$/.test(hex);
+};
+
+// Merge existing org setting with tab-specific changes to prevent cross-field wipeout
+const mergeOrgSetting = (orgSetting, changes) => ({
+  priorities: normalizePriorityRows(orgSetting?.priorities),
+  urgencies: orgSetting?.urgencies?.length ? orgSetting.urgencies : DEFAULT_URGENCIES,
+  categories: orgSetting?.categories?.length ? orgSetting.categories : [],
+  rolePermissions: orgSetting?.rolePermissions || {},
+  requireApprovals: orgSetting?.requireApprovals || false,
+  approvalMode: orgSetting?.approvalMode || "all",
+  ticketTypes: orgSetting?.ticketTypes || [],
+  orgRoles: orgSetting?.orgRoles || [],
+  ...changes,
+});
+
+const fmtDate = (ts) => {
+  if (!ts) return "—";
+  return new Date(Number(ts)).toLocaleDateString("en-GB", { day: "numeric", month: "short", year: "numeric" });
 };
 
 const normalizePriorityRows = (rows) => {
@@ -348,6 +367,7 @@ export function TeamsView({
             teamId={addMemberTeam}
             teams={teams}
             orgs={orgs}
+            users={users}
             teamRoles={teamRoles.filter((r) => r.teamId === addMemberTeam)}
             onSave={async (u) => {
               await onCreateMember(u);
@@ -359,15 +379,20 @@ export function TeamsView({
       )}
 
       {settingsOrgOpen && org && (
-        <Modal title="Organisation Settings" onClose={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }} width={820}>
+        <Modal title="Organisation Settings" onClose={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }} width={1040}>
           <div style={{ display: "flex", gap: 12 }}>
             <div style={{ width: 200 }}>
               {[
                 { id: "sla", label: "SLA & Priority" },
                 { id: "permissions", label: "Permissions" },
+                { id: "orgroles", label: "Org Roles" },
                 { id: "categories", label: "Categories" },
+                { id: "ticket_types", label: "Ticket Types" },
                 { id: "templates", label: "Templates" },
                 { id: "pir", label: "PIR Fields" },
+                { id: "invitations", label: "Invitations" },
+                { id: "apikeys", label: "API Keys" },
+                { id: "joincode", label: "Join Code" },
               ].map((it) => (
                 <Btn
                   key={it.id}
@@ -387,7 +412,7 @@ export function TeamsView({
                   defaultPriorities={normalizePriorityRows(orgSetting?.priorities)}
                   defaultUrgencies={orgSetting?.urgencies || DEFAULT_URGENCIES}
                   onSave={async (settings) => {
-                    await onSaveOrgSettings({ orgId: org.id, ...settings });
+                    await onSaveOrgSettings(mergeOrgSetting(orgSetting, { orgId: org.id, ...settings }));
                     setSettingsOrgOpen(false);
                     setSettingsTab("sla");
                   }}
@@ -403,7 +428,7 @@ export function TeamsView({
                   teamRoles={teamRoles}
                   onCancel={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }}
                   onSave={async (settings) => {
-                    await onSaveOrgSettings({ orgId: org.id, priorities: normalizePriorityRows(orgSetting?.priorities), urgencies: orgSetting?.urgencies || DEFAULT_URGENCIES, ...settings });
+                    await onSaveOrgSettings(mergeOrgSetting(orgSetting, { orgId: org.id, ...settings }));
                     setSettingsOrgOpen(false);
                     setSettingsTab("sla");
                   }}
@@ -411,11 +436,32 @@ export function TeamsView({
                 />
               )}
 
+              {settingsTab === "orgroles" && (
+                <OrgRolesTab
+                  orgSetting={orgSetting}
+                  onSave={async (orgRoles) => {
+                    await onSaveOrgSettings(mergeOrgSetting(orgSetting, { orgId: org.id, orgRoles }));
+                  }}
+                />
+              )}
+
               {settingsTab === "categories" && (
                 <CategoriesForm
                   defaultCategories={orgSetting?.categories || []}
                   onSave={async (settings) => {
-                    await onSaveOrgSettings({ orgId: org.id, priorities: normalizePriorityRows(orgSetting?.priorities), urgencies: orgSetting?.urgencies || DEFAULT_URGENCIES, ...settings });
+                    await onSaveOrgSettings(mergeOrgSetting(orgSetting, { orgId: org.id, ...settings }));
+                    setSettingsOrgOpen(false);
+                    setSettingsTab("sla");
+                  }}
+                  onCancel={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }}
+                />
+              )}
+
+              {settingsTab === "ticket_types" && (
+                <TicketTypesForm
+                  defaultTypes={orgSetting?.ticketTypes?.length ? orgSetting.ticketTypes : DEFAULT_TICKET_TYPES}
+                  onSave={async (ticketTypes) => {
+                    await onSaveOrgSettings(mergeOrgSetting(orgSetting, { orgId: org.id, ticketTypes }));
                     setSettingsOrgOpen(false);
                     setSettingsTab("sla");
                   }}
@@ -464,6 +510,60 @@ export function TeamsView({
                     />
                   </div>
                 </div>
+              )}
+
+              {settingsTab === "joincode" && (
+                <div>
+                  <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Organisation Join Code</div>
+                  <div style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 16 }}>
+                    <div style={{ fontSize: 12, color: t.text3, marginBottom: 12 }}>
+                      Share this code with team members to allow them to join your organization.
+                    </div>
+                    <div style={{ display: "flex", gap: 8, alignItems: "center", marginBottom: 16 }}>
+                      <input
+                        type="text"
+                        value={`JOIN-${org.id.toUpperCase().slice(0, 8)}`}
+                        readOnly
+                        style={{
+                          flex: 1,
+                          padding: "8px 12px",
+                          fontSize: 14,
+                          fontFamily: t.mono,
+                          fontWeight: 700,
+                          border: `1px solid ${t.border}`,
+                          borderRadius: 6,
+                          background: t.surface,
+                          color: t.text,
+                        }}
+                      />
+                      <Btn
+                        variant="secondary"
+                        size="sm"
+                        onClick={() => {
+                          navigator.clipboard.writeText(`JOIN-${org.id.toUpperCase().slice(0, 8)}`);
+                        }}
+                      >
+                        Copy
+                      </Btn>
+                    </div>
+                    <div style={{ fontSize: 11, color: t.text3, lineHeight: 1.6 }}>
+                      <strong>How it works:</strong>
+                      <ul style={{ margin: "6px 0 0", paddingLeft: 16 }}>
+                        <li>Share this code with team members</li>
+                        <li>They can use this code to request access to your organization</li>
+                        <li>Org admins will be notified of join requests</li>
+                      </ul>
+                    </div>
+                  </div>
+                </div>
+              )}
+
+              {settingsTab === "invitations" && (
+                <InvitationsTab orgId={org.id} teams={teams.filter((tm) => tm.orgId === org.id)} />
+              )}
+
+              {settingsTab === "apikeys" && (
+                <ApiKeysTab orgId={org.id} currentUserId={users.find((u) => u.orgId === org.id)?.id} />
               )}
             </div>
           </div>
@@ -764,68 +864,75 @@ function CategoriesForm({ defaultCategories, onSave, onCancel }) {
   );
 }
 
-function PermissionsForm({ orgId, orgSetting, users, teamRoles, onSave, onCancel, onUpdateMemberRoles }) {
+// Pill toggle switch — on/off like Discord
+function Toggle({ checked, onChange, disabled }) {
   const t = useTokens();
-  const [catalogEditable, setCatalogEditable] = useState(!!orgSetting?.catalogEditable);
-  const [requireApprovals, setRequireApprovals] = useState(!!orgSetting?.requireApprovals);
-  const [approvalMode, setApprovalMode] = useState(orgSetting?.approvalMode || "all");
-  const [defaultApproverRole, setDefaultApproverRole] = useState(orgSetting?.defaultCatalogApproverRole || "");
-  const [saving, setSaving] = useState(false);
-  const [userSaving, setUserSaving] = useState(null);
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => !disabled && onChange(!checked)}
+      style={{
+        width: 42, height: 24, borderRadius: 999, border: "none", cursor: disabled ? "default" : "pointer",
+        background: checked ? (disabled ? t.text3 : t.accent) : t.border,
+        position: "relative", transition: "background 0.18s", flexShrink: 0, padding: 0,
+        opacity: disabled ? 0.6 : 1,
+      }}
+    >
+      <span style={{
+        position: "absolute", top: 3, left: checked ? 21 : 3,
+        width: 18, height: 18, borderRadius: "50%", background: "#fff",
+        transition: "left 0.18s", boxShadow: "0 1px 3px rgba(0,0,0,0.25)",
+      }} />
+    </button>
+  );
+}
 
-  // rolePermissions structure: { roleName: { permKey: true, ... }, ... }
-  const initialRolePerms = orgSetting?.rolePermissions || {};
-  const [rolePermissions, setRolePermissions] = useState(() => ({ ...initialRolePerms }));
-
-  // derive permission keys from rolePermissions
-  const permissionKeys = useMemo(() => ["catalog.manage", "catalog.edit", "approvals.resolve", "tickets.edit", "tickets.create"], []);
-
-  const presetRoles = ["Catalog Manager", "Admin", "Agent", "End User"];
+function PermissionsForm({ orgSetting, teamRoles, onSave, onCancel }) {
+  const t = useTokens();
 
   const roleOptions = useMemo(() => {
     const custom = (teamRoles || []).map((r) => r.name).filter(Boolean);
-    const merged = [...FALLBACK_ROLES, ...custom];
-    return Array.from(new Set(merged));
-  }, [teamRoles]);
+    const orgCustom = (orgSetting?.orgRoles || []).map((r) => r.name).filter(Boolean);
+    return Array.from(new Set([...FALLBACK_ROLES, ...custom, ...orgCustom]));
+  }, [teamRoles, orgSetting?.orgRoles]);
 
-  const togglePermission = (role, perm) => {
+  // Seed with saved permissions; fall back to defaults when empty
+  const [rolePermissions, setRolePermissions] = useState(() => {
+    const saved = orgSetting?.rolePermissions || {};
+    if (Object.keys(saved).length > 0) return saved;
+    return { ...ROLE_PERMISSION_DEFAULTS };
+  });
+
+  const [requireApprovals, setRequireApprovals] = useState(!!orgSetting?.requireApprovals);
+  const [approvalMode, setApprovalMode] = useState(orgSetting?.approvalMode || "all");
+  const [selectedRole, setSelectedRole] = useState(roleOptions[0] || "Admin");
+  const [saving, setSaving] = useState(false);
+
+  const isAdmin = selectedRole === "Admin";
+
+  const toggle = (permKey) => {
+    if (isAdmin) return;
     setRolePermissions((prev) => {
-      const next = { ...(prev || {}) };
-      const row = { ...(next[role] || {}) };
-      row[perm] = !row[perm];
-      next[role] = row;
-      return next;
+      const rolePerms = { ...(prev[selectedRole] || {}) };
+      rolePerms[permKey] = !rolePerms[permKey];
+      return { ...prev, [selectedRole]: rolePerms };
     });
   };
 
-  const addPermissionKey = (key) => {
-    const k = String(key || "").trim();
-    if (!k) return;
-    if (permissionKeys.includes(k)) return;
-    // initialize flag false for all roles
-    setRolePermissions((prev) => {
-      const next = { ...(prev || {}) };
-      roleOptions.forEach((r) => { next[r] = { ...(next[r] || {}) }; next[r][k] = false; });
-      return next;
-    });
+  const resetToDefaults = () => {
+    setRolePermissions({ ...ROLE_PERMISSION_DEFAULTS });
   };
-
-  const permissionDefinitions = useMemo(() => ([
-    { key: "catalog.manage", label: "Manage catalog items", description: "Create and edit catalog items, approvers, and publishing settings." },
-    { key: "catalog.edit", label: "Edit catalog items", description: "Change catalog content without full manage access." },
-    { key: "approvals.resolve", label: "Resolve approvals", description: "Approve or reject pending requests." },
-    { key: "tickets.edit", label: "Edit tickets", description: "Change ticket fields and status." },
-    { key: "tickets.create", label: "Create tickets", description: "Open new incidents, requests, and changes." },
-  ]), []);
 
   const submit = async () => {
     setSaving(true);
     try {
       await onSave({
-        catalogEditable: !!catalogEditable,
-        requireApprovals: !!requireApprovals,
+        catalogEditable: !!(rolePermissions["Catalog Manager"]?.["catalog.manage"] || rolePermissions["Agent"]?.["catalog.manage"]),
+        requireApprovals,
         approvalMode,
-        defaultCatalogApproverRole: defaultApproverRole || "",
+        defaultCatalogApproverRole: "Admin",
         rolePermissions,
       });
     } finally {
@@ -833,178 +940,124 @@ function PermissionsForm({ orgId, orgSetting, users, teamRoles, onSave, onCancel
     }
   };
 
-  const grantCatalogManager = async (user) => {
-    const current = Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role].filter(Boolean);
-    if (current.includes("Catalog Manager")) return;
-    setUserSaving(user.id);
-    try {
-      const next = [...current, "Catalog Manager"];
-      await onUpdateMemberRoles?.({ userId: user.id, roles: next });
-    } finally {
-      setUserSaving(null);
-    }
+  const getRoleColor = (role) => ROLE_COLORS[role] || t.text3;
+  const getPermCount = (role) => {
+    if (role === "Admin") return "All permissions";
+    const perms = rolePermissions[role] || {};
+    const count = Object.values(perms).filter(Boolean).length;
+    return count === 0 ? "No permissions" : `${count} permission${count === 1 ? "" : "s"}`;
   };
-
-  const revokeCatalogManager = async (user) => {
-    const current = Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role].filter(Boolean);
-    if (!current.includes("Catalog Manager")) return;
-    setUserSaving(user.id);
-    try {
-      const next = current.filter((r) => r !== "Catalog Manager");
-      if (!next.length) next.push("End User");
-      await onUpdateMemberRoles?.({ userId: user.id, roles: next });
-    } finally {
-      setUserSaving(null);
-    }
-  };
-
-  const [newPerm, setNewPerm] = useState("");
-
-  const applyPreset = (role, preset) => {
-    const presets = {
-      "Catalog Manager": { "catalog.manage": true, "catalog.edit": true, "approvals.resolve": true },
-      "Agent": { "tickets.create": true, "tickets.edit": true },
-      "End User": { "tickets.create": true },
-      "Admin": { "catalog.manage": true, "catalog.edit": true, "approvals.resolve": true, "tickets.create": true, "tickets.edit": true },
-    };
-    const map = presets[preset] || presets[role] || {};
-    setRolePermissions((prev) => {
-      const next = { ...(prev || {}) };
-      next[role] = { ...(next[role] || {}), ...map };
-      return next;
-    });
-  };
-
-  const allRoles = roleOptions.slice(0, 4);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ fontSize: 12, color: t.text3, lineHeight: 1.5 }}>
-        This area controls who can manage the catalog and who can resolve approvals. Start with a preset, then fine-tune only if needed.
-      </div>
-
-      <div>
-        <Label>Catalog Editing & Approvals</Label>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="checkbox" checked={catalogEditable} onChange={(e) => setCatalogEditable(e.target.checked)} />
-            <span style={{ fontSize: 13 }}>Allow org members to edit service catalog items</span>
-          </label>
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="checkbox" checked={requireApprovals} onChange={(e) => setRequireApprovals(e.target.checked)} />
-            <span style={{ fontSize: 13 }}>Require approvals for catalog requests</span>
-          </label>
+    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+      {/* Top controls */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 12, color: t.text3 }}>
+          Select a role on the left, then toggle its permissions on the right.
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <Btn size="sm" variant="ghost" onClick={resetToDefaults}>Reset to defaults</Btn>
+          <Btn size="sm" variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
+          <Btn size="sm" variant="primary" onClick={submit} disabled={saving}>{saving ? "Saving…" : "Save"}</Btn>
         </div>
       </div>
 
-      <div>
-        <Label>Approval Completion Rule</Label>
-        <div style={{ fontSize: 12, color: t.text3, marginBottom: 6 }}>
-          Choose when a request can move from Awaiting Approval to Open.
-        </div>
-        <Sel value={approvalMode} onChange={(e) => setApprovalMode(e.target.value)}>
-          <option value="all">All approvers must approve (team approval needs one team member)</option>
-          <option value="any">Any one approval can open the ticket</option>
-        </Sel>
-      </div>
+      {/* Main two-column layout */}
+      <div style={{ display: "flex", gap: 0, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden", minHeight: 420 }}>
 
-      <div>
-        <Label>Default Approver Role</Label>
-        <div style={{ fontSize: 12, color: t.text3, marginBottom: 6 }}>
-          Used when a catalog item is approval-based but not tied to one user or team.
-        </div>
-        <Sel value={defaultApproverRole} onChange={(e) => setDefaultApproverRole(e.target.value)}>
-          <option value="">- none -</option>
-          {roleOptions.map((r) => <option key={r} value={r}>{r}</option>)}
-        </Sel>
-      </div>
-
-      <div>
-        <Label>Role permissions</Label>
-        <div style={{ fontSize: 12, color: t.text3, marginBottom: 8 }}>
-          Pick a preset to get started, then adjust only the permissions you need.
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-          {presetRoles.map((role) => (
-            <Btn key={role} size="sm" variant="secondary" onClick={() => applyPreset(role, role)}>
-              {role === "Catalog Manager" ? "Catalog Manager preset" : `${role} preset`}
-            </Btn>
-          ))}
-          <Btn size="sm" variant="ghost" onClick={() => {
-            setRolePermissions({});
-            presetRoles.forEach((role) => applyPreset(role, role));
-          }}>
-            Apply recommended defaults
-          </Btn>
-        </div>
-
-        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-          <Input value={newPerm} onChange={(e) => setNewPerm(e.target.value)} placeholder="Add custom permission key, e.g. kb.edit" onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addPermissionKey(newPerm); setNewPerm(''); } }} />
-          <Btn variant="secondary" onClick={() => { addPermissionKey(newPerm); setNewPerm(""); }}>Add</Btn>
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {permissionDefinitions.map((perm) => (
-            <div key={perm.key} style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 12, background: t.surface2 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
-                <div style={{ minWidth: 200 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{perm.label}</div>
-                  <div style={{ fontSize: 12, color: t.text3, marginTop: 4, lineHeight: 1.5 }}>{perm.description}</div>
+        {/* Left: role list */}
+        <div style={{ width: 180, borderRight: `1px solid ${t.border}`, background: t.surface2, flexShrink: 0 }}>
+          <div style={{ padding: "10px 12px 6px", fontSize: 10, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            Roles
+          </div>
+          {roleOptions.map((role) => {
+            const color = getRoleColor(role);
+            const active = selectedRole === role;
+            return (
+              <button
+                key={role}
+                type="button"
+                onClick={() => setSelectedRole(role)}
+                style={{
+                  width: "100%", textAlign: "left", border: "none", cursor: "pointer",
+                  padding: "9px 12px", background: active ? t.accentBg : "transparent",
+                  borderLeft: `3px solid ${active ? t.accent : "transparent"}`,
+                  transition: "background 0.1s",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: active ? 700 : 500, color: active ? t.text : t.text2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{role}</div>
+                    <div style={{ fontSize: 10, color: active ? t.text3 : t.text3, marginTop: 1 }}>{getPermCount(role)}</div>
+                  </div>
                 </div>
-                <div style={{ fontSize: 11, color: t.text3, alignSelf: "center" }}>{perm.key}</div>
-              </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {allRoles.map((role) => {
-                  const checked = !!((rolePermissions || {})[role]?.[perm.key]);
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Right: permission toggles */}
+        <div style={{ flex: 1, overflowY: "auto", background: t.surface }}>
+          {/* Role header */}
+          <div style={{ padding: "14px 18px 12px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ width: 10, height: 10, borderRadius: "50%", background: getRoleColor(selectedRole), flexShrink: 0 }} />
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: t.text }}>{selectedRole}</div>
+              {isAdmin && (
+                <div style={{ fontSize: 11, color: t.text3, marginTop: 2 }}>Admins always have full access — permissions cannot be restricted.</div>
+              )}
+            </div>
+          </div>
+
+          {/* Permission groups */}
+          <div style={{ padding: "4px 0 12px" }}>
+            {PERMISSION_GROUPS.map((group) => (
+              <div key={group.id}>
+                <div style={{ padding: "14px 18px 6px", fontSize: 10, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                  {group.label}
+                </div>
+                {group.permissions.map((perm, idx) => {
+                  const enabled = isAdmin || !!(rolePermissions[selectedRole]?.[perm.key]);
                   return (
-                    <label key={`${role}-${perm.key}`} style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${t.border}`, borderRadius: 999, padding: "6px 10px", background: checked ? t.accentBg : t.surface }}>
-                      <input type="checkbox" checked={checked} onChange={() => togglePermission(role, perm.key)} />
-                      <span style={{ fontSize: 12, color: checked ? t.accentText : t.text2 }}>{role}</span>
-                    </label>
+                    <div
+                      key={perm.key}
+                      style={{
+                        display: "flex", alignItems: "center", justifyContent: "space-between",
+                        padding: "11px 18px",
+                        borderBottom: idx < group.permissions.length - 1 ? `1px solid ${t.border}22` : "none",
+                        gap: 12,
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: t.text }}>{perm.label}</div>
+                        <div style={{ fontSize: 11, color: t.text3, marginTop: 2 }}>{perm.description}</div>
+                      </div>
+                      <Toggle checked={enabled} onChange={() => toggle(perm.key)} disabled={isAdmin} />
+                    </div>
                   );
                 })}
               </div>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ marginTop: 10, fontSize: 12, color: t.text3 }}>
-          Recommended defaults give Admin full access, Catalog Manager catalog control, Agents ticket actions, and End Users request creation only.
+            ))}
+          </div>
         </div>
       </div>
 
-      <div>
-        <Label>Assign Catalog Manager</Label>
-        <div style={{ fontSize: 12, color: t.text3, marginBottom: 6 }}>
-          Quick shortcut for users who should manage catalog items and approvals.
+      {/* Approval settings below the main panel */}
+      <div style={{ marginTop: 16, padding: "14px 16px", border: `1px solid ${t.border}`, borderRadius: 10, background: t.surface2, display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: t.text, marginBottom: 4 }}>Require approvals for catalog requests</div>
+          <div style={{ fontSize: 11, color: t.text3, marginBottom: 8 }}>When on, catalog requests go to Awaiting Approval before work begins.</div>
+          <Toggle checked={requireApprovals} onChange={setRequireApprovals} />
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {users.map((u) => {
-            const roles = Array.isArray(u.roles) && u.roles.length ? u.roles : [u.role].filter(Boolean);
-            const has = roles.includes("Catalog Manager");
-            return (
-              <div key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 8, border: `1px solid ${t.border}`, borderRadius: 8 }}>
-                <div>
-                  <div style={{ fontWeight: 700 }}>{u.name}</div>
-                  <div style={{ fontSize: 12, color: t.text3 }}>{roles.join(", ")}</div>
-                </div>
-                <div>
-                  {has ? (
-                    <Btn size="sm" variant="danger" onClick={() => revokeCatalogManager(u)} disabled={userSaving === u.id}>{userSaving === u.id ? "…" : "Revoke"}</Btn>
-                  ) : (
-                    <Btn size="sm" variant="primary" onClick={() => grantCatalogManager(u)} disabled={userSaving === u.id}>{userSaving === u.id ? "…" : "Grant"}</Btn>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-          {users.length === 0 && <div style={{ color: t.text3 }}>No users in this organisation.</div>}
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: t.text, marginBottom: 4 }}>Approval completion rule</div>
+          <div style={{ fontSize: 11, color: t.text3, marginBottom: 8 }}>When can a request move from Awaiting Approval to Open?</div>
+          <Sel value={approvalMode} onChange={(e) => setApprovalMode(e.target.value)} style={{ fontSize: 12 }}>
+            <option value="all">All approvers must approve</option>
+            <option value="any">Any single approval is enough</option>
+          </Sel>
         </div>
-      </div>
-
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
-        <Btn variant="primary" onClick={submit} disabled={saving}>{saving ? "Saving…" : "Save Permissions"}</Btn>
       </div>
     </div>
   );
@@ -1131,7 +1184,7 @@ function AddTeamForm({ orgs, users, defaultOrgId, onSave, onCancel }) {
   );
 }
 
-function AddMemberForm({ teamId, teams, orgs, teamRoles, onSave, onCancel }) {
+function AddMemberForm({ teamId, teams, orgs, users = [], teamRoles, onSave, onCancel }) {
   const t = useTokens();
   const team = teams.find((tm) => tm.id === teamId);
   const org = orgs.find((o) => o.id === team?.orgId);
@@ -1141,7 +1194,7 @@ function AddMemberForm({ teamId, teams, orgs, teamRoles, onSave, onCancel }) {
     return Array.from(new Set(merged));
   }, [teamRoles]);
 
-  const [f, setF] = useState({ name: "", email: "", title: "", roles: [roleOptions[0] || "End User"] });
+  const [f, setF] = useState({ email: "", title: "", roles: [roleOptions[0] || "End User"] });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
@@ -1157,16 +1210,25 @@ function AddMemberForm({ teamId, teams, orgs, teamRoles, onSave, onCancel }) {
   };
 
   const submit = async () => {
-    if (!f.name.trim() || !f.email.trim() || !team) return;
+    if (!f.email.trim() || !team) return;
     if (!f.roles.length) {
       setError("Select at least one role.");
       return;
     }
+
+    // Check for duplicate email in the organization
+    const normalizedEmail = f.email.trim().toLowerCase();
+    const existingUserInOrg = users.find((u) => u.orgId === team.orgId && u.email.toLowerCase() === normalizedEmail);
+    if (existingUserInOrg) {
+      setError(`A user with email "${f.email.trim()}" already exists in this organization.`);
+      return;
+    }
+
     setSaving(true);
     setError("");
     try {
       await onSave({
-        name: f.name.trim(),
+        // Name is not required for invites; backend will use existing user name if present
         email: f.email.trim(),
         title: f.title.trim(),
         role: f.roles[0],
@@ -1187,8 +1249,7 @@ function AddMemberForm({ teamId, teams, orgs, teamRoles, onSave, onCancel }) {
           Adding to <strong>{team?.name}</strong> - {org.name}
         </div>
       )}
-      <div><Label>Full Name</Label><Input value={f.name} onChange={(e) => set("name", e.target.value)} placeholder="Jane Smith" autoFocus /></div>
-      <div><Label>Email</Label><Input value={f.email} onChange={(e) => set("email", e.target.value)} placeholder={`jane@${org?.domain || "company.com"}`} type="email" /></div>
+      <div><Label>Email</Label><Input value={f.email} onChange={(e) => set("email", e.target.value)} placeholder={`jane@${org?.domain || "company.com"}`} type="email" autoFocus /></div>
       <div><Label>Job Title</Label><Input value={f.title} onChange={(e) => set("title", e.target.value)} placeholder="Senior Engineer" /></div>
       <div>
         <Label>Roles (select one or more)</Label>
@@ -1220,7 +1281,7 @@ function AddMemberForm({ teamId, teams, orgs, teamRoles, onSave, onCancel }) {
       {error && <div style={{ fontSize: 12, color: "#dc2626" }}>{error}</div>}
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
         <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
-        <Btn variant="primary" onClick={submit} disabled={!f.name.trim() || !f.email.trim() || saving}>Add Member</Btn>
+        <Btn variant="primary" onClick={submit} disabled={!f.email.trim() || saving}>Add Member</Btn>
       </div>
     </div>
   );
@@ -1350,6 +1411,385 @@ function TemplateEditor({ orgId, teamId, template, onClose, onCreate, onUpdate }
         </div>
       </div>
     </Modal>
+  );
+}
+
+function TicketTypesForm({ defaultTypes, onSave, onCancel }) {
+  const t = useTokens();
+  const [types, setTypes] = useState(() => (defaultTypes || DEFAULT_TICKET_TYPES).map((tt) => ({ ...tt })));
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState("");
+
+  const update = (i, field, value) =>
+    setTypes((rows) => rows.map((row, idx) => idx === i ? { ...row, [field]: value } : row));
+
+  const remove = (i) => setTypes((rows) => rows.filter((_, idx) => idx !== i));
+
+  const add = () => setTypes((rows) => [...rows, { name: "", prefix: "", color: "#718096" }]);
+
+  const submit = async () => {
+    const next = types.map((tt) => ({
+      name: String(tt.name || "").trim(),
+      prefix: String(tt.prefix || "").trim().toUpperCase(),
+      color: String(tt.color || "#718096").trim(),
+    }));
+    const invalid = next.find((tt) => !tt.name || !tt.prefix);
+    if (invalid) { setError("Every type needs a name and a prefix."); return; }
+    const prefixes = next.map((tt) => tt.prefix);
+    if (new Set(prefixes).size !== prefixes.length) { setError("Prefixes must be unique."); return; }
+    setSaving(true);
+    setError("");
+    try {
+      await onSave(next);
+    } catch (err) {
+      setError(err?.message || "Failed to save ticket types.");
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+      <div style={{ fontSize: 12, color: t.text3, lineHeight: 1.5 }}>
+        Define the ticket types available in your organisation. Each type needs a unique prefix used for ticket numbering (e.g. INC, REQ).
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 80px auto", gap: 6, alignItems: "center" }}>
+        <div style={{ fontSize: 10, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.08em" }}>Name</div>
+        <div style={{ fontSize: 10, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.08em" }}>Prefix</div>
+        <div style={{ fontSize: 10, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.08em" }}>Color</div>
+        <div />
+        {types.map((tt, i) => (
+          <>
+            <Input key={`name-${i}`} value={tt.name} onChange={(e) => update(i, "name", e.target.value)} placeholder="e.g. Incident" />
+            <Input key={`prefix-${i}`} value={tt.prefix} onChange={(e) => update(i, "prefix", e.target.value)} placeholder="INC" style={{ textTransform: "uppercase" }} />
+            <input
+              key={`color-${i}`}
+              type="color"
+              value={tt.color || "#718096"}
+              onChange={(e) => update(i, "color", e.target.value)}
+              style={{ width: "100%", height: 38, border: `1px solid ${t.border}`, borderRadius: 9, cursor: "pointer", padding: 2, background: t.surface2 }}
+            />
+            <Btn key={`del-${i}`} variant="secondary" size="sm" onClick={() => remove(i)} aria-label="Remove type">
+              <I name="trash" size={12} />
+            </Btn>
+          </>
+        ))}
+      </div>
+      <div>
+        <Btn variant="secondary" size="sm" onClick={add}><I name="plus" size={12} /> Add type</Btn>
+      </div>
+      {error && <div style={{ fontSize: 12, color: "#dc2626" }}>{error}</div>}
+      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
+        <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
+        <Btn variant="primary" onClick={submit} disabled={saving}>{saving ? "Saving…" : "Save Types"}</Btn>
+      </div>
+    </div>
+  );
+}
+
+const BUILTIN_ROLES = [
+  { name: "Admin",           color: "#e53e3e", description: "Full access — can manage all org settings, members, and tickets." },
+  { name: "Agent",           color: "#3182ce", description: "Can create, assign, and resolve tickets. Cannot manage org settings." },
+  { name: "Catalog Manager", color: "#805ad5", description: "Can create and manage catalog items and approvals." },
+  { name: "End User",        color: "#38a169", description: "Can create tickets and view the service catalog." },
+];
+
+function OrgRolesTab({ orgSetting, onSave }) {
+  const t = useTokens();
+  const [customRoles, setCustomRoles] = useState(() => (orgSetting?.orgRoles || []).map((r) => ({ ...r })));
+  const [addOpen, setAddOpen] = useState(false);
+  const [editIdx, setEditIdx] = useState(null);
+  const [form, setForm] = useState({ name: "", color: "#3182ce", description: "" });
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const openAdd = () => { setForm({ name: "", color: "#3182ce", description: "" }); setEditIdx(null); setErr(""); setAddOpen(true); };
+  const openEdit = (idx) => { setForm({ ...customRoles[idx] }); setEditIdx(idx); setErr(""); setAddOpen(true); };
+
+  const saveForm = async () => {
+    const name = form.name.trim();
+    if (!name) { setErr("Role name is required."); return; }
+    const allNames = [...BUILTIN_ROLES.map((r) => r.name.toLowerCase()), ...customRoles.map((r, i) => i === editIdx ? null : r.name.toLowerCase()).filter(Boolean)];
+    if (allNames.includes(name.toLowerCase())) { setErr("A role with that name already exists."); return; }
+    const next = editIdx !== null
+      ? customRoles.map((r, i) => i === editIdx ? { ...form, name } : r)
+      : [...customRoles, { ...form, name }];
+    setSaving(true);
+    try { await onSave(next); setCustomRoles(next); setAddOpen(false); } catch { setErr("Failed to save."); } finally { setSaving(false); }
+  };
+
+  const removeRole = async (idx) => {
+    const next = customRoles.filter((_, i) => i !== idx);
+    setSaving(true);
+    try { await onSave(next); setCustomRoles(next); } finally { setSaving(false); }
+  };
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Organization Roles</div>
+      <div style={{ fontSize: 12, color: t.text3, marginBottom: 16, lineHeight: 1.6 }}>
+        Built-in roles cannot be removed. Custom roles appear in the Permissions tab for permission assignment.
+      </div>
+
+      <div style={{ fontSize: 11, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>Built-in</div>
+      <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+        {BUILTIN_ROLES.map((role) => (
+          <div key={role.name} style={{ display: "flex", alignItems: "center", gap: 10, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "10px 12px" }}>
+            <div style={{ width: 10, height: 10, borderRadius: "50%", background: role.color, flexShrink: 0 }} />
+            <div style={{ flex: 1 }}>
+              <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>{role.name}</div>
+              <div style={{ fontSize: 11, color: t.text3, marginTop: 2 }}>{role.description}</div>
+            </div>
+            <Badge style={{ fontSize: 10, padding: "2px 6px", background: t.surface, color: t.text3 }}>Built-in</Badge>
+          </div>
+        ))}
+      </div>
+
+      {customRoles.length > 0 && (
+        <>
+          <div style={{ fontSize: 11, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 8 }}>Custom</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 6, marginBottom: 16 }}>
+            {customRoles.map((role, idx) => (
+              <div key={idx} style={{ display: "flex", alignItems: "center", gap: 10, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "10px 12px" }}>
+                <div style={{ width: 10, height: 10, borderRadius: "50%", background: role.color || "#718096", flexShrink: 0 }} />
+                <div style={{ flex: 1 }}>
+                  <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>{role.name}</div>
+                  {role.description && <div style={{ fontSize: 11, color: t.text3, marginTop: 2 }}>{role.description}</div>}
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <Btn variant="secondary" size="sm" onClick={() => openEdit(idx)}><I name="edit" size={11} /> Edit</Btn>
+                  <Btn variant="danger" size="sm" disabled={saving} onClick={() => removeRole(idx)}><I name="trash" size={11} /></Btn>
+                </div>
+              </div>
+            ))}
+          </div>
+        </>
+      )}
+
+      {!addOpen && (
+        <Btn variant="primary" size="sm" onClick={openAdd}><I name="plus" size={12} /> Add Custom Role</Btn>
+      )}
+
+      {addOpen && (
+        <div style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, marginBottom: 10 }}>{editIdx !== null ? "Edit Role" : "New Custom Role"}</div>
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <div>
+              <Label>Role Name</Label>
+              <Input value={form.name} onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))} placeholder="e.g. Security Analyst" />
+            </div>
+            <div>
+              <Label>Description</Label>
+              <Input value={form.description} onChange={(e) => setForm((f) => ({ ...f, description: e.target.value }))} placeholder="What can this role do?" />
+            </div>
+            <div>
+              <Label>Colour</Label>
+              <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                <input type="color" value={form.color || "#3182ce"} onChange={(e) => setForm((f) => ({ ...f, color: e.target.value }))}
+                  style={{ width: 36, height: 28, border: "none", background: "none", cursor: "pointer", padding: 0 }} />
+                <span style={{ fontSize: 12, color: t.text3, fontFamily: "monospace" }}>{form.color}</span>
+              </div>
+            </div>
+          </div>
+          {err && <div style={{ fontSize: 11, color: t.red, marginTop: 8 }}>{err}</div>}
+          <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+            <Btn variant="primary" size="sm" disabled={saving} onClick={saveForm}>{saving ? "Saving…" : "Save Role"}</Btn>
+            <Btn variant="secondary" size="sm" onClick={() => setAddOpen(false)}>Cancel</Btn>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function InvitationsTab({ orgId, teams }) {
+  const t = useTokens();
+  const [invitations, setInvitations] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [email, setEmail] = useState("");
+  const [role, setRole] = useState("End User");
+  const [teamId, setTeamId] = useState("");
+  const [sendErr, setSendErr] = useState("");
+  const [sending, setSending] = useState(false);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    fetchOrgInvitationsForOrg(orgId).then((data) => { if (mounted) { setInvitations(data); setLoading(false); } });
+    return () => { mounted = false; };
+  }, [orgId]);
+
+  const handleSend = async () => {
+    const trimmed = email.trim().toLowerCase();
+    if (!trimmed || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(trimmed)) { setSendErr("Enter a valid email address."); return; }
+    setSendErr(""); setSending(true);
+    try {
+      const inv = await sendOrgInvitation(orgId, trimmed, role, teamId || null);
+      setInvitations((prev) => [inv, ...prev]);
+      setEmail(""); setRole("End User"); setTeamId("");
+    } catch (e) { setSendErr(e.message || "Failed to send."); } finally { setSending(false); }
+  };
+
+  const handleCancel = async (id) => {
+    await cancelOrgInvitation(id);
+    setInvitations((prev) => prev.map((i) => i.id === id ? { ...i, status: "Cancelled" } : i));
+  };
+
+  const statusStyle = (status) => ({
+    Pending:   { bg: t.yellowBg,  text: t.yellowText },
+    Accepted:  { bg: t.greenBg,   text: t.greenText  },
+    Declined:  { bg: t.redBg,     text: t.red        },
+    Cancelled: { bg: t.surface2,  text: t.text3      },
+  }[status] || { bg: t.surface2, text: t.text3 });
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 12 }}>Member Invitations</div>
+      <div style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 12, marginBottom: 16 }}>
+        <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+          <Input value={email} onChange={(e) => { setEmail(e.target.value); setSendErr(""); }}
+            placeholder="email@example.com" style={{ flex: "1 1 180px", padding: "7px 10px", fontSize: 12 }} />
+          <Sel value={role} onChange={(e) => setRole(e.target.value)} style={{ fontSize: 12, padding: "7px 10px" }}>
+            {["Admin", "Agent", "Catalog Manager", "End User"].map((r) => <option key={r}>{r}</option>)}
+          </Sel>
+          {teams.length > 0 && (
+            <Sel value={teamId} onChange={(e) => setTeamId(e.target.value)} style={{ fontSize: 12, padding: "7px 10px" }}>
+              <option value="">No specific team</option>
+              {teams.map((tm) => <option key={tm.id} value={tm.id}>{tm.name}</option>)}
+            </Sel>
+          )}
+          <Btn variant="primary" size="sm" disabled={sending || !email.trim()} onClick={handleSend}>
+            {sending ? "Sending…" : "Send Invite"}
+          </Btn>
+        </div>
+        {sendErr && <div style={{ fontSize: 11, color: t.red }}>{sendErr}</div>}
+        <div style={{ fontSize: 11, color: t.text3 }}>
+          Invited members will see the invitation in their notification panel when they log in.
+        </div>
+      </div>
+
+      <div style={{ fontSize: 12, fontWeight: 700, color: t.text, marginBottom: 8 }}>All Invitations</div>
+      {loading ? (
+        <div style={{ fontSize: 12, color: t.text3 }}>Loading…</div>
+      ) : invitations.length === 0 ? (
+        <div style={{ fontSize: 12, color: t.text3 }}>No invitations sent yet.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {invitations.map((inv) => {
+            const st = statusStyle(inv.status);
+            return (
+              <div key={inv.id} style={{ display: "flex", justifyContent: "space-between", padding: "9px 12px", border: `1px solid ${t.border}`, borderRadius: 8, alignItems: "center", gap: 10 }}>
+                <div style={{ flex: 1, minWidth: 0 }}>
+                  <div style={{ fontSize: 12, fontWeight: 600, color: t.text, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{inv.email}</div>
+                  <div style={{ fontSize: 11, color: t.text3, marginTop: 2 }}>
+                    {inv.role} • Sent {fmtDate(inv.sentAt)}
+                    {inv.acceptedAt ? ` • Joined ${fmtDate(inv.acceptedAt)}` : ""}
+                  </div>
+                </div>
+                <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0 }}>
+                  <Badge style={{ background: st.bg, color: st.text, fontSize: 10, padding: "2px 7px" }}>{inv.status}</Badge>
+                  {inv.status === "Pending" && (
+                    <Btn variant="danger" size="sm" onClick={() => handleCancel(inv.id)}>Cancel</Btn>
+                  )}
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ApiKeysTab({ orgId, currentUserId }) {
+  const t = useTokens();
+  const [keys, setKeys] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [newName, setNewName] = useState("");
+  const [creating, setCreating] = useState(false);
+  const [createErr, setCreateErr] = useState("");
+  const [justCreated, setJustCreated] = useState(null);
+
+  useEffect(() => {
+    let mounted = true;
+    setLoading(true);
+    fetchApiKeys(orgId).then((data) => { if (mounted) { setKeys(data); setLoading(false); } });
+    return () => { mounted = false; };
+  }, [orgId]);
+
+  const handleCreate = async () => {
+    if (!newName.trim()) { setCreateErr("Key name is required."); return; }
+    setCreateErr(""); setCreating(true);
+    try {
+      const created = await createApiKey(orgId, newName.trim(), currentUserId);
+      setKeys((prev) => [{ id: created.id, orgId: created.orgId, name: created.name, keyPrefix: created.keyPrefix, createdAt: created.createdAt, isActive: true }, ...prev]);
+      setJustCreated(created);
+      setNewName("");
+    } catch (e) { setCreateErr(e.message || "Failed to create key."); } finally { setCreating(false); }
+  };
+
+  const handleRevoke = async (id) => {
+    await revokeApiKey(id);
+    setKeys((prev) => prev.filter((k) => k.id !== id));
+    if (justCreated?.id === id) setJustCreated(null);
+  };
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>API Keys</div>
+      <div style={{ fontSize: 12, color: t.text3, marginBottom: 14, lineHeight: 1.6 }}>
+        API keys allow programmatic access to your organization's data.
+      </div>
+
+      <div style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 12, marginBottom: 16 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>Generate New Key</div>
+        <div style={{ display: "flex", gap: 8 }}>
+          <Input value={newName} onChange={(e) => { setNewName(e.target.value); setCreateErr(""); }}
+            placeholder="Key name, e.g. Monitoring Integration"
+            style={{ flex: 1, padding: "7px 10px", fontSize: 12 }} />
+          <Btn variant="primary" size="sm" disabled={creating || !newName.trim()} onClick={handleCreate}>
+            {creating ? "Creating…" : "Generate"}
+          </Btn>
+        </div>
+        {createErr && <div style={{ fontSize: 11, color: t.red, marginTop: 6 }}>{createErr}</div>}
+      </div>
+
+      {justCreated && (
+        <div style={{ background: t.greenBg, border: `1px solid ${t.greenText}44`, borderRadius: 8, padding: 12, marginBottom: 14 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: t.greenText, marginBottom: 6 }}>Key created — copy it now, it won't be shown again</div>
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            <code style={{ flex: 1, fontSize: 11, background: t.surface, border: `1px solid ${t.border}`, borderRadius: 4, padding: "6px 8px", color: t.text, wordBreak: "break-all", fontFamily: "monospace" }}>
+              {justCreated.fullKey}
+            </code>
+            <Btn variant="secondary" size="sm" onClick={() => navigator.clipboard.writeText(justCreated.fullKey)}>
+              <I name="copy" size={12} /> Copy
+            </Btn>
+          </div>
+        </div>
+      )}
+
+      <div style={{ fontSize: 12, fontWeight: 700, color: t.text, marginBottom: 8 }}>Active Keys</div>
+      {loading ? (
+        <div style={{ fontSize: 12, color: t.text3 }}>Loading…</div>
+      ) : keys.length === 0 ? (
+        <div style={{ fontSize: 12, color: t.text3 }}>No API keys yet.</div>
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {keys.map((key) => (
+            <div key={key.id} style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: "10px 12px", display: "flex", alignItems: "center", gap: 10 }}>
+              <span style={{ color: t.text3, flexShrink: 0, display: "flex" }}><I name="lock" size={14} /></span>
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div style={{ fontSize: 12, fontWeight: 700, color: t.text }}>{key.name}</div>
+                <div style={{ fontSize: 11, color: t.text3, marginTop: 2, fontFamily: "monospace" }}>
+                  {key.keyPrefix} • Created {fmtDate(key.createdAt)}
+                  {key.lastUsedAt ? ` • Last used ${fmtDate(key.lastUsedAt)}` : " • Never used"}
+                </div>
+              </div>
+              <Btn variant="danger" size="sm" onClick={() => handleRevoke(key.id)}><I name="trash" size={11} /> Revoke</Btn>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
   );
 }
 

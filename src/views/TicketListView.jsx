@@ -31,7 +31,7 @@ function isMultiSelectGesture(e) {
   return !!(e?.ctrlKey || e?.metaKey);
 }
 
-export function TicketListView({ typeFilter, tickets, users, currentUser, onOpenTicket, onNewTicket, priorityCatalog, onBulkUpdate, plan = "Free", onUpgrade }) {
+export function TicketListView({ typeFilter, tickets, users, currentUser, onOpenTicket, onNewTicket, priorityCatalog, onBulkUpdate, plan = "Free", onUpgrade, ticketTypes = [] }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
   const catalog = (priorityCatalog && Object.keys(priorityCatalog).length) ? priorityCatalog : PRIORITIES;
@@ -62,9 +62,9 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
       if (!search) return true;
       const q = search.toLowerCase();
       const reporter = users.find((u) => u.id === tk.reporter);
-      const haystack = `${tk.id} ${tk.title} ${tk.description || ""} ${(tk.tags || []).join(" ")} ${reporter?.name || ""}`.toLowerCase();
+      const haystack = `${tk.number} ${tk.title} ${tk.description || ""} ${(tk.tags || []).join(" ")} ${reporter?.name || ""}`.toLowerCase();
       if (searchMode === "exact") return haystack.includes(search.trim().toLowerCase());
-      if (searchMode === "id") return tk.id.toLowerCase().includes(q);
+      if (searchMode === "id") return tk.number.toLowerCase().includes(q);
       if (searchMode === "tag") return (tk.tags || []).some((tag) => String(tag).toLowerCase().includes(q));
       if (searchMode === "reporter") return (reporter?.name || "").toLowerCase().includes(q);
       return haystack.includes(q);
@@ -373,13 +373,13 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                     />
                     <div style={{ minWidth: 0, flex: 1 }}>
                       <div style={{ fontSize: 13, fontWeight: 700, color: t.text, marginBottom: 3, lineHeight: 1.3 }}>{tk.title}</div>
-                      <div style={{ fontSize: 10, color: t.text3, fontFamily: t.mono }}>{tk.id}</div>
+                      <div style={{ fontSize: 10, color: t.text3, fontFamily: t.mono }}>{tk.number}</div>
                     </div>
                   </div>
                   {assignee && <Avatar name={assignee.name} size={26} fs={9} />}
                 </div>
                 <div style={{ display: "flex", alignItems: "center", gap: 6, flexWrap: "wrap" }}>
-                  <TypeBadge type={tk.type} />
+                  <TypeBadge type={tk.type} ticketTypes={ticketTypes} />
                   <PriorityBadge priority={tk.priority} catalog={catalog} />
                   <StatusBadge status={tk.status} />
                   {tk.dueDate && (
@@ -484,7 +484,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                     {tk.title}
                   </div>
                   <div style={{ fontSize: 10, color: t.text3, fontFamily: t.mono, marginTop: 1 }}>
-                    {tk.id}
+                    {tk.number}
                   </div>
                   {(tk.dueDate != null || tk.estimateHours != null || tk.spentHours > 0) && (
                     <div style={{ fontSize: 10, color: t.text3, marginTop: 4, display: "flex", gap: 6, flexWrap: "wrap" }}>
@@ -498,7 +498,7 @@ export function TicketListView({ typeFilter, tickets, users, currentUser, onOpen
                     </div>
                   )}
                 </div>
-                <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><TypeBadge type={tk.type} /></div>
+                <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><TypeBadge type={tk.type} ticketTypes={ticketTypes} /></div>
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><PriorityBadge priority={tk.priority} catalog={catalog} /></div>
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}><StatusBadge status={tk.status} /></div>
                 <div style={{ display: "flex", justifyContent: "center", minWidth: 0 }}>{agent ? <Avatar name={agent.name} size={24} fs={8} /> : <span style={{ color: t.text3 }}>—</span>}</div>
