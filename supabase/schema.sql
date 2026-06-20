@@ -269,6 +269,65 @@ create index if not exists idx_org_invitations_email   on org_invitations(lower(
 create index if not exists idx_org_invitations_org_id  on org_invitations(org_id);
 create index if not exists idx_org_invitations_status  on org_invitations(status);
 
+-- Per-org sequential ticket numbering.
+-- last_val holds the most recently issued number; next ticket = last_val + 1.
+create table if not exists ticket_sequences (
+  org_id   text    not null,
+  prefix   text    not null,
+  last_val integer not null default 0,
+  primary key (org_id, prefix)
+);
+
+-- Atomic increment function. Seeds from existing tickets on first call per
+-- org+prefix so migrations from old random IDs keep counting upward correctly.
+create or replace function next_ticket_seq(p_org_id text, p_prefix text)
+returns integer
+language plpgsql
+as $$
+declare
+  v_next integer;
+begin
+  -- Ensure a row exists; seed last_val from the highest existing ticket ID
+  -- so that resuming a live database never repeats a number.
+  insert into ticket_sequences (org_id, prefix, last_val)
+  select
+    p_org_id,
+    p_prefix,
+    coalesce(
+      (select max(substring(id from '\d+$')::integer)
+       from   tickets
+       where  org_id = p_org_id
+         and  id ~ ('^' || p_prefix || '-\d+$')),
+      0
+    )
+  where not exists (
+    select 1 from ticket_sequences
+    where org_id = p_org_id and prefix = p_prefix
+  );
+
+  -- Row-level lock + increment is atomic; two concurrent calls get distinct values.
+  update ticket_sequences
+  set    last_val = last_val + 1
+  where  org_id = p_org_id and prefix = p_prefix
+  returning last_val into v_next;
+
+  return v_next;
+end;
+$$;
+
+-- Custom reports saved per organisation.
+create table if not exists custom_reports (
+  id         text   primary key,
+  org_id     text   not null,
+  name       text   not null,
+  config     jsonb  not null default '{}'::jsonb,
+  created_by text,
+  created_at bigint not null,
+  updated_at bigint not null
+);
+
+create index if not exists idx_custom_reports_org_id on custom_reports(org_id);
+
 -- ── INDEXES ──────────────────────────────────────────────────────────────────
 
 create index if not exists idx_teams_org_id              on teams(org_id);
@@ -334,6 +393,8 @@ alter table pir_field_configs     enable row level security;
 alter table service_catalog_items  enable row level security;
 alter table approvals             enable row level security;
 alter table activity_log          enable row level security;
+alter table ticket_sequences      enable row level security;
+alter table custom_reports        enable row level security;
 
 -- Drop all existing policies on every table, then create a single open policy.
 -- Using a DO block avoids per-table boilerplate and handles any old policy names.
@@ -346,8 +407,8 @@ begin
     'organizations', 'teams', 'users', 'tickets', 'ticket_comments',
     'articles', 'org_settings', 'team_settings', 'team_roles',
     'post_incident_reviews', 'closing_templates', 'pir_field_configs',
-    'service_catalog_items', 'approvals',
-    'activity_log'
+    'service_catalog_items', 'approvals', 'activity_log',
+    'ticket_sequences', 'custom_reports'
   ] loop
     for pol in
       select policyname
@@ -364,266 +425,27 @@ begin
 end $$;
 
 
--- ── SEED DATA ────────────────────────────────────────────────────────────────
--- Initial data so the app is usable immediately after schema import.
--- All inserts use ON CONFLICT DO NOTHING so re-running is safe.
+-- No seed data needed.
+-- The first person to sign up via the app becomes the Admin of their own org.
 
-do $$
-declare
-  now_ms bigint := extract(epoch from now())::bigint * 1000;
-begin
-
-  -- ── Organizations ──────────────────────────────────────────────────────
-  insert into organizations (id, name, domain, industry, plan)
-  values ('o_root', 'EurekaNow', 'example.com', 'Technology', 'Starter')
-  on conflict (id) do nothing;
-
-  -- ── Teams ──────────────────────────────────────────────────────────────
-  insert into teams (id, org_id, name, lead, icon) values
-    ('t_it',  'o_root', 'IT Support',  'u_admin', '🖥️'),
-    ('t_ops', 'o_root', 'Operations',  'u_admin', '⚙️')
-  on conflict (id) do nothing;
-
-  -- ── Users ──────────────────────────────────────────────────────────────
-  -- Change passwords before going to production.
-  insert into users (id, name, email, role, roles, org_id, team_id, title, password) values
-    ('u_admin',  'Admin User',    'admin@example.com', 'Admin',    '["Admin"]'::jsonb,     'o_root', 't_it',  'IT Administrator',   'admin123'),
-    ('u_agent1', 'Sarah Chen',    'sarah@example.com', 'Agent',    '["Agent"]'::jsonb,     'o_root', 't_it',  'Support Engineer',   'agent123'),
-    ('u_agent2', 'James Wright',  'james@example.com', 'Agent',    '["Agent"]'::jsonb,     'o_root', 't_ops', 'Ops Engineer',       'agent123'),
-    ('u_user1',  'Alice Johnson', 'alice@example.com', 'End User', '["End User"]'::jsonb,  'o_root', 't_it',  'Software Developer', 'user123')
-  on conflict (id) do nothing;
-
-  -- ── Org settings ───────────────────────────────────────────────────────
-  insert into org_settings (org_id, priorities, urgencies, categories, updated_at)
-  values (
-    'o_root',
-    '[{"name":"Critical","color":"#e53e3e","sla":4},{"name":"High","color":"#dd6b20","sla":8},{"name":"Medium","color":"#d69e2e","sla":24},{"name":"Low","color":"#3182ce","sla":72}]'::jsonb,
-    '["Critical","High","Medium","Low"]'::jsonb,
-    '["Network","Software","Hardware","Security","Access Management","Onboarding","Facilities","Healthcare","Engineering","Finance","Legal","Other"]'::jsonb,
-    now_ms
-  )
-  on conflict (org_id) do update
-    set categories = excluded.categories,
-        updated_at = excluded.updated_at;
-
-  -- ── Team settings ──────────────────────────────────────────────────────
-  insert into team_settings (team_id, priorities, urgencies, updated_at) values
-    ('t_it',
-     '[{"name":"Critical","color":"#e53e3e","sla":4},{"name":"High","color":"#dd6b20","sla":8},{"name":"Medium","color":"#d69e2e","sla":24},{"name":"Low","color":"#3182ce","sla":72}]'::jsonb,
-     '["Critical","High","Medium","Low"]'::jsonb, now_ms),
-    ('t_ops',
-     '[{"name":"Critical","color":"#e53e3e","sla":4},{"name":"High","color":"#dd6b20","sla":8},{"name":"Medium","color":"#d69e2e","sla":24},{"name":"Low","color":"#3182ce","sla":72}]'::jsonb,
-     '["Critical","High","Medium","Low"]'::jsonb, now_ms)
-  on conflict (team_id) do nothing;
-
-  -- ── Team roles ─────────────────────────────────────────────────────────
-  insert into team_roles (id, team_id, name, description, created_at) values
-    ('role_it_admin',    't_it',  'Admin',    'Full access',     now_ms),
-    ('role_it_agent',    't_it',  'Agent',    'Handle tickets',  now_ms),
-    ('role_it_end_user', 't_it',  'End User', 'Submit only',     now_ms),
-    ('role_ops_admin',   't_ops', 'Admin',    'Full access',     now_ms),
-    ('role_ops_agent',   't_ops', 'Agent',    'Handle tickets',  now_ms),
-    ('role_ops_end_user','t_ops', 'End User', 'Submit only',     now_ms)
-  on conflict (id) do nothing;
-
-  -- ── Sample tickets ─────────────────────────────────────────────────────
-  insert into tickets
-    (id, title, description, type, category, org_id, team_id, assignee,
-     reporter, priority, urgency, status, created_at, tags, parent_id, due_date, estimate_hours, spent_hours)
-  values
-    ('INC-0001',
-     'Authentication service degradation',
-     'Widespread auth failures affecting multiple services across the organisation.',
-     'Incident', 'Security', 'o_root', 't_it', 'u_agent1', 'u_admin',
-     'Critical', 'Critical', 'In Progress',
-     now_ms - 18000000,
-    '["major-incident","auth"]'::jsonb,
-     null,
-     now_ms + 7200000,
-     6,
-     4),
-    ('INC-0002',
-     'VPN login failures from remote networks',
-     'Users reporting VPN authentication failures when connecting from home.',
-     'Incident', 'Network', 'o_root', 't_it', 'u_agent1', 'u_user1',
-     'High', 'High', 'In Progress',
-     now_ms - 14400000,
-    '["vpn","auth"]'::jsonb,
-     'INC-0001',
-     now_ms + 1440000,
-     3,
-     1.5),
-    ('INC-0003',
-     'SSO portal returning 503 for external users',
-     'Single sign-on portal unreachable from outside the corporate network.',
-     'Incident', 'Security', 'o_root', 't_it', null, 'u_user1',
-     'High', 'High', 'Open',
-     now_ms - 10800000,
-    '["sso","auth"]'::jsonb,
-     'INC-0001',
-     now_ms + 3600000,
-     2,
-     0.5),
-    ('REQ-0001',
-     'New Figma access for design contractors',
-     'Request Figma Pro licenses for 5 contractors joining the design team.',
-     'Service Request', 'Access Management', 'o_root', 't_it', 'u_agent1', 'u_user1',
-     'Medium', 'Medium', 'Open',
-     now_ms - 36000000,
-    '["access","design"]'::jsonb,
-     null,
-     now_ms - 86400000,
-     2,
-     0),
-    ('CHG-0001',
-     'Scheduled server patch window — this weekend',
-     'Maintenance window to apply OS and security patches to all app servers.',
-     'Change Request', 'Software', 'o_root', 't_ops', 'u_agent2', 'u_admin',
-     'Low', 'Low', 'Open',
-     now_ms - 86400000,
-    '["maintenance","patching"]'::jsonb,
-     null,
-     now_ms - 43200000,
-     8,
-     0),
-    ('PRB-0001',
-     'Recurring auth certificate expiry — root cause',
-     'Investigating recurring outages caused by expired identity provider certificates.',
-     'Problem', 'Security', 'o_root', 't_it', 'u_admin', 'u_admin',
-     'High', 'High', 'Open',
-     now_ms - 172800000,
-    '["root-cause","certs"]'::jsonb,
-     null,
-     now_ms - 86400000,
-     5,
-     2),
-    ('TSK-0001',
-     'Update on-call runbook for auth incidents',
-     'Runbook needs updating following last weeks cert expiry incident.',
-     'Task', 'Security', 'o_root', 't_it', 'u_agent1', 'u_admin',
-     'Medium', 'Medium', 'Open',
-     now_ms - 43200000,
-    '["runbook","docs"]'::jsonb,
-     null,
-     now_ms - 21600000,
-     1,
-     0),
-    ('INC-0004',
-     'Database connection pool exhausted',
-     'Production database hitting max connection limit causing request timeouts.',
-     'Incident', 'Software', 'o_root', 't_ops', 'u_agent2', 'u_admin',
-     'Critical', 'Critical', 'Resolved',
-     now_ms - 259200000,
-    '["database","performance"]'::jsonb,
-     null,
-     now_ms - 172800000,
-     10,
-     10)
-  on conflict (id) do nothing;
-
-  -- Parent-child link: INC-0002 and INC-0003 are children of INC-0001
-  update tickets set parent_id = 'INC-0001'
-  where  id in ('INC-0002', 'INC-0003') and parent_id is null;
-
-  -- ── Sample comments ────────────────────────────────────────────────────
-  insert into ticket_comments (id, ticket_id, user_id, text, created_at) values
-    ('cmt-0001', 'INC-0001', 'u_agent1',
-     'Initial triage complete. Escalating to security team and engaging identity provider vendor.',
-     now_ms - 16200000),
-    ('cmt-0002', 'INC-0001', 'u_admin',
-     'Vendor confirmed cert expiry. Rolling out new certificate now.',
-     now_ms - 14400000),
-    ('cmt-0003', 'INC-0002', 'u_agent1',
-     'Confirmed as downstream impact of INC-0001. Will resolve when auth service is restored.',
-     now_ms - 12600000)
-  on conflict (id) do nothing;
-
-  -- ── Sample KB articles ─────────────────────────────────────────────────
-  insert into articles (id, title, org_id, category, folder, author, editors, content, views, tags, created_at)
-  values
-    ('kb-0001',
-     'How to reset VPN credentials',
-     'o_root', 'Network', 'Access', 'u_agent1', '[]'::jsonb,
-     E'## Resetting VPN Credentials\n\n1. Navigate to the VPN portal at `vpn.example.com`\n2. Click **Forgot Password** on the login page\n3. Enter your company email address\n4. Complete the MFA verification step\n5. Set a new password meeting the complexity requirements\n\n> If you do not receive the reset email within 5 minutes, check your spam folder or contact IT Support.',
-     23, '["vpn","password","access"]'::jsonb, now_ms - 604800000),
-
-    ('kb-0002',
-     'Onboarding checklist for new starters',
-     'o_root', 'Onboarding', 'General', 'u_admin', '["u_agent1"]'::jsonb,
-     E'## New Starter Checklist\n\n- [ ] Set up corporate email\n- [ ] Configure MFA on all accounts\n- [ ] Install required software (see Software Catalogue)\n- [ ] Join relevant Slack channels\n- [ ] Complete mandatory security awareness training\n- [ ] Request access to required systems via the Service Portal',
-     41, '["onboarding","new-starter"]'::jsonb, now_ms - 1209600000),
-
-    ('kb-0003',
-     'Incident severity classification guide',
-     'o_root', 'IT Support', 'Process', 'u_admin', '[]'::jsonb,
-     E'## Incident Severity Levels\n\n| Priority | SLA     | Definition |\n|----------|---------|------------|\n| Critical | 4 hours | Complete service outage or data breach |\n| High     | 8 hours | Major functionality impaired for many users |\n| Medium   | 24 hours| Minor functionality impaired, workaround available |\n| Low      | 72 hours| Cosmetic issue or question |\n\nAlways err on the side of higher priority — it is easier to downgrade than to recover from a missed SLA.',
-     18, '["incidents","sla","process"]'::jsonb, now_ms - 2592000000)
-  on conflict (id) do nothing;
-
-  -- ── PIR field configuration ────────────────────────────────────────────
-  insert into pir_field_configs (id, org_id, team_id, fields, created_at, updated_at)
-  values (
-    'pirc-0001', 'o_root', 't_it',
-    '[
-      {"name":"summary",     "label":"Summary",      "type":"text", "required":true},
-      {"name":"rootCause",   "label":"Root Cause",   "type":"text", "required":true},
-      {"name":"timeline",    "label":"Timeline",     "type":"text", "required":false},
-      {"name":"actionItems", "label":"Action Items", "type":"list", "required":false},
-      {"name":"owner",       "label":"Owner",        "type":"user", "required":true}
-    ]'::jsonb,
-    now_ms, now_ms
-  )
-  on conflict (id) do nothing;
-
-  -- ── Service catalog items ───────────────────────────────────────────
-  insert into service_catalog_items (id, org_id, team_id, name, description, category, icon, default_type, default_priority, default_urgency, requires_approval, approver_role, active, created_at, updated_at)
-  values
-    ('cat-0001', 'o_root', 't_it', 'Software Access Request', 'Request access to approved business software and tools.', 'Access Management', 'request', 'Service Request', 'Medium', 'Medium', true, 'Admin', true, now_ms - 259200000, now_ms - 259200000),
-    ('cat-0002', 'o_root', 't_it', 'Hardware Replacement', 'Replace a damaged or aged laptop, monitor, or accessory.', 'Hardware', 'device-laptop', 'Service Request', 'Low', 'Low', false, 'Admin', true, now_ms - 259200000, now_ms - 259200000),
-    ('cat-0003', 'o_root', 't_ops', 'Emergency Change', 'Fast-track a high-impact production change for an incident.', 'Software', 'change', 'Change Request', 'High', 'High', true, 'Admin', true, now_ms - 259200000, now_ms - 259200000)
-  on conflict (id) do nothing;
-
-  -- ── Approvals ────────────────────────────────────────────────────────
-  insert into approvals (id, org_id, team_id, ticket_id, catalog_item_id, requested_by, requested_for, approver_id, approver_role, status, decision, comments, due_at, created_at, decided_at)
-  values
-    ('appr-0001', 'o_root', 't_it', 'REQ-0001', 'cat-0001', 'u_user1', 'u_user1', 'u_admin', 'Admin', 'Pending', '', '', now_ms - 86400000, now_ms - 21600000, null),
-    ('appr-0002', 'o_root', 't_ops', 'CHG-0001', 'cat-0003', 'u_admin', 'u_admin', 'u_agent2', 'Admin', 'Approved', 'Approved', 'Approved for maintenance window.', now_ms - 86400000, now_ms - 86400000, now_ms - 72000000)
-  on conflict (id) do nothing;
-
-  -- ── Closing template ───────────────────────────────────────────────────
-  insert into closing_templates
-    (id, org_id, team_id, name, description, content, apply_to_types, created_at, updated_at)
-  values
-    ('tmpl-0001', 'o_root', 't_it',
-     'Standard Incident Closure',
-     'Use when closing a fully resolved incident.',
-     'Incident resolved and verified. Root cause: [ROOT_CAUSE]. All affected systems are operational. Impacted users have been notified.',
-     '["Incident"]'::jsonb,
-     now_ms, now_ms),
-    ('tmpl-0002', 'o_root', 't_it',
-     'Standard Service Request Closure',
-     'Use when a service request has been fulfilled.',
-     'Your request has been completed. Please verify access and let us know if you encounter any issues.',
-     '["Service Request"]'::jsonb,
-     now_ms, now_ms)
-  on conflict (id) do nothing;
-
-end $$;
 
 
 -- ════════════════════════════════════════════════════════════════════════════
--- QUICK REFERENCE
+-- SETUP INSTRUCTIONS
 -- ════════════════════════════════════════════════════════════════════════════
 --
--- Seeded login credentials (change before going to production):
---
---   admin@example.com   / admin123   (Admin  — IT Support)
---   sarah@example.com   / agent123   (Agent  — IT Support)
---   james@example.com   / agent123   (Agent  — Operations)
---   alice@example.com   / user123    (End User — IT Support)
+-- 1. Run this entire file in Supabase → SQL Editor → New Query.
+-- 2. Add your Supabase credentials to .env:
+--      REACT_APP_SUPABASE_URL=https://<ref>.supabase.co
+--      REACT_APP_SUPABASE_ANON_KEY=<your-anon-key>
+-- 3. Before running, edit the first-run block above and replace:
+--      admin@yourcompany.com  →  your real admin email
+--      changeme               →  a strong password
+-- 4. Log in and change your password via Settings immediately.
 --
 -- Tables created:
 --   organizations, teams, users, tickets, ticket_comments, articles,
 --   org_settings, team_settings, team_roles, post_incident_reviews,
---   closing_templates, pir_field_configs, activity_log
+--   closing_templates, pir_field_configs, service_catalog_items,
+--   approvals, activity_log, org_invitations, ticket_sequences, custom_reports
 -- ════════════════════════════════════════════════════════════════════════════

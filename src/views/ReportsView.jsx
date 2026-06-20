@@ -2,13 +2,14 @@
 // REPORTS & ANALYTICS VIEW
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useTokens } from "../core/hooks.js";
 import { useBreakpoint } from "../core/hooks.js";
 import { I } from "../core/icons.jsx";
 import { Btn, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
 import { slaForPriority, uid } from "../core/utils.js";
 import { STATUSES, TICKET_TYPES, CATEGORIES } from "../core/constants.js";
+import { fetchCustomReports, saveCustomReport, deleteCustomReport } from "../core/api.js";
 
 // ── SVG Line Chart ────────────────────────────────────────────────────────────
 
@@ -194,14 +195,7 @@ const CHART_TYPES = [
   { value: "table", label: "Table", icon: "kb"     },
 ];
 
-const LS_KEY = "eureka_custom_reports";
 
-function loadSavedReports() {
-  try { return JSON.parse(localStorage.getItem(LS_KEY) || "[]"); } catch { return []; }
-}
-function persistReports(list) {
-  try { localStorage.setItem(LS_KEY, JSON.stringify(list)); } catch {}
-}
 
 function makeDefaultConfig() {
   return {
@@ -684,13 +678,17 @@ function ReportRunModal({ report, tickets, users, onClose }) {
 // MAIN VIEW
 // ═════════════════════════════════════════════════════════════════════════════
 
-export function ReportsView({ tickets, users }) {
+export function ReportsView({ tickets, users, currentUser }) {
   const t = useTokens();
   const { isMobile } = useBreakpoint();
   const [range, setRange] = useState(30);
 
-  // Custom reports state
-  const [savedReports, setSavedReports] = useState(() => loadSavedReports());
+  // Custom reports state — loaded from DB/demo-state on mount
+  const [savedReports, setSavedReports] = useState([]);
+  useEffect(() => {
+    if (!currentUser?.orgId) return;
+    fetchCustomReports(currentUser.orgId).then(setSavedReports).catch(() => {});
+  }, [currentUser?.orgId]);
   const [builderOpen, setBuilderOpen] = useState(false);
   const [editingReport, setEditingReport] = useState(null);
   const [viewingReport, setViewingReport] = useState(null);
@@ -761,7 +759,7 @@ export function ReportsView({ tickets, users }) {
 
   // ── Custom report handlers ──────────────────────────────────────────────────
 
-  const handleSaveReport = (config) => {
+  const handleSaveReport = async (config) => {
     const isEdit = !!editingReport?.id;
     const report = {
       ...config,
@@ -769,19 +767,17 @@ export function ReportsView({ tickets, users }) {
       createdAt: isEdit ? editingReport.createdAt : Date.now(),
       updatedAt: Date.now(),
     };
-    const next = isEdit
-      ? savedReports.map(r => r.id === report.id ? report : r)
-      : [report, ...savedReports];
-    setSavedReports(next);
-    persistReports(next);
+    await saveCustomReport(currentUser.orgId, report).catch(() => {});
+    setSavedReports((prev) =>
+      isEdit ? prev.map((r) => (r.id === report.id ? report : r)) : [report, ...prev]
+    );
     setBuilderOpen(false);
     setEditingReport(null);
   };
 
-  const handleDeleteReport = (id) => {
-    const next = savedReports.filter(r => r.id !== id);
-    setSavedReports(next);
-    persistReports(next);
+  const handleDeleteReport = async (id) => {
+    await deleteCustomReport(id).catch(() => {});
+    setSavedReports((prev) => prev.filter((r) => r.id !== id));
   };
 
   const handleEditReport = (report) => {
