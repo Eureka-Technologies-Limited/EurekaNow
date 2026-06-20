@@ -3,7 +3,7 @@
 // Pure helpers with no React dependencies. Safe to import anywhere.
 // ─────────────────────────────────────────────────────────────────────────────
 
-import { PRIORITIES } from "./constants.js";
+import { PRIORITIES, ROLE_PERMISSION_DEFAULTS } from "./constants.js";
 
 /** Random short ID for new records */
 export const uid = () => Math.random().toString(36).slice(2, 9);
@@ -65,4 +65,27 @@ export const findPriorityCfg = (catalog = {}, priority) => {
   const found = key ? catalog[key] : null;
   if (typeof window !== "undefined" && window.__EUREKA_DEBUG_SLA) console.debug("findPriorityCfg: lookup", { priority, foundKey: key, found });
   return found;
+};
+
+// ── Permission helpers ────────────────────────────────────────────────────────
+
+/** Get the normalised roles array for a user object */
+const userRoles = (user) =>
+  Array.isArray(user?.roles) && user.roles.length ? user.roles : [user?.role].filter(Boolean);
+
+/**
+ * Check whether `user` has permission `permKey` according to the orgSetting.
+ * Admins always pass. Falls back to ROLE_PERMISSION_DEFAULTS when the org
+ * has not yet configured role_permissions.
+ */
+export const canDo = (user, orgSetting, permKey) => {
+  const roles = userRoles(user);
+  if (roles.includes("Admin")) return true;
+
+  const configured = orgSetting?.rolePermissions;
+  const perms = configured && Object.keys(configured).length > 0
+    ? configured
+    : ROLE_PERMISSION_DEFAULTS;
+
+  return roles.some((r) => !!(perms[r]?.[permKey]));
 };

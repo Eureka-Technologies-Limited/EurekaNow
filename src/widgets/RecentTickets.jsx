@@ -83,7 +83,7 @@ export function RecentTickets({ tickets, users, onOpenTicket, priorityCatalog })
                   <div style={{ fontSize: 12, fontWeight: 600, color: t.text, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
                     {tk.title}
                   </div>
-                  <div style={{ fontSize: 10, color: t.text3, marginTop: 1 }}>{tk.id}</div>
+                  <div style={{ fontSize: 10, color: t.text3, marginTop: 1 }}>{tk.number}</div>
                 </div>
                 <StatusBadge status={tk.status} />
                 {assignee && <Avatar name={assignee.name} size={20} fs={7} />}

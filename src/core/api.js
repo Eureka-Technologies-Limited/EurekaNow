@@ -18,15 +18,12 @@ const TABLES = {
   catalogItems: "service_catalog_items",
   approvals: "approvals",
   activityLog: "activity_log",
+  orgInvitations: "org_invitations",
+  ticketSequences: "ticket_sequences",
+  customReports: "custom_reports",
 };
 
-const DEMO_STORAGE_KEY = "eurekanow_demo_state_v1";
-const SUPABASE_CONFIGURED = Boolean(process.env.REACT_APP_SUPABASE_URL && process.env.REACT_APP_SUPABASE_ANON_KEY);
-
-export const DEMO_CREDENTIALS = {
-  email: "demo@eurekanow.local",
-  password: "demo123",
-};
+const normalizeEmail = (value) => String(value || "").trim().toLowerCase();
 
 const asArray = (value) => (Array.isArray(value) ? value : []);
 
@@ -54,20 +51,20 @@ const normalizePriorities = (value) => {
     .map((item) => {
       const rawColor = item?.color;
       const name = String(item?.name || "").trim();
-      
+
       // Try to preserve the color if it's a valid hex color
       let color = isValidHexColor(rawColor) ? String(rawColor).trim() : null;
-      
+
       // If no valid color, try to recover from PRIORITIES constant
       if (!color && PRIORITIES[name]) {
         color = PRIORITIES[name].color;
       }
-      
+
       // Fall back to a neutral color if still no valid color
       if (!color) {
         color = "#888888";
       }
-      
+
       return {
         name,
         color,
@@ -130,6 +127,7 @@ const toComment = (row) => ({
 
 const toTicket = (row, commentsByTicketId = {}) => ({
   id: row.id,
+  number: row.number || row.id,
   title: row.title,
   description: row.description || "",
   type: row.type,
@@ -149,6 +147,7 @@ const toTicket = (row, commentsByTicketId = {}) => ({
   dueDate: row.due_date ? Number(row.due_date) : null,
   estimateHours: row.estimate_hours != null ? Number(row.estimate_hours) : null,
   spentHours: row.spent_hours != null ? Number(row.spent_hours) : 0,
+  customFields: (row.custom_fields && typeof row.custom_fields === "object" && !Array.isArray(row.custom_fields)) ? row.custom_fields : {},
   comments: commentsByTicketId[row.id] || [],
 });
 
@@ -179,6 +178,8 @@ const toOrgSettings = (row) => {
     rolePermissions: row?.role_permissions || {},
     requireApprovals: Boolean(row?.require_approvals),
     approvalMode: row?.approval_mode || "all",
+    ticketTypes: Array.isArray(row?.ticket_types) && row.ticket_types.length ? row.ticket_types : [],
+    orgRoles: Array.isArray(row?.org_roles) ? row.org_roles : [],
     updatedAt: Number(row?.updated_at || 0),
   };
 };
@@ -256,38 +257,12 @@ const toCatalogItem = (row) => ({
   approverMode: row.approver_mode || "role", // 'role' | 'user' | 'team'
   approverTeamId: row.approver_team_id || "",
   active: row.active !== false,
+  requestFields: Array.isArray(row.request_fields) ? row.request_fields : [],
   createdAt: Number(row.created_at),
   updatedAt: Number(row.updated_at),
 });
 
 export async function createCatalogItem(payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const item = {
-      id: `cat_${uid()}`,
-      orgId: payload.orgId,
-      teamId: payload.teamId || "",
-      name: payload.name,
-      description: payload.description || "",
-      category: payload.category || "General",
-      icon: payload.icon || "request",
-      defaultType: payload.defaultType || "Service Request",
-      defaultPriority: payload.defaultPriority || "Medium",
-      defaultUrgency: payload.defaultUrgency || "Medium",
-      requiresApproval: !!payload.requiresApproval,
-      approverRole: payload.approverRole || "Admin",
-      approverId: payload.approverId || "",
-      approverMode: payload.approverMode || "role",
-      approverTeamId: payload.approverTeamId || "",
-      active: payload.active !== false,
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-    state.catalogItems = [item, ...(state.catalogItems || [])];
-    saveDemoState();
-    return clone(item);
-  }
-
   const row = {
     id: `cat_${uid()}`,
     org_id: payload.orgId,
@@ -305,6 +280,7 @@ export async function createCatalogItem(payload) {
     approver_mode: payload.approverMode || "role",
     approver_team_id: payload.approverTeamId || null,
     active: payload.active !== false,
+    request_fields: Array.isArray(payload.requestFields) ? payload.requestFields : [],
     created_at: Date.now(),
     updated_at: Date.now(),
   };
@@ -320,22 +296,13 @@ export async function createCatalogItem(payload) {
 }
 
 export async function updateCatalogItem(itemId, payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const index = (state.catalogItems || []).findIndex((row) => row.id === itemId);
-    if (index < 0) throw new Error("Catalog item not found.");
-    const next = { ...state.catalogItems[index], ...payload, updatedAt: Date.now() };
-    state.catalogItems[index] = next;
-    saveDemoState();
-    return clone(next);
-  }
-
   const patch = {};
   if ("approverRole" in payload) patch.approver_role = payload.approverRole;
   if ("approverId" in payload) patch.approver_id = payload.approverId || null;
   if ("approverMode" in payload) patch.approver_mode = payload.approverMode || "role";
   if ("approverTeamId" in payload) patch.approver_team_id = payload.approverTeamId || null;
   if ("active" in payload) patch.active = !!payload.active;
+  if ("requestFields" in payload) patch.request_fields = Array.isArray(payload.requestFields) ? payload.requestFields : [];
 
   if (!Object.keys(patch).length) {
     const { data, error } = await supabase.from(TABLES.catalogItems).select("*").eq("id", itemId).single();
@@ -374,341 +341,42 @@ const fail = (error, fallback) => {
   }
 };
 
-const makeTicketId = (type) => {
-  const prefix = TICKET_PREFIX[type] || "TKT";
-  const random = String(Math.floor(Math.random() * 9000) + 1000);
-  return `${prefix}-${random}`;
-};
+// Returns the next sequential ticket number for an org, e.g. INC-0042.
+// resolvedPrefix is passed explicitly from the ticket type definition so custom
+// types don't need entries in TICKET_PREFIX.
+async function nextTicketId(type, orgId, prefix) {
+  const resolvedPrefix = prefix || TICKET_PREFIX[type] || "TKT";
 
-const ago = (hours) => Date.now() - hours * 60 * 60 * 1000;
+  const { data, error } = await supabase.rpc("next_ticket_seq", {
+    p_org_id: orgId,
+    p_prefix: resolvedPrefix,
+  });
+  if (error) throw new Error(error.message);
+  return `${resolvedPrefix}-${String(data).padStart(4, "0")}`;
+}
 
-const makeDemoSeed = () => {
-  const priorities = defaultPrioritiesArray();
-  const baseOrg = { id: "o_demo", name: "Demo Organization", domain: "demo.local", industry: "Technology", plan: "Starter" };
-  const baseTeam = { id: "t_demo", orgId: "o_demo", name: "Support Team", lead: "u_demo", icon: "IT" };
-  const demoUser = { id: "u_demo", name: "Demo User", email: DEMO_CREDENTIALS.email, role: "Admin", roles: ["Admin"], orgId: "o_demo", teamId: "t_demo", title: "Demo Administrator" };
-  const agentUser = { id: "u_demo_agent", name: "Support Agent", email: "agent@demo.local", role: "Agent", roles: ["Agent"], orgId: "o_demo", teamId: "t_demo", title: "Support Engineer" };
+const getExistingUserByEmail = async (email) => {
+  const normalizedEmail = normalizeEmail(email);
 
-  const comments = [{ id: "c_demo_1", userId: "u_demo_agent", text: "Initial triage completed.", createdAt: ago(1.5) }];
-
-  return {
-    orgs: [baseOrg],
-    teams: [baseTeam],
-    users: [demoUser, agentUser],
-    tickets: [
-      {
-        id: "INC-9000",
-        title: "Major Incident: Authentication service degradation",
-        description: "Widespread authentication failures affecting multiple services across the organisation.",
-        type: "Incident",
-        category: "Security",
-        orgId: "o_demo",
-        teamId: "t_demo",
-        assignee: "u_demo_agent",
-        reporter: "u_demo",
-        priority: "Critical",
-        urgency: "Critical",
-        status: "In Progress",
-        createdAt: ago(5),
-        tags: ["major-incident", "auth"],
-        parentId: null,
-        dueDate: ago(1),
-        estimateHours: 6,
-        spentHours: 4,
-        comments: [],
-      },
-      {
-        id: "INC-9001",
-        title: "Demo incident: VPN login failures",
-        description: "Users report VPN auth failures from remote network.",
-        type: "Incident",
-        category: "Network",
-        orgId: "o_demo",
-        teamId: "t_demo",
-        assignee: "u_demo_agent",
-        reporter: "u_demo",
-        priority: "High",
-        urgency: "High",
-        status: "In Progress",
-        createdAt: ago(4),
-        tags: ["vpn", "auth"],
-        parentId: "INC-9000",
-        dueDate: ago(2),
-        estimateHours: 3,
-        spentHours: 1.5,
-        comments,
-      },
-      {
-        id: "INC-9003",
-        title: "Demo incident: SSO portal unreachable",
-        description: "Single sign-on portal returning 503 for external users.",
-        type: "Incident",
-        category: "Security",
-        orgId: "o_demo",
-        teamId: "t_demo",
-        assignee: "",
-        reporter: "u_demo",
-        priority: "High",
-        urgency: "High",
-        status: "Open",
-        createdAt: ago(3),
-        tags: ["sso", "auth"],
-        parentId: "INC-9000",
-        dueDate: ago(0.5),
-        estimateHours: 2,
-        spentHours: 0.5,
-        comments: [],
-      },
-      {
-        id: "REQ-9002",
-        title: "Demo request: New software access",
-        description: "Request access to design tools for contractor.",
-        type: "Service Request",
-        category: "Access Management",
-        orgId: "o_demo",
-        teamId: "t_demo",
-        assignee: "u_demo_agent",
-        reporter: "u_demo",
-        priority: "Medium",
-        urgency: "Medium",
-        status: "Open",
-        createdAt: ago(10),
-        tags: ["access"],
-        parentId: null,
-        dueDate: ago(-24),
-        estimateHours: 2,
-        spentHours: 0,
-        comments: [],
-      },
-    ],
-    articles: [
-      {
-        id: "kb_demo_1",
-        title: "How to reset VPN credentials",
-        orgId: "o_demo",
-        category: "Network",
-        folder: "Access",
-        author: "u_demo_agent",
-        createdAt: ago(100),
-        views: 15,
-        tags: ["vpn", "password"],
-        content: "1. Open the VPN portal.\n2. Click reset password.\n3. Complete MFA verification.",
-      },
-    ],
-    orgSettings: [{ orgId: "o_demo", priorities, priorityMap: prioritiesToMap(priorities), urgencies: DEFAULT_URGENCIES, categories: CATEGORIES, approvalMode: "all", updatedAt: Date.now() }],
-    teamSettings: [{ teamId: "t_demo", priorities, priorityMap: prioritiesToMap(priorities), urgencies: DEFAULT_URGENCIES, updatedAt: Date.now() }],
-    teamRoles: [
-      { id: "role_demo_admin", teamId: "t_demo", name: "Admin", description: "Full access", createdAt: ago(200) },
-      { id: "role_demo_agent", teamId: "t_demo", name: "Agent", description: "Handle tickets", createdAt: ago(200) },
-      { id: "role_demo_end_user", teamId: "t_demo", name: "End User", description: "Submit only", createdAt: ago(200) },
-    ],
-    postIncidentReviews: [
-      {
-        id: "pir_demo_1",
-        ticketId: "INC-9001",
-        orgId: "o_demo",
-        teamId: "t_demo",
-        summary: "Authentication outage affected remote workers.",
-        rootCause: "Expired upstream identity certificate.",
-        timeline: "09:00 detection, 09:25 cert rolled, 09:35 validation complete.",
-        actionItems: ["Add cert expiry alert", "Document runbook"],
-        owner: "u_demo_agent",
-        customData: {},
-        createdAt: ago(3),
-        updatedAt: ago(2),
-      },
-    ],
-    closingTemplates: [
-      {
-        id: "tmpl_demo_1",
-        orgId: "o_demo",
-        teamId: "t_demo",
-        name: "Standard Incident Close",
-        description: "Template for closing standard incidents",
-        content: "Incident resolved and verified. Root cause: [ROOT_CAUSE]. All affected systems are operational.",
-        applyToTypes: ["Incident"],
-        createdAt: ago(50),
-        updatedAt: ago(50),
-      },
-    ],
-    pirFieldConfigs: [
-      {
-        id: "pir_cfg_demo_1",
-        orgId: "o_demo",
-        teamId: "t_demo",
-        fields: [
-          { name: "summary", label: "Summary", type: "text", required: true },
-          { name: "rootCause", label: "Root Cause", type: "text", required: true },
-          { name: "timeline", label: "Timeline", type: "text", required: false },
-          { name: "actionItems", label: "Action Items", type: "list", required: false },
-          { name: "owner", label: "Owner", type: "user", required: true },
-        ],
-        createdAt: ago(100),
-        updatedAt: ago(100),
-      },
-    ],
-    catalogItems: [
-      {
-        id: "cat_demo_1",
-        orgId: "o_demo",
-        teamId: "t_demo",
-        name: "Software Access Request",
-        description: "Request access to approved business software and tools.",
-        category: "Access Management",
-        icon: "request",
-        defaultType: "Service Request",
-        defaultPriority: "Medium",
-        defaultUrgency: "Medium",
-        requiresApproval: true,
-        approverRole: "Admin",
-        active: true,
-        createdAt: ago(120),
-        updatedAt: ago(120),
-      },
-      {
-        id: "cat_demo_2",
-        orgId: "o_demo",
-        teamId: "t_demo",
-        name: "Hardware Replacement",
-        description: "Replace a damaged or aged laptop, monitor, or accessory.",
-        category: "Hardware",
-        icon: "device-laptop",
-        defaultType: "Service Request",
-        defaultPriority: "Low",
-        defaultUrgency: "Low",
-        requiresApproval: false,
-        approverRole: "Admin",
-        active: true,
-        createdAt: ago(120),
-        updatedAt: ago(120),
-      },
-      {
-        id: "cat_demo_3",
-        orgId: "o_demo",
-        teamId: "t_demo",
-        name: "Emergency Change",
-        description: "Fast-track a high-impact production change for an incident.",
-        category: "Software",
-        icon: "change",
-        defaultType: "Change Request",
-        defaultPriority: "High",
-        defaultUrgency: "High",
-        requiresApproval: true,
-        approverRole: "Admin",
-        active: true,
-        createdAt: ago(120),
-        updatedAt: ago(120),
-      },
-    ],
-    approvals: [
-      {
-        id: "appr_demo_1",
-        orgId: "o_demo",
-        teamId: "t_demo",
-        ticketId: "REQ-9002",
-        catalogItemId: "cat_demo_1",
-        requestedBy: "u_demo",
-        requestedFor: "u_demo",
-        approverId: "u_demo",
-        approverRole: "Admin",
-        status: "Pending",
-        decision: "",
-        comments: "",
-        dueAt: ago(-12),
-        createdAt: ago(6),
-        decidedAt: null,
-      },
-      {
-        id: "appr_demo_2",
-        orgId: "o_demo",
-        teamId: "t_demo",
-        ticketId: "CHG-0001",
-        catalogItemId: "cat_demo_3",
-        requestedBy: "u_admin",
-        requestedFor: "u_admin",
-        approverId: "u_demo_agent",
-        approverRole: "Admin",
-        status: "Approved",
-        decision: "Approved",
-        comments: "Approved for maintenance window.",
-        dueAt: ago(-24),
-        createdAt: ago(24),
-        decidedAt: ago(20),
-      },
-    ],
-  };
-};
-
-let demoState = null;
-let forceDemoMode = false;
-
-const clone = (value) => JSON.parse(JSON.stringify(value));
-
-const saveDemoState = () => {
-  if (typeof window === "undefined") return;
-  try {
-    window.localStorage.setItem(DEMO_STORAGE_KEY, JSON.stringify(demoState));
-  } catch {
-    // Ignore storage failures in restricted environments.
-  }
-};
-
-const getDemoState = () => {
-  if (demoState) return demoState;
-
-  if (typeof window !== "undefined") {
-    try {
-      const raw = window.localStorage.getItem(DEMO_STORAGE_KEY);
-      if (raw) {
-        demoState = JSON.parse(raw);
-        return demoState;
-      }
-    } catch {
-      // Fall through to seed.
-    }
+  if (!normalizedEmail) {
+    return null;
   }
 
-  demoState = makeDemoSeed();
-  saveDemoState();
-  return demoState;
-};
+  const { data, error } = await supabase
+    .from(TABLES.users)
+    .select("*")
+    .ilike("email", normalizedEmail)
+    .limit(1)
+    .maybeSingle();
 
-const isDemoLogin = (email, password) =>
-  email.trim().toLowerCase() === DEMO_CREDENTIALS.email.toLowerCase() && password === DEMO_CREDENTIALS.password;
-
-const shouldUseDemoMode = () => !SUPABASE_CONFIGURED || forceDemoMode;
-
-const isFetchFailure = (error) => {
-  const message = String(error?.message || error || "").toLowerCase();
-  return (
-    message.includes("failed to fetch")
-    || message.includes("networkerror")
-    || message.includes("load failed")
-    || message.includes("fetch")
-  );
-};
-
-const getDemoUser = () => {
-  const state = getDemoState();
-  return state.users.find((u) => u.email.toLowerCase() === DEMO_CREDENTIALS.email.toLowerCase()) || state.users[0];
-};
-
-const ensureSupabaseOrDemo = () => {
-  if (!SUPABASE_CONFIGURED) {
-    throw new Error(`Supabase is not configured. Use demo account: ${DEMO_CREDENTIALS.email} / ${DEMO_CREDENTIALS.password}`);
+  if (error && error.code !== "PGRST116") {
+    throw new Error(error.message);
   }
+
+  return data || null;
 };
 
 export async function loginWithEmailPassword(email, password) {
-  if (isDemoLogin(email, password)) {
-    forceDemoMode = true;
-    return clone(getDemoUser());
-  }
-
-  forceDemoMode = false;
-
-  ensureSupabaseOrDemo();
-
   const { data, error } = await supabase
     .from(TABLES.users)
     .select("*")
@@ -726,9 +394,50 @@ export async function loginWithEmailPassword(email, password) {
   return toUser(data);
 }
 
+export async function registerWithEmailPassword(payload) {
+  const fullName = String(payload?.fullName || "").trim();
+  const email = normalizeEmail(payload?.email);
+  const password = String(payload?.password || "");
+  const organizationName = String(payload?.organizationName || "").trim() || `${fullName || email.split("@")[0] || "User"}'s Workspace`;
+  const teamName = String(payload?.teamName || "").trim();
+  const title = String(payload?.title || "").trim();
+
+  if (!fullName) throw new Error("Full name is required.");
+  if (!email) throw new Error("Email address is required.");
+  if (password.length < 8) throw new Error("Password must be at least 8 characters.");
+
+  const existingUser = await getExistingUserByEmail(email);
+  if (existingUser) {
+    throw new Error("An account with this email already exists.");
+  }
+
+  const organisation = await createOrganisation({
+    name: organizationName,
+    domain: email.split("@")[1] || "",
+    industry: "Other",
+    plan: "Starter",
+  });
+
+  const team = await createTeam({
+    orgId: organisation.id,
+    name: teamName || "General",
+    lead: fullName,
+    icon: "Team",
+  });
+
+  return createMember({
+    name: fullName,
+    email,
+    password,
+    role: "Admin",
+    roles: ["Admin"],
+    orgId: organisation.id,
+    teamId: team?.id || null,
+    title,
+  });
+}
+
 export async function loginWithGoogle() {
-  ensureSupabaseOrDemo();
-  
   const { data, error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
@@ -820,121 +529,110 @@ export async function handleAuthCallback() {
   return getUserFromSession(data?.session);
 }
 
-export async function fetchAppData() {
-  if (shouldUseDemoMode()) {
-    return clone(getDemoState());
+// Returns every org ID the user belongs to: their primary org plus any they joined via invitation.
+export async function fetchUserOrgIds(userId, email) {
+  const normalizedEmail = normalizeEmail(email);
+  const [userRes, invitesRes] = await Promise.all([
+    supabase.from(TABLES.users).select("org_id").eq("id", userId).single(),
+    supabase.from(TABLES.orgInvitations)
+      .select("org_id")
+      .ilike("email", normalizedEmail)
+      .eq("status", "Accepted"),
+  ]);
+  const orgIds = new Set();
+  if (userRes.data?.org_id) orgIds.add(userRes.data.org_id);
+  for (const inv of invitesRes.data || []) {
+    if (inv.org_id) orgIds.add(inv.org_id);
   }
+  return Array.from(orgIds);
+}
 
-  try {
-    const [
-      orgsRes,
-      teamsRes,
-      usersRes,
-      ticketsRes,
-      commentsRes,
-      articlesRes,
-      orgSettingsRes,
-      teamSettingsRes,
-      teamRolesRes,
-      reviewsRes,
-      templatesRes,
-      pirConfigsRes,
-      catalogRes,
-      approvalsRes,
-    ] = await Promise.all([
-      supabase.from(TABLES.orgs).select("*").order("name", { ascending: true }),
-      supabase.from(TABLES.teams).select("*").order("name", { ascending: true }),
-      supabase.from(TABLES.users).select("*").order("name", { ascending: true }),
-      supabase.from(TABLES.tickets).select("*").order("created_at", { ascending: false }),
-      supabase.from(TABLES.comments).select("*").order("created_at", { ascending: true }),
-      supabase.from(TABLES.articles).select("*").order("created_at", { ascending: false }),
-      supabase.from(TABLES.orgSettings).select("*"),
-      supabase.from(TABLES.teamSettings).select("*"),
-      supabase.from(TABLES.teamRoles).select("*").order("created_at", { ascending: true }),
-      supabase.from(TABLES.postIncidentReviews).select("*").order("updated_at", { ascending: false }),
-      supabase.from(TABLES.closingTemplates).select("*").order("created_at", { ascending: true }),
-      supabase.from(TABLES.pirFieldConfigs).select("*"),
-      supabase.from(TABLES.catalogItems).select("*").order("created_at", { ascending: true }),
-      supabase.from(TABLES.approvals).select("*").order("created_at", { ascending: false }),
-    ]);
+export async function fetchAppData(scope = {}) {
+  // Accept either orgIds (array) or orgId (string, backward-compat)
+  const orgIds = Array.isArray(scope.orgIds)
+    ? scope.orgIds.map((id) => String(id).trim()).filter(Boolean)
+    : scope.orgId
+    ? [String(scope.orgId).trim()]
+    : [];
 
-    fail(orgsRes.error, "Failed to load organizations.");
-    fail(teamsRes.error, "Failed to load teams.");
-    fail(usersRes.error, "Failed to load users.");
-    fail(ticketsRes.error, "Failed to load tickets.");
-    fail(commentsRes.error, "Failed to load comments.");
-    fail(articlesRes.error, "Failed to load articles.");
-    fail(orgSettingsRes.error, "Failed to load organization settings.");
-    fail(teamSettingsRes.error, "Failed to load team settings.");
-    fail(teamRolesRes.error, "Failed to load team roles.");
-    fail(reviewsRes.error, "Failed to load post-incident reviews.");
-    fail(templatesRes.error, "Failed to load templates.");
-    fail(pirConfigsRes.error, "Failed to load PIR field configs.");
-    fail(catalogRes.error, "Failed to load service catalog items.");
-    fail(approvalsRes.error, "Failed to load approvals.");
-
-    const commentsByTicketId = {};
-    for (const row of commentsRes.data || []) {
-      if (!commentsByTicketId[row.ticket_id]) commentsByTicketId[row.ticket_id] = [];
-      commentsByTicketId[row.ticket_id].push(toComment(row));
-    }
-
+  if (!orgIds.length) {
     return {
-      orgs: (orgsRes.data || []).map(toOrg),
-      teams: (teamsRes.data || []).map(toTeam),
-      users: (usersRes.data || []).map(toUser),
-      tickets: (ticketsRes.data || []).map((row) => toTicket(row, commentsByTicketId)),
-      articles: (articlesRes.data || []).map(toArticle),
-      orgSettings: (orgSettingsRes.data || []).map(toOrgSettings),
-      teamSettings: (teamSettingsRes.data || []).map(toTeamSettings),
-      teamRoles: (teamRolesRes.data || []).map(toTeamRole),
-      postIncidentReviews: (reviewsRes.data || []).map(toPostIncidentReview),
-      closingTemplates: (templatesRes.data || []).map(toClosingTemplate),
-      pirFieldConfigs: (pirConfigsRes.data || []).map(toPirFieldConfig),
-      catalogItems: (catalogRes.data || []).map(toCatalogItem),
-      approvals: (approvalsRes.data || []).map(toApproval),
+      orgs: [], teams: [], users: [], tickets: [], articles: [],
+      orgSettings: [], teamSettings: [], teamRoles: [], postIncidentReviews: [],
+      closingTemplates: [], pirFieldConfigs: [], catalogItems: [], approvals: [],
     };
-  } catch (error) {
-    if (isFetchFailure(error)) {
-      forceDemoMode = true;
-      return clone(getDemoState());
-    }
-    throw error;
   }
+
+  // Phase 1: fetch all org-scoped data in parallel.
+  const [
+    orgsRes, teamsRes, usersRes, ticketsRes, commentsRes, articlesRes,
+    orgSettingsRes, reviewsRes, templatesRes, pirConfigsRes, catalogRes, approvalsRes,
+  ] = await Promise.all([
+    supabase.from(TABLES.orgs).select("*").in("id", orgIds).order("name", { ascending: true }),
+    supabase.from(TABLES.teams).select("*").in("org_id", orgIds).order("name", { ascending: true }),
+    supabase.from(TABLES.users).select("*").in("org_id", orgIds).order("name", { ascending: true }),
+    supabase.from(TABLES.tickets).select("*").in("org_id", orgIds).order("created_at", { ascending: false }),
+    supabase.from(TABLES.comments).select("*").order("created_at", { ascending: true }),
+    supabase.from(TABLES.articles).select("*").in("org_id", orgIds).order("created_at", { ascending: false }),
+    supabase.from(TABLES.orgSettings).select("*").in("org_id", orgIds),
+    supabase.from(TABLES.postIncidentReviews).select("*").in("org_id", orgIds).order("updated_at", { ascending: false }),
+    supabase.from(TABLES.closingTemplates).select("*").in("org_id", orgIds).order("created_at", { ascending: true }),
+    supabase.from(TABLES.pirFieldConfigs).select("*").in("org_id", orgIds),
+    supabase.from(TABLES.catalogItems).select("*").in("org_id", orgIds).order("created_at", { ascending: true }),
+    supabase.from(TABLES.approvals).select("*").in("org_id", orgIds).order("created_at", { ascending: false }),
+  ]);
+
+  fail(orgsRes.error, "Failed to load organizations.");
+  fail(teamsRes.error, "Failed to load teams.");
+  fail(usersRes.error, "Failed to load users.");
+  fail(ticketsRes.error, "Failed to load tickets.");
+  fail(commentsRes.error, "Failed to load comments.");
+  fail(articlesRes.error, "Failed to load articles.");
+  fail(orgSettingsRes.error, "Failed to load organization settings.");
+  fail(reviewsRes.error, "Failed to load post-incident reviews.");
+  fail(templatesRes.error, "Failed to load templates.");
+  fail(pirConfigsRes.error, "Failed to load PIR field configs.");
+  fail(catalogRes.error, "Failed to load service catalog items.");
+  fail(approvalsRes.error, "Failed to load approvals.");
+
+  // Phase 2: load team settings/roles for ALL teams in the org so team
+  // switching is instant (client-side filter, no extra round-trip).
+  const allTeamIds = (teamsRes.data || []).map((t) => t.id);
+  const safeIds = allTeamIds.length ? allTeamIds : ["__none__"];
+  const [teamSettingsRes, teamRolesRes] = await Promise.all([
+    supabase.from(TABLES.teamSettings).select("*").in("team_id", safeIds),
+    supabase.from(TABLES.teamRoles).select("*").in("team_id", safeIds),
+  ]);
+  fail(teamSettingsRes.error, "Failed to load team settings.");
+  fail(teamRolesRes.error, "Failed to load team roles.");
+
+  const commentsByTicketId = {};
+  for (const row of commentsRes.data || []) {
+    if (!commentsByTicketId[row.ticket_id]) commentsByTicketId[row.ticket_id] = [];
+    commentsByTicketId[row.ticket_id].push(toComment(row));
+  }
+
+  return {
+    orgs: (orgsRes.data || []).map(toOrg),
+    teams: (teamsRes.data || []).map(toTeam),
+    users: (usersRes.data || []).map(toUser),
+    tickets: (ticketsRes.data || []).map((row) => toTicket(row, commentsByTicketId)),
+    articles: (articlesRes.data || []).map(toArticle),
+    orgSettings: (orgSettingsRes.data || []).map(toOrgSettings),
+    teamSettings: (teamSettingsRes.data || []).map(toTeamSettings),
+    teamRoles: (teamRolesRes.data || []).map(toTeamRole),
+    postIncidentReviews: (reviewsRes.data || []).map(toPostIncidentReview),
+    closingTemplates: (templatesRes.data || []).map(toClosingTemplate),
+    pirFieldConfigs: (pirConfigsRes.data || []).map(toPirFieldConfig),
+    catalogItems: (catalogRes.data || []).map(toCatalogItem),
+    approvals: (approvalsRes.data || []).map(toApproval),
+  };
 }
 
 export async function createTicket(payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const created = {
-      id: makeTicketId(payload.type),
-      title: payload.title,
-      description: payload.description || "",
-      type: payload.type,
-      category: payload.category,
-      catalogItemId: payload.catalogItemId || "",
-      orgId: payload.orgId,
-      teamId: payload.teamId || "",
-      assignee: payload.assignee || "",
-      reporter: payload.reporter,
-      priority: payload.priority,
-      urgency: payload.urgency || "Medium",
-      status: payload.status || "Open",
-      createdAt: Date.now(),
-      tags: asArray(payload.tags),
-      parentId: payload.parentId || null,
-      dueDate: payload.dueDate || null,
-      estimateHours: payload.estimateHours != null && payload.estimateHours !== "" ? Number(payload.estimateHours) : null,
-      spentHours: payload.spentHours != null && payload.spentHours !== "" ? Number(payload.spentHours) : 0,
-      comments: [],
-    };
-    state.tickets.unshift(created);
-    saveDemoState();
-    return clone(created);
-  }
-
   const row = {
-    id: makeTicketId(payload.type),
+    id: `tkt_${uid()}`,
+    number: await nextTicketId(payload.type, payload.orgId, payload.prefix),
     title: payload.title,
     description: payload.description || "",
     type: payload.type,
@@ -953,6 +651,7 @@ export async function createTicket(payload) {
     estimate_hours: payload.estimateHours != null && payload.estimateHours !== "" ? Number(payload.estimateHours) : null,
     spent_hours: payload.spentHours != null && payload.spentHours !== "" ? Number(payload.spentHours) : 0,
     resolved_at: payload.resolvedAt == null ? null : Number(payload.resolvedAt),
+    custom_fields: (payload.customFields && typeof payload.customFields === "object") ? payload.customFields : {},
   };
 
   const { data, error } = await supabase
@@ -966,25 +665,6 @@ export async function createTicket(payload) {
 }
 
 export async function updateTicketFields(ticketId, fields) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const index = state.tickets.findIndex((row) => row.id === ticketId);
-    if (index < 0) throw new Error("Ticket not found.");
-    // If status moved to Resolved/Closed and no resolvedAt provided, stamp it in demo state
-    const nextFields = { ...fields };
-    if (typeof fields.status === "string") {
-      if (["Resolved", "Closed"].includes(fields.status) && !('resolvedAt' in fields)) {
-        nextFields.resolvedAt = Date.now();
-      }
-      if (!["Resolved", "Closed"].includes(fields.status) && !('resolvedAt' in fields)) {
-        nextFields.resolvedAt = null;
-      }
-    }
-    state.tickets[index] = { ...state.tickets[index], ...nextFields };
-    saveDemoState();
-    return clone(state.tickets[index]);
-  }
-
   const patch = {};
 
   if (typeof fields.status === "string") patch.status = fields.status;
@@ -1037,21 +717,6 @@ export async function updateTicketFields(ticketId, fields) {
 }
 
 export async function createTicketComment(ticketId, payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const ticket = state.tickets.find((row) => row.id === ticketId);
-    if (!ticket) throw new Error("Ticket not found.");
-    const comment = {
-      id: `c_${uid()}`,
-      userId: payload.userId,
-      text: payload.text,
-      createdAt: Date.now(),
-    };
-    ticket.comments = [...(ticket.comments || []), comment];
-    saveDemoState();
-    return clone(comment);
-  }
-
   const row = {
     id: `c_${uid()}`,
     ticket_id: ticketId,
@@ -1071,32 +736,6 @@ export async function createTicketComment(ticketId, payload) {
 }
 
 export async function createApproval(payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const approval = {
-      id: `appr_${uid()}`,
-      orgId: payload.orgId,
-      teamId: payload.teamId || "",
-      ticketId: payload.ticketId,
-      catalogItemId: payload.catalogItemId || "",
-      requestedBy: payload.requestedBy,
-      requestedFor: payload.requestedFor || payload.requestedBy,
-      approverId: payload.approverId || "",
-      approverRole: payload.approverRole || "Admin",
-      approverMode: payload.approverMode || "role",
-      approverTeamId: payload.approverTeamId || "",
-      status: payload.status || "Pending",
-      decision: payload.decision || "",
-      comments: payload.comments || "",
-      dueAt: payload.dueAt || null,
-      createdAt: Date.now(),
-      decidedAt: payload.decidedAt || null,
-    };
-    state.approvals = [...(state.approvals || []), approval];
-    saveDemoState();
-    return clone(approval);
-  }
-
   const row = {
     id: `appr_${uid()}`,
     org_id: payload.orgId,
@@ -1106,9 +745,9 @@ export async function createApproval(payload) {
     requested_by: payload.requestedBy,
     requested_for: payload.requestedFor || payload.requestedBy,
     approver_id: payload.approverId || "",
-      approver_role: payload.approverRole || "Admin",
-      approver_mode: payload.approverMode || "role",
-      approver_team_id: payload.approverTeamId || null,
+    approver_role: payload.approverRole || "Admin",
+    approver_mode: payload.approverMode || "role",
+    approver_team_id: payload.approverTeamId || null,
     status: payload.status || "Pending",
     decision: payload.decision || "",
     comments: payload.comments || "",
@@ -1128,23 +767,6 @@ export async function createApproval(payload) {
 }
 
 export async function resolveApproval(approvalId, payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const index = (state.approvals || []).findIndex((row) => row.id === approvalId);
-    if (index < 0) throw new Error("Approval not found.");
-    const next = {
-      ...state.approvals[index],
-      status: payload.status,
-      decision: payload.decision || payload.status,
-      comments: payload.comments || "",
-      approverId: payload.approverId || state.approvals[index].approverId,
-      decidedAt: Date.now(),
-    };
-    state.approvals[index] = next;
-    saveDemoState();
-    return clone(next);
-  }
-
   const { data, error } = await supabase
     .from(TABLES.approvals)
     .update({
@@ -1163,26 +785,6 @@ export async function resolveApproval(approvalId, payload) {
 }
 
 export async function createArticle(payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const article = {
-      id: `kb_${uid()}`,
-      title: payload.title,
-      orgId: payload.orgId,
-      category: payload.category,
-      folder: payload.folder || "General",
-      author: payload.author,
-      editors: asArray(payload.editors),
-      content: payload.content,
-      views: 0,
-      tags: asArray(payload.tags),
-      createdAt: Date.now(),
-    };
-    state.articles.unshift(article);
-    saveDemoState();
-    return clone(article);
-  }
-
   const row = {
     id: `kb_${uid()}`,
     title: payload.title,
@@ -1209,23 +811,6 @@ export async function createArticle(payload) {
 }
 
 export async function updateArticle(articleId, payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const index = state.articles.findIndex((row) => row.id === articleId);
-    if (index < 0) throw new Error("Article not found.");
-    state.articles[index] = {
-      ...state.articles[index],
-      title: payload.title,
-      category: payload.category,
-      folder: payload.folder || "General",
-      content: payload.content,
-      tags: asArray(payload.tags),
-      editors: asArray(payload.editors),
-    };
-    saveDemoState();
-    return clone(state.articles[index]);
-  }
-
   const row = {
     title: payload.title,
     category: payload.category,
@@ -1247,15 +832,6 @@ export async function updateArticle(articleId, payload) {
 }
 
 export async function incrementArticleViews(articleId, nextViews) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const index = state.articles.findIndex((row) => row.id === articleId);
-    if (index < 0) throw new Error("Article not found.");
-    state.articles[index] = { ...state.articles[index], views: nextViews };
-    saveDemoState();
-    return clone(state.articles[index]);
-  }
-
   const { data, error } = await supabase
     .from(TABLES.articles)
     .update({ views: nextViews })
@@ -1268,27 +844,6 @@ export async function incrementArticleViews(articleId, nextViews) {
 }
 
 export async function createOrganisation(payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const created = {
-      id: `o_${uid()}`,
-      name: payload.name,
-      domain: payload.domain || "",
-      industry: payload.industry || "Other",
-      plan: payload.plan || "Starter",
-    };
-    state.orgs.push(created);
-    state.orgSettings.push({
-      orgId: created.id,
-      priorities: defaultPrioritiesArray(),
-      priorityMap: prioritiesToMap(defaultPrioritiesArray()),
-      urgencies: DEFAULT_URGENCIES,
-      updatedAt: Date.now(),
-    });
-    saveDemoState();
-    return clone(created);
-  }
-
   const row = {
     id: `o_${uid()}`,
     name: payload.name,
@@ -1315,15 +870,6 @@ export async function createOrganisation(payload) {
 }
 
 export async function updateOrgPlan(orgId, plan) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const org = state.orgs.find((o) => o.id === orgId);
-    if (!org) throw new Error("Organisation not found.");
-    org.plan = plan;
-    saveDemoState();
-    return clone(toOrg(org));
-  }
-
   const { data, error } = await supabase
     .from(TABLES.orgs)
     .update({ plan })
@@ -1336,40 +882,6 @@ export async function updateOrgPlan(orgId, plan) {
 }
 
 export async function createTeam(payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const created = {
-      id: `t_${uid()}`,
-      orgId: payload.orgId,
-      name: payload.name,
-      lead: payload.lead || "",
-      icon: payload.icon || "Team",
-    };
-    state.teams.push(created);
-
-    const priorities = defaultPrioritiesArray();
-    state.teamSettings.push({
-      teamId: created.id,
-      priorities,
-      priorityMap: prioritiesToMap(priorities),
-      urgencies: DEFAULT_URGENCIES,
-      updatedAt: Date.now(),
-    });
-
-    for (const baseRole of DEFAULT_TEAM_ROLES) {
-      state.teamRoles.push({
-        id: `role_${uid()}`,
-        teamId: created.id,
-        name: baseRole.name,
-        description: baseRole.description,
-        createdAt: Date.now(),
-      });
-    }
-
-    saveDemoState();
-    return clone(created);
-  }
-
   const row = {
     id: `t_${uid()}`,
     org_id: payload.orgId,
@@ -1406,80 +918,270 @@ export async function createTeam(payload) {
 export async function createMember(payload) {
   const roles = normalizeUserRoles(payload.roles, payload.role);
 
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const created = {
-      id: `u_${uid()}`,
-      name: payload.name,
-      email: payload.email,
-      role: roles[0] || "End User",
-      roles,
-      orgId: payload.orgId,
-      teamId: payload.teamId,
-      title: payload.title || "",
-    };
-    state.users.push(created);
-    saveDemoState();
-    return clone(created);
+  // Check if user already exists globally
+  const existing = await getExistingUserByEmail(payload.email || "");
+
+  // In production: if user does not exist, they need to register first
+  if (!existing) {
+    throw new Error(`No account found for "${payload.email}". Ask them to create an account first before you can add them.`);
   }
 
-  const row = {
-    id: `u_${uid()}`,
-    name: payload.name,
-    email: payload.email,
+  // If user exists and is already in the org, inform caller
+  if (existing.org_id === payload.orgId || existing.orgId === payload.orgId) {
+    throw new Error("This user is already a member of this organization.");
+  }
+
+  // User exists in a different org — create an invitation so they can accept
+  const inviteRow = {
+    id: `inv_${uid()}`,
+    org_id: payload.orgId,
+    team_id: payload.teamId || null,
+    email: normalizeEmail(payload.email),
     role: roles[0] || "End User",
     roles,
-    org_id: payload.orgId,
-    team_id: payload.teamId,
-    title: payload.title || "",
-    password: payload.password || "changeme",
+    status: "Pending",
+    sent_at: Date.now(),
+    accepted_at: null,
   };
 
-  let data;
-  let error;
-
-  ({ data, error } = await supabase
-    .from(TABLES.users)
-    .insert(row)
-    .select("*")
-    .single());
-
-  if (error?.message?.toLowerCase().includes("roles") && error?.message?.toLowerCase().includes("column")) {
-    ({ data, error } = await supabase
-      .from(TABLES.users)
-      .insert({
-        id: row.id,
-        name: row.name,
-        email: row.email,
-        role: row.role,
-        org_id: row.org_id,
-        team_id: row.team_id,
-        title: row.title,
-        password: row.password,
-      })
-      .select("*")
-      .single());
+  const { error: inviteError } = await supabase.from(TABLES.orgInvitations).insert(inviteRow);
+  if (inviteError) {
+    throw new Error("Failed to send invitation. Please try again.");
   }
 
-  fail(error, "Failed to add member.");
-  return toUser(data);
+  return { inviteSent: true, email: payload.email };
+}
+
+export async function fetchOrgInvitationsForUser(email) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return [];
+
+  const { data, error } = await supabase
+    .from(TABLES.orgInvitations)
+    .select("*")
+    .ilike("email", normalizedEmail)
+    .eq("status", "Pending")
+    .order("sent_at", { ascending: false });
+
+  if (error) return [];
+  return (data || []).map((row) => ({
+    id: row.id,
+    orgId: row.org_id,
+    teamId: row.team_id,
+    email: row.email,
+    role: row.role,
+    roles: row.roles,
+    status: row.status,
+    sentAt: row.sent_at,
+  }));
+}
+
+export async function acceptOrgInvitation(invitationId) {
+  const { data: inv, error: fetchInvError } = await supabase
+    .from(TABLES.orgInvitations)
+    .select("org_id,team_id,role,roles")
+    .eq("id", invitationId)
+    .single();
+
+  if (fetchInvError || !inv) throw new Error("Invitation not found.");
+
+  const { error: updateInvError } = await supabase
+    .from(TABLES.orgInvitations)
+    .update({ status: "Accepted", accepted_at: Date.now() })
+    .eq("id", invitationId);
+
+  if (updateInvError) throw new Error("Failed to accept invitation.");
+
+  // Keep users.org_id pointing at the user's primary (created) org.
+  // Additional org memberships are tracked through accepted org_invitations.
+  const invRoles = Array.isArray(inv.roles) && inv.roles.length ? inv.roles : [inv.role || "End User"];
+  return { accepted: true, orgId: inv.org_id, teamId: inv.team_id || null, role: invRoles[0], roles: invRoles };
+}
+
+export async function declineOrgInvitation(invitationId) {
+  const { error } = await supabase
+    .from(TABLES.orgInvitations)
+    .update({ status: "Declined" })
+    .eq("id", invitationId);
+
+  if (error) throw new Error("Failed to decline invitation.");
+  return { declined: true };
+}
+
+export async function joinOrgByCode(code, userEmail) {
+  const cleaned = String(code || "").trim().toUpperCase().replace(/^JOIN-?/i, "").replace(/-/g, "");
+  if (cleaned.length !== 8) throw new Error("Invalid join code — expected format: JOIN-XXXXXXXX");
+
+  // UUID first segment is always 8 hex chars before the first dash
+  const { data: orgs, error } = await supabase
+    .from(TABLES.orgs)
+    .select("id, name")
+    .ilike("id", `${cleaned.toLowerCase()}%`);
+  if (error) throw new Error("Failed to look up join code.");
+  if (!orgs?.length) throw new Error("No organization found with that join code.");
+  const org = orgs[0];
+
+  const email = normalizeEmail(userEmail);
+
+  // Check for existing invitation
+  const { data: existing } = await supabase
+    .from(TABLES.orgInvitations)
+    .select("id, status")
+    .eq("org_id", org.id)
+    .ilike("email", email)
+    .maybeSingle();
+
+  if (existing?.status === "Accepted") {
+    throw new Error("You're already a member of this organization.");
+  }
+
+  if (existing) {
+    const { error: updErr } = await supabase
+      .from(TABLES.orgInvitations)
+      .update({ status: "Accepted" })
+      .eq("id", existing.id);
+    if (updErr) throw new Error("Failed to join organization.");
+  } else {
+    const { error: insErr } = await supabase
+      .from(TABLES.orgInvitations)
+      .insert({ id: `inv_${uid()}`, org_id: org.id, email, role: "End User", status: "Accepted", sent_at: Date.now() });
+    if (insErr) throw new Error("Failed to join organization.");
+  }
+
+  return { orgId: org.id, orgName: org.name };
+}
+
+export async function fetchOrgInvitationsForOrg(orgId) {
+  const { data, error } = await supabase
+    .from(TABLES.orgInvitations)
+    .select("*")
+    .eq("org_id", orgId)
+    .order("sent_at", { ascending: false });
+  if (error) return [];
+  return (data || []).map((row) => ({
+    id: row.id,
+    orgId: row.org_id,
+    teamId: row.team_id,
+    email: row.email,
+    role: row.role,
+    status: row.status,
+    sentAt: row.sent_at,
+    acceptedAt: row.accepted_at,
+  }));
+}
+
+export async function sendOrgInvitation(orgId, email, role = "End User", teamId = null) {
+  const row = {
+    id: `inv_${uid()}`,
+    org_id: orgId,
+    team_id: teamId || null,
+    email: normalizeEmail(email),
+    role,
+    status: "Pending",
+    sent_at: Date.now(),
+    accepted_at: null,
+  };
+  const { data, error } = await supabase.from(TABLES.orgInvitations).insert(row).select("*").single();
+  if (error) throw new Error("Failed to send invitation.");
+  return { id: data.id, orgId: data.org_id, email: data.email, role: data.role, status: data.status, sentAt: data.sent_at };
+}
+
+export async function cancelOrgInvitation(invitationId) {
+  const { error } = await supabase
+    .from(TABLES.orgInvitations)
+    .update({ status: "Cancelled" })
+    .eq("id", invitationId);
+  if (error) throw new Error("Failed to cancel invitation.");
+  return { cancelled: true };
+}
+
+export async function fetchApiKeys(orgId) {
+  const { data, error } = await supabase
+    .from("api_keys")
+    .select("id, org_id, name, key_prefix, created_by, created_at, last_used_at, is_active")
+    .eq("org_id", orgId)
+    .order("created_at", { ascending: false });
+  if (error) return [];
+  return (data || []).map((row) => ({
+    id: row.id,
+    orgId: row.org_id,
+    name: row.name,
+    keyPrefix: row.key_prefix,
+    createdBy: row.created_by,
+    createdAt: row.created_at,
+    lastUsedAt: row.last_used_at,
+    isActive: row.is_active,
+  }));
+}
+
+export async function createApiKey(orgId, name, createdBy) {
+  const rawKey = `enk_${uid()}${uid()}`.slice(0, 40);
+  const row = {
+    id: `key_${uid()}`,
+    org_id: orgId,
+    name,
+    key_value: rawKey,
+    key_prefix: `${rawKey.slice(0, 12)}...`,
+    created_by: createdBy || null,
+    created_at: Date.now(),
+    last_used_at: null,
+    is_active: true,
+  };
+  const { data, error } = await supabase.from("api_keys").insert(row).select("*").single();
+  if (error) throw new Error("Failed to create API key.");
+  return {
+    id: data.id,
+    orgId: data.org_id,
+    name: data.name,
+    keyPrefix: data.key_prefix,
+    fullKey: rawKey,
+    createdAt: data.created_at,
+    isActive: data.is_active,
+  };
+}
+
+export async function revokeApiKey(keyId) {
+  const { error } = await supabase.from("api_keys").delete().eq("id", keyId);
+  if (error) throw new Error("Failed to revoke API key.");
+  return { revoked: true };
+}
+
+// ── Custom Reports ────────────────────────────────────────────────────────────
+
+export async function fetchCustomReports(orgId) {
+  const { data, error } = await supabase
+    .from(TABLES.customReports)
+    .select("*")
+    .eq("org_id", orgId)
+    .order("created_at", { ascending: false });
+  if (error) throw new Error(error.message);
+  return (data || []).map((r) => ({ ...r.config, id: r.id, name: r.name, orgId: r.org_id, createdAt: r.created_at, updatedAt: r.updated_at }));
+}
+
+export async function saveCustomReport(orgId, report) {
+  const now = Date.now();
+
+  const row = {
+    id: report.id,
+    org_id: orgId,
+    name: report.name || "Untitled Report",
+    config: report,
+    created_at: report.createdAt || now,
+    updated_at: now,
+  };
+  const { error } = await supabase.from(TABLES.customReports).upsert(row, { onConflict: "id" });
+  if (error) throw new Error(error.message);
+  return report;
+}
+
+export async function deleteCustomReport(reportId) {
+  const { error } = await supabase.from(TABLES.customReports).delete().eq("id", reportId);
+  if (error) throw new Error(error.message);
+  return { deleted: true };
 }
 
 export async function updateMemberRoles(userId, rolesInput) {
   const roles = normalizeUserRoles(rolesInput, "End User");
-
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const index = state.users.findIndex((row) => row.id === userId);
-    if (index < 0) throw new Error("Member not found.");
-    state.users[index] = {
-      ...state.users[index],
-      role: roles[0],
-      roles,
-    };
-    saveDemoState();
-    return clone(state.users[index]);
-  }
 
   let data;
   let error;
@@ -1505,27 +1207,6 @@ export async function updateMemberRoles(userId, rolesInput) {
 }
 
 export async function upsertOrgSettings(payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const priorities = normalizePriorities(payload.priorities);
-    const settings = {
-      orgId: payload.orgId,
-      priorities,
-      priorityMap: prioritiesToMap(priorities),
-      urgencies: normalizeUrgencies(payload.urgencies),
-      categories: Array.isArray(payload.categories) && payload.categories.length ? payload.categories.map((c) => String(c)) : CATEGORIES,
-      rolePermissions: payload.rolePermissions || {},
-      requireApprovals: !!payload.requireApprovals,
-      approvalMode: payload.approvalMode || "all",
-      updatedAt: Date.now(),
-    };
-    const index = state.orgSettings.findIndex((row) => row.orgId === payload.orgId);
-    if (index >= 0) state.orgSettings[index] = settings;
-    else state.orgSettings.push(settings);
-    saveDemoState();
-    return clone(settings);
-  }
-
   const row = {
     org_id: payload.orgId,
     priorities: normalizePriorities(payload.priorities),
@@ -1534,6 +1215,8 @@ export async function upsertOrgSettings(payload) {
     role_permissions: payload.rolePermissions || {},
     require_approvals: !!payload.requireApprovals,
     approval_mode: payload.approvalMode || "all",
+    ticket_types: Array.isArray(payload.ticketTypes) ? payload.ticketTypes : [],
+    org_roles: Array.isArray(payload.orgRoles) ? payload.orgRoles : [],
     updated_at: Date.now(),
   };
 
@@ -1548,23 +1231,6 @@ export async function upsertOrgSettings(payload) {
 }
 
 export async function upsertTeamSettings(payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const priorities = normalizePriorities(payload.priorities);
-    const settings = {
-      teamId: payload.teamId,
-      priorities,
-      priorityMap: prioritiesToMap(priorities),
-      urgencies: normalizeUrgencies(payload.urgencies),
-      updatedAt: Date.now(),
-    };
-    const index = state.teamSettings.findIndex((row) => row.teamId === payload.teamId);
-    if (index >= 0) state.teamSettings[index] = settings;
-    else state.teamSettings.push(settings);
-    saveDemoState();
-    return clone(settings);
-  }
-
   const row = {
     team_id: payload.teamId,
     priorities: normalizePriorities(payload.priorities),
@@ -1583,20 +1249,6 @@ export async function upsertTeamSettings(payload) {
 }
 
 export async function createTeamRole(payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const role = {
-      id: `role_${uid()}`,
-      teamId: payload.teamId,
-      name: payload.name,
-      description: payload.description || "",
-      createdAt: Date.now(),
-    };
-    state.teamRoles.push(role);
-    saveDemoState();
-    return clone(role);
-  }
-
   const row = {
     id: `role_${uid()}`,
     team_id: payload.teamId,
@@ -1616,33 +1268,6 @@ export async function createTeamRole(payload) {
 }
 
 export async function savePostIncidentReview(payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const review = {
-      id: payload.id || `pir_${uid()}`,
-      ticketId: payload.ticketId,
-      orgId: payload.orgId,
-      teamId: payload.teamId || "",
-      summary: payload.summary || "",
-      rootCause: payload.rootCause || "",
-      timeline: payload.timeline || "",
-      actionItems: asArray(payload.actionItems),
-      owner: payload.owner || "",
-      customData: payload.customData || {},
-      createdAt: payload.createdAt || Date.now(),
-      updatedAt: Date.now(),
-    };
-
-    const byId = state.postIncidentReviews.findIndex((row) => row.id === review.id);
-    const byTicket = state.postIncidentReviews.findIndex((row) => row.ticketId === review.ticketId);
-    if (byId >= 0) state.postIncidentReviews[byId] = review;
-    else if (byTicket >= 0) state.postIncidentReviews[byTicket] = review;
-    else state.postIncidentReviews.unshift(review);
-
-    saveDemoState();
-    return clone(review);
-  }
-
   const base = {
     ticket_id: payload.ticketId,
     org_id: payload.orgId,
@@ -1677,25 +1302,6 @@ export async function savePostIncidentReview(payload) {
 }
 
 export async function createClosingTemplate(payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    if (!state.closingTemplates) state.closingTemplates = [];
-    const template = {
-      id: `tmpl_${uid()}`,
-      orgId: payload.orgId,
-      teamId: payload.teamId || "",
-      name: payload.name,
-      description: payload.description || "",
-      content: payload.content,
-      applyToTypes: asArray(payload.applyToTypes),
-      createdAt: Date.now(),
-      updatedAt: Date.now(),
-    };
-    state.closingTemplates.push(template);
-    saveDemoState();
-    return clone(template);
-  }
-
   const row = {
     id: `tmpl_${uid()}`,
     org_id: payload.orgId,
@@ -1719,20 +1325,6 @@ export async function createClosingTemplate(payload) {
 }
 
 export async function updateClosingTemplate(templateId, payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    if (!state.closingTemplates) state.closingTemplates = [];
-    const index = state.closingTemplates.findIndex((t) => t.id === templateId);
-    if (index < 0) throw new Error("Template not found.");
-    state.closingTemplates[index] = {
-      ...state.closingTemplates[index],
-      ...payload,
-      updatedAt: Date.now(),
-    };
-    saveDemoState();
-    return clone(state.closingTemplates[index]);
-  }
-
   const patch = {
     name: payload.name,
     description: payload.description || "",
@@ -1753,14 +1345,6 @@ export async function updateClosingTemplate(templateId, payload) {
 }
 
 export async function deleteClosingTemplate(templateId) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    if (!state.closingTemplates) state.closingTemplates = [];
-    state.closingTemplates = state.closingTemplates.filter((t) => t.id !== templateId);
-    saveDemoState();
-    return true;
-  }
-
   const { error } = await supabase
     .from(TABLES.closingTemplates)
     .delete()
@@ -1771,28 +1355,6 @@ export async function deleteClosingTemplate(templateId) {
 }
 
 export async function upsertPirFieldConfig(payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    if (!state.pirFieldConfigs) state.pirFieldConfigs = [];
-    const existing = state.pirFieldConfigs.find((cfg) => cfg.teamId === payload.teamId && cfg.orgId === payload.orgId);
-    const config = {
-      id: existing?.id || `pir_cfg_${uid()}`,
-      orgId: payload.orgId,
-      teamId: payload.teamId || "",
-      fields: asArray(payload.fields),
-      createdAt: existing?.createdAt || Date.now(),
-      updatedAt: Date.now(),
-    };
-    if (existing) {
-      const index = state.pirFieldConfigs.indexOf(existing);
-      state.pirFieldConfigs[index] = config;
-    } else {
-      state.pirFieldConfigs.push(config);
-    }
-    saveDemoState();
-    return clone(config);
-  }
-
   const row = {
     org_id: payload.orgId,
     team_id: payload.teamId || "",
@@ -1846,26 +1408,6 @@ const toActivityLog = (row) => ({
 });
 
 export async function logActivity(payload) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    if (!state.activityLog) state.activityLog = [];
-    const log = {
-      id: `log_${uid()}`,
-      ticketId: payload.ticketId,
-      orgId: payload.orgId,
-      teamId: payload.teamId,
-      userId: payload.userId,
-      action: payload.action,
-      field: payload.field || "",
-      oldValue: payload.oldValue,
-      newValue: payload.newValue,
-      createdAt: Date.now(),
-    };
-    state.activityLog.push(log);
-    saveDemoState();
-    return clone(log);
-  }
-
   const row = {
     id: `log_${uid()}`,
     ticket_id: payload.ticketId,
@@ -1891,14 +1433,6 @@ export async function logActivity(payload) {
 }
 
 export async function fetchActivityLog(ticketId) {
-  if (shouldUseDemoMode()) {
-    const state = getDemoState();
-    const logs = (state.activityLog || [])
-      .filter((log) => log.ticketId === ticketId)
-      .sort((a, b) => b.createdAt - a.createdAt);
-    return clone(logs);
-  }
-
   const { data, error } = await supabase
     .from(TABLES.activityLog)
     .select("*")
@@ -1957,3 +1491,24 @@ export function findSLAAtRisk(tickets, priorityCatalog = {}) {
     })
     .filter(({ slaStatus }) => slaStatus.isRisk && !slaStatus.isBreached);
 }
+
+// Row mappers exposed for use in realtime subscription handlers.
+// These transform raw Supabase postgres_changes payloads (snake_case DB rows)
+// into the same camelCase objects that fetchAppData produces.
+export const rowMappers = {
+  ticket:         (row) => toTicket(row, {}),
+  comment:        toComment,
+  user:           toUser,
+  org:            toOrg,
+  team:           toTeam,
+  article:        toArticle,
+  orgSettings:    toOrgSettings,
+  teamSettings:   toTeamSettings,
+  teamRole:       toTeamRole,
+  postReview:     toPostIncidentReview,
+  closingTemplate: toClosingTemplate,
+  pirFieldConfig: toPirFieldConfig,
+  catalogItem:    toCatalogItem,
+  approval:       toApproval,
+};
+
