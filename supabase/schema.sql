@@ -253,6 +253,22 @@ create table if not exists activity_log (
 );
 
 
+create table if not exists org_invitations (
+  id          text   primary key,
+  org_id      text   not null,
+  team_id     text,
+  email       text   not null,
+  role        text   not null default 'End User',
+  roles       jsonb  not null default '[]'::jsonb,
+  status      text   not null default 'Pending',
+  sent_at     bigint not null,
+  accepted_at bigint
+);
+
+create index if not exists idx_org_invitations_email   on org_invitations(lower(email));
+create index if not exists idx_org_invitations_org_id  on org_invitations(org_id);
+create index if not exists idx_org_invitations_status  on org_invitations(status);
+
 -- ── INDEXES ──────────────────────────────────────────────────────────────────
 
 create index if not exists idx_teams_org_id              on teams(org_id);

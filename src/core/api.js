@@ -18,6 +18,7 @@ const TABLES = {
   catalogItems: "service_catalog_items",
   approvals: "approvals",
   activityLog: "activity_log",
+  orgInvitations: "org_invitations",
 };
 
 const DEMO_STORAGE_KEY = "eurekanow_demo_state_v1";
@@ -1556,39 +1557,127 @@ export async function createMember(payload) {
     throw new Error("User not registered. Ask them to register using the Sign In / Register page.");
   }
 
-  // In production: if user does not exist, require them to register first
+  // In production: if user does not exist, they need to register first
   if (!existing) {
-    throw new Error("User not found. Ask them to register first at /signin.");
+    throw new Error(`No account found for "${payload.email}". Ask them to create an account first before you can add them.`);
   }
 
   // If user exists and is already in the org, inform caller
   if (existing.org_id === payload.orgId || existing.orgId === payload.orgId) {
-    throw new Error("A user with this email already exists in this organization.");
+    throw new Error("This user is already a member of this organization.");
   }
 
-  // Send an invite: record an activity log entry so admins can track invitations.
-  try {
-    const inviteRow = {
-      id: `al_${uid()}`,
-      org_id: payload.orgId,
-      team_id: payload.teamId || null,
-      user_id: null,
-      type: "invitation",
-      text: `Invitation sent to ${payload.email}`,
-      created_at: Date.now(),
-    };
+  // User exists in a different org — create an invitation so they can accept
+  const inviteRow = {
+    id: `inv_${uid()}`,
+    org_id: payload.orgId,
+    team_id: payload.teamId || null,
+    email: normalizeEmail(payload.email),
+    role: (payload.roles?.[0] || payload.role) || "End User",
+    roles: Array.isArray(payload.roles) && payload.roles.length ? payload.roles : [(payload.role || "End User")],
+    status: "Pending",
+    sent_at: Date.now(),
+    accepted_at: null,
+  };
 
-    const { data: actData, error: actError } = await supabase.from(TABLES.activityLog).insert(inviteRow).select("*").single();
-    if (actError) {
-      // If activity log insert fails silently, continue — invite record is best-effort
-      console.warn("Failed to record invitation in activity log:", actError.message || actError);
-    }
-  } catch (er) {
-    // ignore activity log errors
+  const { error: inviteError } = await supabase.from(TABLES.orgInvitations).insert(inviteRow);
+  if (inviteError) {
+    throw new Error("Failed to send invitation. Please try again.");
   }
 
-  // Return an inviteSent marker to the caller; UI can handle closing and showing a message
   return { inviteSent: true, email: payload.email };
+}
+
+export async function fetchOrgInvitationsForUser(email) {
+  const normalizedEmail = normalizeEmail(email);
+  if (!normalizedEmail) return [];
+
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    return (state.invitations || []).filter(
+      (inv) => normalizeEmail(inv.email) === normalizedEmail && inv.status === "Pending"
+    );
+  }
+
+  const { data, error } = await supabase
+    .from(TABLES.orgInvitations)
+    .select("*")
+    .ilike("email", normalizedEmail)
+    .eq("status", "Pending")
+    .order("sent_at", { ascending: false });
+
+  if (error) return [];
+  return (data || []).map((row) => ({
+    id: row.id,
+    orgId: row.org_id,
+    teamId: row.team_id,
+    email: row.email,
+    role: row.role,
+    roles: row.roles,
+    status: row.status,
+    sentAt: row.sent_at,
+  }));
+}
+
+export async function acceptOrgInvitation(invitationId, userId) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const inv = (state.invitations || []).find((i) => i.id === invitationId);
+    if (!inv) throw new Error("Invitation not found.");
+    inv.status = "Accepted";
+    inv.acceptedAt = Date.now();
+    const userIdx = state.users.findIndex((u) => u.id === userId);
+    if (userIdx >= 0) {
+      state.users[userIdx] = { ...state.users[userIdx], orgId: inv.orgId, teamId: inv.teamId || state.users[userIdx].teamId };
+    }
+    saveDemoState();
+    return { accepted: true };
+  }
+
+  const { data: inv, error: fetchInvError } = await supabase
+    .from(TABLES.orgInvitations)
+    .select("org_id,team_id")
+    .eq("id", invitationId)
+    .single();
+
+  if (fetchInvError || !inv) throw new Error("Invitation not found.");
+
+  const { error: updateInvError } = await supabase
+    .from(TABLES.orgInvitations)
+    .update({ status: "Accepted", accepted_at: Date.now() })
+    .eq("id", invitationId);
+
+  if (updateInvError) throw new Error("Failed to accept invitation.");
+
+  const updateFields = { org_id: inv.org_id };
+  if (inv.team_id) updateFields.team_id = inv.team_id;
+
+  const { error: updateUserError } = await supabase
+    .from(TABLES.users)
+    .update(updateFields)
+    .eq("id", userId);
+
+  if (updateUserError) throw new Error("Failed to update your organization. Please contact support.");
+
+  return { accepted: true };
+}
+
+export async function declineOrgInvitation(invitationId) {
+  if (shouldUseDemoMode()) {
+    const state = getDemoState();
+    const inv = (state.invitations || []).find((i) => i.id === invitationId);
+    if (inv) inv.status = "Declined";
+    saveDemoState();
+    return { declined: true };
+  }
+
+  const { error } = await supabase
+    .from(TABLES.orgInvitations)
+    .update({ status: "Declined" })
+    .eq("id", invitationId);
+
+  if (error) throw new Error("Failed to decline invitation.");
+  return { declined: true };
 }
 
 export async function updateMemberRoles(userId, rolesInput) {

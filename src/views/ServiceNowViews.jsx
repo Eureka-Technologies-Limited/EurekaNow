@@ -3,11 +3,7 @@ import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { DEFAULT_TEAM_ROLES } from "../core/constants.js";
 import { Avatar, Btn, Card, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
-
-function hasRole(user, roleName) {
-  const roles = Array.isArray(user?.roles) && user.roles.length ? user.roles : [user?.role].filter(Boolean);
-  return roles.some((role) => String(role).toLowerCase() === String(roleName).toLowerCase());
-}
+import { canDo } from "../core/utils.js";
 
 // removed unused helper: toDueTimestamp
 
@@ -362,9 +358,7 @@ export function ServiceCatalogView({ items = [], currentUser, users, teams, orgs
             </Btn>
             {(() => {
               const orgSetting = (orgSettings || []).find((s) => s.orgId === item.orgId) || {};
-              const rolePerms = orgSetting.rolePermissions || {};
-              const userRoles = Array.isArray(currentUser?.roles) && currentUser.roles.length ? currentUser.roles : [currentUser?.role].filter(Boolean);
-              const allowed = userRoles.some((r) => (rolePerms[r] && rolePerms[r]["catalog.manage"]) ) || hasRole(currentUser, "Admin") || hasRole(currentUser, "Catalog Manager");
+              const allowed = canDo(currentUser, orgSetting, "catalog.manage");
               return allowed ? (
                 <Btn variant="secondary" onClick={() => setManageItem(item)} style={{ border: `1px solid ${t.border}`, background: t.surface2 }}>
                   <I name="settings" size={12} /> Manage catalog item
@@ -590,8 +584,9 @@ export function ApprovalsView({ approvals = [], catalogItems = [], tickets = [],
           const assignee = users.find((user) => user.id === approval.approverId);
           const isTeamApproval = approval.approverMode === "team" && approval.approverTeamId;
           const teamApprovers = isTeamApproval ? users.filter((user) => user.teamId === approval.approverTeamId) : [];
+          const approvalOrgSetting = (orgSettings || []).find((s) => s.orgId === approval.orgId) || {};
           const userRoles = Array.isArray(currentUser?.roles) && currentUser.roles.length ? currentUser.roles : [currentUser?.role].filter(Boolean);
-          const canAct = approval.status === "Pending" && (
+          const canAct = approval.status === "Pending" && canDo(currentUser, approvalOrgSetting, "approvals.resolve") && (
             (approval.approverMode === "user" && approval.approverId === currentUser?.id) ||
             (approval.approverMode === "team" && currentUser?.teamId === approval.approverTeamId) ||
             (approval.approverMode === "role" && userRoles.includes(approval.approverRole))

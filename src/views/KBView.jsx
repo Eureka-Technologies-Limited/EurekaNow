@@ -5,7 +5,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
-import { fmtTs } from "../core/utils.js";
+import { canDo, fmtTs } from "../core/utils.js";
 import { Avatar, Badge, Btn, Card, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 
@@ -154,6 +154,8 @@ export function KBView({ articles, users, currentUser, orgSettings = [], onCreat
   const [viewing,  setViewing]  = useState(null);
   const [addOpen,  setAddOpen]  = useState(false);
   const [editing,  setEditing]  = useState(null);
+  const orgSetting = (orgSettings || []).find((s) => s.orgId === currentUser?.orgId) || {};
+  const canWrite = canDo(currentUser, orgSetting, "kb.create");
 
   const getOrgCategories = (settings, orgId) => {
     if (!settings) return [];
@@ -269,10 +271,12 @@ export function KBView({ articles, users, currentUser, orgSettings = [], onCreat
         {/* Header */}
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16 }}>
           <h1 style={{ fontSize: isMobile ? 18 : 20, fontWeight: 800, margin: 0, color: t.text }}>Knowledge Base</h1>
-          <Btn variant="primary" size="sm" onClick={() => setAddOpen(true)}>
-            <I name="plus" size={12} />
-            {!isMobile && " New Article"}
-          </Btn>
+          {canWrite && (
+            <Btn variant="primary" size="sm" onClick={() => setAddOpen(true)}>
+              <I name="plus" size={12} />
+              {!isMobile && " New Article"}
+            </Btn>
+          )}
         </div>
 
         {/* Search + category filter */}
@@ -343,10 +347,14 @@ export function KBView({ articles, users, currentUser, orgSettings = [], onCreat
                 <>
                   <div style={{ color: t.text3, marginBottom: 12 }}><I name="kb" size={36} /></div>
                   <div style={{ fontSize: 15, fontWeight: 700, color: t.text, marginBottom: 6 }}>No articles yet</div>
-                  <div style={{ fontSize: 13, color: t.text3, marginBottom: 16 }}>Create your first knowledge base article to share solutions with your team.</div>
-                  <button onClick={() => setAddOpen(true)} style={{ background: t.accent, color: "#0f0f0e", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: t.font }}>
-                    <I name="plus" size={12} /> New Article
-                  </button>
+                  <div style={{ fontSize: 13, color: t.text3, marginBottom: 16 }}>
+                    {canWrite ? "Create your first knowledge base article to share solutions with your team." : "No articles have been published yet."}
+                  </div>
+                  {canWrite && (
+                    <button onClick={() => setAddOpen(true)} style={{ background: t.accent, color: "#0f0f0e", border: "none", borderRadius: 8, padding: "8px 16px", fontSize: 13, fontWeight: 700, cursor: "pointer", fontFamily: t.font }}>
+                      <I name="plus" size={12} /> New Article
+                    </button>
+                  )}
                 </>
               ) : (
                 <>

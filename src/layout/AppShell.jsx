@@ -30,9 +30,12 @@ import {
   upsertTeamSettings,
   upsertPirFieldConfig,
   updateTicketFields,
+  fetchOrgInvitationsForUser,
+  acceptOrgInvitation,
+  declineOrgInvitation,
 } from "../core/api.js";
 import { Avatar, Btn, Modal } from "../ui/primitives.jsx";
-import { slaForPriority, slaPct } from "../core/utils.js";
+import { canDo, slaForPriority, slaPct } from "../core/utils.js";
 import { I } from "../core/icons.jsx";
 import { ToastContainer, useToasts } from "../ui/Toast.jsx";
 import { UpgradeGate, PlansModal, PlanBadge } from "../ui/UpgradeGate.jsx";
@@ -426,9 +429,10 @@ const NOTIF_STYLES = {
   sla_risk:    { icon: "clock",     colorKey: "orange"  },
   assigned:    { icon: "ticket",    colorKey: "blue"    },
   comment:     { icon: "send",      colorKey: "purple"  },
+  invitation:  { icon: "teams",     colorKey: "green"   },
 };
 
-export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile, notifications = [], unreadCount = 0, notifReadIds = new Set(), onMarkRead, onMarkAllRead, onOpenTicket, onOpenCommandPalette, currentUser, orgs = [], teams = [], selectedOrgId, selectedTeamId, onSelectOrg, onSelectTeam }) {
+export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile, notifications = [], unreadCount = 0, notifReadIds = new Set(), onMarkRead, onMarkAllRead, onOpenTicket, onOpenCommandPalette, currentUser, orgs = [], teams = [], selectedOrgId, selectedTeamId, onSelectOrg, onSelectTeam, onAcceptInvitation, onDeclineInvitation }) {
   const t = useTokens();
   const [notifOpen, setNotifOpen] = useState(false);
   const [orgTeamOpen, setOrgTeamOpen] = useState(false);
@@ -651,11 +655,12 @@ export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile, notific
                   const style = NOTIF_STYLES[n.type] || NOTIF_STYLES.assigned;
                   const color = t[style.colorKey] || t.accent;
                   const isRead = notifReadIds.has(n.id);
+                  const isInvite = n.type === "invitation";
                   return (
                     <div
                       key={n.id}
-                      onClick={() => { onMarkRead(n.id); if (n.ticketId && onOpenTicket) { setNotifOpen(false); onOpenTicket(tickets.find((tk) => tk.id === n.ticketId)); } }}
-                      style={{ display: "flex", gap: 10, padding: "10px 14px", cursor: "pointer", borderBottom: `1px solid ${t.border}`, background: isRead ? "transparent" : t.accentBg + "44", transition: "background 0.1s" }}
+                      onClick={() => { if (!isInvite) { onMarkRead(n.id); if (n.ticketId && onOpenTicket) { setNotifOpen(false); onOpenTicket(tickets.find((tk) => tk.id === n.ticketId)); } } }}
+                      style={{ display: "flex", gap: 10, padding: "10px 14px", cursor: isInvite ? "default" : "pointer", borderBottom: `1px solid ${t.border}`, background: isRead ? "transparent" : t.accentBg + "44", transition: "background 0.1s" }}
                     >
                       <div style={{ width: 30, height: 30, borderRadius: 8, background: color + "22", display: "flex", alignItems: "center", justifyContent: "center", color, flexShrink: 0, marginTop: 2 }}>
                         <I name={style.icon} size={14} />
@@ -667,6 +672,22 @@ export function Topbar({ onToggle, view, tickets, onNewTicket, isMobile, notific
                         </div>
                         <div style={{ fontSize: 11, color: t.text3, marginTop: 2, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{n.message}</div>
                         <div style={{ fontSize: 10, color: t.text3, marginTop: 3 }}>{relTime(n.time)}</div>
+                        {isInvite && (
+                          <div style={{ display: "flex", gap: 6, marginTop: 8 }}>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onAcceptInvitation?.(n.invitationId); }}
+                              style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, border: "none", background: t.accent, color: "#fff", cursor: "pointer", fontFamily: t.font }}
+                            >
+                              Accept
+                            </button>
+                            <button
+                              onClick={(e) => { e.stopPropagation(); onDeclineInvitation?.(n.invitationId); }}
+                              style={{ fontSize: 11, fontWeight: 600, padding: "4px 10px", borderRadius: 6, border: `1px solid ${t.border}`, background: t.surface2, color: t.text2, cursor: "pointer", fontFamily: t.font }}
+                            >
+                              Decline
+                            </button>
+                          </div>
+                        )}
                       </div>
                     </div>
                   );
@@ -707,6 +728,7 @@ export function AppShell({ currentUser, onLogout }) {
   const [pirFieldConfigs,  setPirFieldConfigs]  = useState([]);
   const [catalogItems, setCatalogItems] = useState([]);
   const [approvals,    setApprovals]    = useState([]);
+  const [orgInvitations, setOrgInvitations] = useState([]);
   const [loading,      setLoading]      = useState(true);
   const [loadError,    setLoadError]    = useState("");
   const [selectedOrgId, setSelectedOrgId] = useState(null);
@@ -806,8 +828,13 @@ export function AppShell({ currentUser, onLogout }) {
         });
       }
     });
+    // Pending org invitations always appear at the top regardless of preferences
+    orgInvitations.forEach((inv) => {
+      const orgName = orgs.find((o) => o.id === inv.orgId)?.name || "an organization";
+      result.unshift({ id: `invite_${inv.id}`, type: "invitation", invitationId: inv.id, title: "Organization Invite", message: `You've been invited to join ${orgName}`, time: inv.sentAt, severity: "info" });
+    });
     return result.sort((a, b) => b.time - a.time).slice(0, 30);
-  }, [tickets, currentUser.id, notifPrefs]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [tickets, currentUser.id, notifPrefs, orgInvitations, orgs]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const unreadCount = useMemo(() => notifications.filter((n) => !notifReadIds.has(n.id)).length, [notifications, notifReadIds]);
   const sidebarOpen = shellPrefs.sidebarOpen;
@@ -881,6 +908,11 @@ export function AppShell({ currentUser, onLogout }) {
         setPirFieldConfigs(data.pirFieldConfigs || []);
         setCatalogItems(data.catalogItems || []);
         setApprovals(data.approvals || []);
+        if (currentUser?.email) {
+          fetchOrgInvitationsForUser(currentUser.email)
+            .then((invites) => { if (mounted) setOrgInvitations(invites); })
+            .catch(() => {});
+        }
       } catch (err) {
         if (!mounted) return;
         setLoadError(err?.message || "Failed to load workspace data.");
@@ -1156,6 +1188,22 @@ export function AppShell({ currentUser, onLogout }) {
     }
     setUsers((rows) => [...rows, created]);
     return created;
+  };
+
+  const handleAcceptInvitation = async (invitationId) => {
+    await acceptOrgInvitation(invitationId, currentUser.id);
+    setOrgInvitations((prev) => prev.filter((i) => i.id !== invitationId));
+    // Reload app data so the new org context is reflected
+    const data = await fetchAppData({ orgId: currentUser?.orgId });
+    setOrgs(data.orgs);
+    setTeams(data.teams);
+    setUsers(data.users);
+    setTickets(data.tickets);
+  };
+
+  const handleDeclineInvitation = async (invitationId) => {
+    await declineOrgInvitation(invitationId);
+    setOrgInvitations((prev) => prev.filter((i) => i.id !== invitationId));
   };
 
   const handleUpdateMemberRoles = async (payload) => {
@@ -1594,15 +1642,21 @@ export function AppShell({ currentUser, onLogout }) {
             )
           )}
           {view === "reports" && (
-            canFeature(plan, "reports") ? (
+            !canFeature(plan, "reports") ? (
+              <UpgradeGate plan={plan} requiredPlan="Basic" featureName="Reports & Analytics" fullPage onUpgrade={() => setShowPlansModal(true)} />
+            ) : !canDo(effectiveUser, orgSettings.find((s) => s.orgId === effectiveUser?.orgId), "reports.view") ? (
+              <div style={{ display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center", flex: 1, padding: 48, textAlign: "center", color: t.text3 }}>
+                <I name="chart" size={40} />
+                <div style={{ marginTop: 16, fontSize: 16, fontWeight: 700, color: t.text }}>Access Restricted</div>
+                <div style={{ marginTop: 8, fontSize: 13 }}>Your role doesn't have permission to view reports. Ask an Admin to grant the "View reports" permission.</div>
+              </div>
+            ) : (
               <ReportsView
                 tickets={tickets}
                 users={users}
                 currentUser={effectiveUser}
                 priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)}
               />
-            ) : (
-              <UpgradeGate plan={plan} requiredPlan="Basic" featureName="Reports & Analytics" fullPage onUpgrade={() => setShowPlansModal(true)} />
             )
           )}
           {view === "profile" && (

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from "react";
-import { DEFAULT_URGENCIES, PRIORITIES, TICKET_TYPES } from "../core/constants.js";
+import { DEFAULT_URGENCIES, PERMISSION_GROUPS, PRIORITIES, ROLE_COLORS, ROLE_PERMISSION_DEFAULTS, TICKET_TYPES } from "../core/constants.js";
 import { useTokens, useBreakpoint } from "../core/hooks.js";
 import { Avatar, Badge, Btn, Card, Input, Label, Modal, Sel } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
@@ -360,7 +360,7 @@ export function TeamsView({
       )}
 
       {settingsOrgOpen && org && (
-        <Modal title="Organisation Settings" onClose={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }} width={820}>
+        <Modal title="Organisation Settings" onClose={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }} width={1040}>
           <div style={{ display: "flex", gap: 12 }}>
             <div style={{ width: 200 }}>
               {[
@@ -919,68 +919,74 @@ function CategoriesForm({ defaultCategories, onSave, onCancel }) {
   );
 }
 
-function PermissionsForm({ orgId, orgSetting, users, teamRoles, onSave, onCancel, onUpdateMemberRoles }) {
+// Pill toggle switch — on/off like Discord
+function Toggle({ checked, onChange, disabled }) {
   const t = useTokens();
-  const [catalogEditable, setCatalogEditable] = useState(!!orgSetting?.catalogEditable);
-  const [requireApprovals, setRequireApprovals] = useState(!!orgSetting?.requireApprovals);
-  const [approvalMode, setApprovalMode] = useState(orgSetting?.approvalMode || "all");
-  const [defaultApproverRole, setDefaultApproverRole] = useState(orgSetting?.defaultCatalogApproverRole || "");
-  const [saving, setSaving] = useState(false);
-  const [userSaving, setUserSaving] = useState(null);
+  return (
+    <button
+      type="button"
+      role="switch"
+      aria-checked={checked}
+      onClick={() => !disabled && onChange(!checked)}
+      style={{
+        width: 42, height: 24, borderRadius: 999, border: "none", cursor: disabled ? "default" : "pointer",
+        background: checked ? (disabled ? t.text3 : t.accent) : t.border,
+        position: "relative", transition: "background 0.18s", flexShrink: 0, padding: 0,
+        opacity: disabled ? 0.6 : 1,
+      }}
+    >
+      <span style={{
+        position: "absolute", top: 3, left: checked ? 21 : 3,
+        width: 18, height: 18, borderRadius: "50%", background: "#fff",
+        transition: "left 0.18s", boxShadow: "0 1px 3px rgba(0,0,0,0.25)",
+      }} />
+    </button>
+  );
+}
 
-  // rolePermissions structure: { roleName: { permKey: true, ... }, ... }
-  const initialRolePerms = orgSetting?.rolePermissions || {};
-  const [rolePermissions, setRolePermissions] = useState(() => ({ ...initialRolePerms }));
-
-  // derive permission keys from rolePermissions
-  const permissionKeys = useMemo(() => ["catalog.manage", "catalog.edit", "approvals.resolve", "tickets.edit", "tickets.create"], []);
-
-  const presetRoles = ["Catalog Manager", "Admin", "Agent", "End User"];
+function PermissionsForm({ orgSetting, teamRoles, onSave, onCancel }) {
+  const t = useTokens();
 
   const roleOptions = useMemo(() => {
     const custom = (teamRoles || []).map((r) => r.name).filter(Boolean);
-    const merged = [...FALLBACK_ROLES, ...custom];
-    return Array.from(new Set(merged));
+    return Array.from(new Set([...FALLBACK_ROLES, ...custom]));
   }, [teamRoles]);
 
-  const togglePermission = (role, perm) => {
+  // Seed with saved permissions; fall back to defaults when empty
+  const [rolePermissions, setRolePermissions] = useState(() => {
+    const saved = orgSetting?.rolePermissions || {};
+    if (Object.keys(saved).length > 0) return saved;
+    return { ...ROLE_PERMISSION_DEFAULTS };
+  });
+
+  const [requireApprovals, setRequireApprovals] = useState(!!orgSetting?.requireApprovals);
+  const [approvalMode, setApprovalMode] = useState(orgSetting?.approvalMode || "all");
+  const [selectedRole, setSelectedRole] = useState(roleOptions[0] || "Admin");
+  const [saving, setSaving] = useState(false);
+
+  const isAdmin = selectedRole === "Admin";
+
+  const toggle = (permKey) => {
+    if (isAdmin) return;
     setRolePermissions((prev) => {
-      const next = { ...(prev || {}) };
-      const row = { ...(next[role] || {}) };
-      row[perm] = !row[perm];
-      next[role] = row;
-      return next;
+      const rolePerms = { ...(prev[selectedRole] || {}) };
+      rolePerms[permKey] = !rolePerms[permKey];
+      return { ...prev, [selectedRole]: rolePerms };
     });
   };
 
-  const addPermissionKey = (key) => {
-    const k = String(key || "").trim();
-    if (!k) return;
-    if (permissionKeys.includes(k)) return;
-    // initialize flag false for all roles
-    setRolePermissions((prev) => {
-      const next = { ...(prev || {}) };
-      roleOptions.forEach((r) => { next[r] = { ...(next[r] || {}) }; next[r][k] = false; });
-      return next;
-    });
+  const resetToDefaults = () => {
+    setRolePermissions({ ...ROLE_PERMISSION_DEFAULTS });
   };
-
-  const permissionDefinitions = useMemo(() => ([
-    { key: "catalog.manage", label: "Manage catalog items", description: "Create and edit catalog items, approvers, and publishing settings." },
-    { key: "catalog.edit", label: "Edit catalog items", description: "Change catalog content without full manage access." },
-    { key: "approvals.resolve", label: "Resolve approvals", description: "Approve or reject pending requests." },
-    { key: "tickets.edit", label: "Edit tickets", description: "Change ticket fields and status." },
-    { key: "tickets.create", label: "Create tickets", description: "Open new incidents, requests, and changes." },
-  ]), []);
 
   const submit = async () => {
     setSaving(true);
     try {
       await onSave({
-        catalogEditable: !!catalogEditable,
-        requireApprovals: !!requireApprovals,
+        catalogEditable: !!(rolePermissions["Catalog Manager"]?.["catalog.manage"] || rolePermissions["Agent"]?.["catalog.manage"]),
+        requireApprovals,
         approvalMode,
-        defaultCatalogApproverRole: defaultApproverRole || "",
+        defaultCatalogApproverRole: "Admin",
         rolePermissions,
       });
     } finally {
@@ -988,178 +994,124 @@ function PermissionsForm({ orgId, orgSetting, users, teamRoles, onSave, onCancel
     }
   };
 
-  const grantCatalogManager = async (user) => {
-    const current = Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role].filter(Boolean);
-    if (current.includes("Catalog Manager")) return;
-    setUserSaving(user.id);
-    try {
-      const next = [...current, "Catalog Manager"];
-      await onUpdateMemberRoles?.({ userId: user.id, roles: next });
-    } finally {
-      setUserSaving(null);
-    }
+  const getRoleColor = (role) => ROLE_COLORS[role] || t.text3;
+  const getPermCount = (role) => {
+    if (role === "Admin") return "All permissions";
+    const perms = rolePermissions[role] || {};
+    const count = Object.values(perms).filter(Boolean).length;
+    return count === 0 ? "No permissions" : `${count} permission${count === 1 ? "" : "s"}`;
   };
-
-  const revokeCatalogManager = async (user) => {
-    const current = Array.isArray(user.roles) && user.roles.length ? user.roles : [user.role].filter(Boolean);
-    if (!current.includes("Catalog Manager")) return;
-    setUserSaving(user.id);
-    try {
-      const next = current.filter((r) => r !== "Catalog Manager");
-      if (!next.length) next.push("End User");
-      await onUpdateMemberRoles?.({ userId: user.id, roles: next });
-    } finally {
-      setUserSaving(null);
-    }
-  };
-
-  const [newPerm, setNewPerm] = useState("");
-
-  const applyPreset = (role, preset) => {
-    const presets = {
-      "Catalog Manager": { "catalog.manage": true, "catalog.edit": true, "approvals.resolve": true },
-      "Agent": { "tickets.create": true, "tickets.edit": true },
-      "End User": { "tickets.create": true },
-      "Admin": { "catalog.manage": true, "catalog.edit": true, "approvals.resolve": true, "tickets.create": true, "tickets.edit": true },
-    };
-    const map = presets[preset] || presets[role] || {};
-    setRolePermissions((prev) => {
-      const next = { ...(prev || {}) };
-      next[role] = { ...(next[role] || {}), ...map };
-      return next;
-    });
-  };
-
-  const allRoles = roleOptions.slice(0, 4);
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-      <div style={{ fontSize: 12, color: t.text3, lineHeight: 1.5 }}>
-        This area controls who can manage the catalog and who can resolve approvals. Start with a preset, then fine-tune only if needed.
-      </div>
-
-      <div>
-        <Label>Catalog Editing & Approvals</Label>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="checkbox" checked={catalogEditable} onChange={(e) => setCatalogEditable(e.target.checked)} />
-            <span style={{ fontSize: 13 }}>Allow org members to edit service catalog items</span>
-          </label>
-          <label style={{ display: "flex", gap: 8, alignItems: "center" }}>
-            <input type="checkbox" checked={requireApprovals} onChange={(e) => setRequireApprovals(e.target.checked)} />
-            <span style={{ fontSize: 13 }}>Require approvals for catalog requests</span>
-          </label>
+    <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+      {/* Top controls */}
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 16, gap: 12, flexWrap: "wrap" }}>
+        <div style={{ fontSize: 12, color: t.text3 }}>
+          Select a role on the left, then toggle its permissions on the right.
+        </div>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          <Btn size="sm" variant="ghost" onClick={resetToDefaults}>Reset to defaults</Btn>
+          <Btn size="sm" variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
+          <Btn size="sm" variant="primary" onClick={submit} disabled={saving}>{saving ? "Saving…" : "Save"}</Btn>
         </div>
       </div>
 
-      <div>
-        <Label>Approval Completion Rule</Label>
-        <div style={{ fontSize: 12, color: t.text3, marginBottom: 6 }}>
-          Choose when a request can move from Awaiting Approval to Open.
-        </div>
-        <Sel value={approvalMode} onChange={(e) => setApprovalMode(e.target.value)}>
-          <option value="all">All approvers must approve (team approval needs one team member)</option>
-          <option value="any">Any one approval can open the ticket</option>
-        </Sel>
-      </div>
+      {/* Main two-column layout */}
+      <div style={{ display: "flex", gap: 0, border: `1px solid ${t.border}`, borderRadius: 12, overflow: "hidden", minHeight: 420 }}>
 
-      <div>
-        <Label>Default Approver Role</Label>
-        <div style={{ fontSize: 12, color: t.text3, marginBottom: 6 }}>
-          Used when a catalog item is approval-based but not tied to one user or team.
-        </div>
-        <Sel value={defaultApproverRole} onChange={(e) => setDefaultApproverRole(e.target.value)}>
-          <option value="">- none -</option>
-          {roleOptions.map((r) => <option key={r} value={r}>{r}</option>)}
-        </Sel>
-      </div>
-
-      <div>
-        <Label>Role permissions</Label>
-        <div style={{ fontSize: 12, color: t.text3, marginBottom: 8 }}>
-          Pick a preset to get started, then adjust only the permissions you need.
-        </div>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 12 }}>
-          {presetRoles.map((role) => (
-            <Btn key={role} size="sm" variant="secondary" onClick={() => applyPreset(role, role)}>
-              {role === "Catalog Manager" ? "Catalog Manager preset" : `${role} preset`}
-            </Btn>
-          ))}
-          <Btn size="sm" variant="ghost" onClick={() => {
-            setRolePermissions({});
-            presetRoles.forEach((role) => applyPreset(role, role));
-          }}>
-            Apply recommended defaults
-          </Btn>
-        </div>
-
-        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-          <Input value={newPerm} onChange={(e) => setNewPerm(e.target.value)} placeholder="Add custom permission key, e.g. kb.edit" onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); addPermissionKey(newPerm); setNewPerm(''); } }} />
-          <Btn variant="secondary" onClick={() => { addPermissionKey(newPerm); setNewPerm(""); }}>Add</Btn>
-        </div>
-
-        <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-          {permissionDefinitions.map((perm) => (
-            <div key={perm.key} style={{ border: `1px solid ${t.border}`, borderRadius: 10, padding: 12, background: t.surface2 }}>
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 10 }}>
-                <div style={{ minWidth: 200 }}>
-                  <div style={{ fontSize: 13, fontWeight: 700, color: t.text }}>{perm.label}</div>
-                  <div style={{ fontSize: 12, color: t.text3, marginTop: 4, lineHeight: 1.5 }}>{perm.description}</div>
+        {/* Left: role list */}
+        <div style={{ width: 180, borderRight: `1px solid ${t.border}`, background: t.surface2, flexShrink: 0 }}>
+          <div style={{ padding: "10px 12px 6px", fontSize: 10, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+            Roles
+          </div>
+          {roleOptions.map((role) => {
+            const color = getRoleColor(role);
+            const active = selectedRole === role;
+            return (
+              <button
+                key={role}
+                type="button"
+                onClick={() => setSelectedRole(role)}
+                style={{
+                  width: "100%", textAlign: "left", border: "none", cursor: "pointer",
+                  padding: "9px 12px", background: active ? t.accentBg : "transparent",
+                  borderLeft: `3px solid ${active ? t.accent : "transparent"}`,
+                  transition: "background 0.1s",
+                }}
+              >
+                <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                  <span style={{ width: 8, height: 8, borderRadius: "50%", background: color, flexShrink: 0 }} />
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontSize: 13, fontWeight: active ? 700 : 500, color: active ? t.text : t.text2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{role}</div>
+                    <div style={{ fontSize: 10, color: active ? t.text3 : t.text3, marginTop: 1 }}>{getPermCount(role)}</div>
+                  </div>
                 </div>
-                <div style={{ fontSize: 11, color: t.text3, alignSelf: "center" }}>{perm.key}</div>
-              </div>
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {allRoles.map((role) => {
-                  const checked = !!((rolePermissions || {})[role]?.[perm.key]);
+              </button>
+            );
+          })}
+        </div>
+
+        {/* Right: permission toggles */}
+        <div style={{ flex: 1, overflowY: "auto", background: t.surface }}>
+          {/* Role header */}
+          <div style={{ padding: "14px 18px 12px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", gap: 10 }}>
+            <span style={{ width: 10, height: 10, borderRadius: "50%", background: getRoleColor(selectedRole), flexShrink: 0 }} />
+            <div>
+              <div style={{ fontSize: 15, fontWeight: 700, color: t.text }}>{selectedRole}</div>
+              {isAdmin && (
+                <div style={{ fontSize: 11, color: t.text3, marginTop: 2 }}>Admins always have full access — permissions cannot be restricted.</div>
+              )}
+            </div>
+          </div>
+
+          {/* Permission groups */}
+          <div style={{ padding: "4px 0 12px" }}>
+            {PERMISSION_GROUPS.map((group) => (
+              <div key={group.id}>
+                <div style={{ padding: "14px 18px 6px", fontSize: 10, fontWeight: 700, color: t.text3, textTransform: "uppercase", letterSpacing: "0.08em" }}>
+                  {group.label}
+                </div>
+                {group.permissions.map((perm, idx) => {
+                  const enabled = isAdmin || !!(rolePermissions[selectedRole]?.[perm.key]);
                   return (
-                    <label key={`${role}-${perm.key}`} style={{ display: "flex", alignItems: "center", gap: 6, border: `1px solid ${t.border}`, borderRadius: 999, padding: "6px 10px", background: checked ? t.accentBg : t.surface }}>
-                      <input type="checkbox" checked={checked} onChange={() => togglePermission(role, perm.key)} />
-                      <span style={{ fontSize: 12, color: checked ? t.accentText : t.text2 }}>{role}</span>
-                    </label>
+                    <div
+                      key={perm.key}
+                      style={{
+                        display: "flex", alignItems: "center", justifyContent: "space-between",
+                        padding: "11px 18px",
+                        borderBottom: idx < group.permissions.length - 1 ? `1px solid ${t.border}22` : "none",
+                        gap: 12,
+                      }}
+                    >
+                      <div style={{ flex: 1, minWidth: 0 }}>
+                        <div style={{ fontSize: 13, fontWeight: 500, color: t.text }}>{perm.label}</div>
+                        <div style={{ fontSize: 11, color: t.text3, marginTop: 2 }}>{perm.description}</div>
+                      </div>
+                      <Toggle checked={enabled} onChange={() => toggle(perm.key)} disabled={isAdmin} />
+                    </div>
                   );
                 })}
               </div>
-            </div>
-          ))}
-        </div>
-
-        <div style={{ marginTop: 10, fontSize: 12, color: t.text3 }}>
-          Recommended defaults give Admin full access, Catalog Manager catalog control, Agents ticket actions, and End Users request creation only.
+            ))}
+          </div>
         </div>
       </div>
 
-      <div>
-        <Label>Assign Catalog Manager</Label>
-        <div style={{ fontSize: 12, color: t.text3, marginBottom: 6 }}>
-          Quick shortcut for users who should manage catalog items and approvals.
+      {/* Approval settings below the main panel */}
+      <div style={{ marginTop: 16, padding: "14px 16px", border: `1px solid ${t.border}`, borderRadius: 10, background: t.surface2, display: "flex", gap: 24, flexWrap: "wrap", alignItems: "flex-start" }}>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: t.text, marginBottom: 4 }}>Require approvals for catalog requests</div>
+          <div style={{ fontSize: 11, color: t.text3, marginBottom: 8 }}>When on, catalog requests go to Awaiting Approval before work begins.</div>
+          <Toggle checked={requireApprovals} onChange={setRequireApprovals} />
         </div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {users.map((u) => {
-            const roles = Array.isArray(u.roles) && u.roles.length ? u.roles : [u.role].filter(Boolean);
-            const has = roles.includes("Catalog Manager");
-            return (
-              <div key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: 8, border: `1px solid ${t.border}`, borderRadius: 8 }}>
-                <div>
-                  <div style={{ fontWeight: 700 }}>{u.name}</div>
-                  <div style={{ fontSize: 12, color: t.text3 }}>{roles.join(", ")}</div>
-                </div>
-                <div>
-                  {has ? (
-                    <Btn size="sm" variant="danger" onClick={() => revokeCatalogManager(u)} disabled={userSaving === u.id}>{userSaving === u.id ? "…" : "Revoke"}</Btn>
-                  ) : (
-                    <Btn size="sm" variant="primary" onClick={() => grantCatalogManager(u)} disabled={userSaving === u.id}>{userSaving === u.id ? "…" : "Grant"}</Btn>
-                  )}
-                </div>
-              </div>
-            );
-          })}
-          {users.length === 0 && <div style={{ color: t.text3 }}>No users in this organisation.</div>}
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontSize: 12, fontWeight: 700, color: t.text, marginBottom: 4 }}>Approval completion rule</div>
+          <div style={{ fontSize: 11, color: t.text3, marginBottom: 8 }}>When can a request move from Awaiting Approval to Open?</div>
+          <Sel value={approvalMode} onChange={(e) => setApprovalMode(e.target.value)} style={{ fontSize: 12 }}>
+            <option value="all">All approvers must approve</option>
+            <option value="any">Any single approval is enough</option>
+          </Sel>
         </div>
-      </div>
-
-      <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
-        <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
-        <Btn variant="primary" onClick={submit} disabled={saving}>{saving ? "Saving…" : "Save Permissions"}</Btn>
       </div>
     </div>
   );
