@@ -181,4 +181,5 @@ export const VIEW_LABELS = {
   kb:         "Knowledge Base",
   reports:    "Reports & Analytics",
   profile:    "My Profile",
+  billing:    "Plans & Billing",
 };

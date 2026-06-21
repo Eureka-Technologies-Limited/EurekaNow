@@ -41,7 +41,7 @@ import { canDo, slaForPriority, slaPct } from "../core/utils.js";
 import { I } from "../core/icons.jsx";
 import { ToastContainer, useToasts } from "../ui/Toast.jsx";
 import { UpgradeGate, PlansModal, PlanBadge } from "../ui/UpgradeGate.jsx";
-import { normalizePlan, canFeature, subscribeToRealtime } from "../core/subscriptions.js";
+import { normalizePlan, canFeature, getLimit, subscribeToRealtime } from "../core/subscriptions.js";
 import { rowMappers } from "../core/api.js";
 import { DEFAULT_LAYOUT } from "../widgets/registry.js";
 import { DashboardView, DashCustomiser } from "../widgets/DashboardView.jsx";
@@ -54,6 +54,7 @@ import { KBView }           from "../views/KBView.jsx";
 import { KanbanView }       from "../views/KanbanView.jsx";
 import { ReportsView }      from "../views/ReportsView.jsx";
 import { ProfileView }      from "../views/ProfileView.jsx";
+import { BillingView }      from "../views/BillingView.jsx";
 import { CommandPalette }  from "../ui/CommandPalette.jsx";
 import { OnboardingTutorial, useOnboardingStatus } from "../ui/OnboardingTutorial.jsx";
 
@@ -235,8 +236,14 @@ export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tic
       <div style={{ padding: "9px 5px", borderTop: `1px solid ${t.border}`, display: "flex", flexDirection: "column", gap: 2 }}>
         {open && (
           <button
-            onClick={onShowPlans}
-            style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 8, color: t.text2, padding: "7px 10px", borderRadius: 8, width: "100%", justifyContent: "flex-start", fontFamily: t.font }}
+            onClick={userHasRole(currentUser, "Admin") ? () => setView("billing") : onShowPlans}
+            style={{
+              background: view === "billing" ? t.accentBg : "none",
+              border: view === "billing" ? `1px solid ${t.accent}44` : "none",
+              cursor: "pointer", display: "flex", alignItems: "center", gap: 8,
+              color: view === "billing" ? t.accentText : t.text2,
+              padding: "7px 10px", borderRadius: 8, width: "100%", justifyContent: "flex-start", fontFamily: t.font,
+            }}
           >
             <I name="zap" size={13} />
             <span style={{ fontSize: 12, flex: 1, textAlign: "left" }}>Plans &amp; Billing</span>
@@ -940,6 +947,8 @@ export function AppShell({ currentUser, onLogout }) {
   }, [currentUser?.id]);
 
   useEffect(() => {
+    // "billing" is a special admin-only view, not controlled by sidebar prefs
+    if (view === "billing") return;
     if (!sidebarItems.includes(view)) {
       setView(sidebarItems[0] || "dashboard");
     }
@@ -1268,6 +1277,15 @@ export function AppShell({ currentUser, onLogout }) {
   };
 
   const handleCreateOrg = async (payload) => {
+    // Enforce org limit based on the user's current plan
+    const activePlan = normalizePlan(currentOrg?.plan);
+    const orgLimit   = getLimit(activePlan, "orgs");
+    if (orgLimit !== Infinity && orgs.length >= orgLimit) {
+      throw new Error(
+        `Your ${activePlan} plan allows up to ${orgLimit} organisation${orgLimit === 1 ? "" : "s"}. ` +
+        `Upgrade your plan to create more.`
+      );
+    }
     const created = await createOrganisation(payload);
     setOrgs((rows) => [...rows, created]);
     return created;
@@ -1280,6 +1298,17 @@ export function AppShell({ currentUser, onLogout }) {
   };
 
   const handleCreateTeam = async (payload) => {
+    // Enforce team limit for the target org
+    const targetOrg  = orgs.find((o) => o.id === payload.orgId);
+    const orgPlan    = normalizePlan(targetOrg?.plan);
+    const teamLimit  = getLimit(orgPlan, "teams");
+    const orgTeamCount = teams.filter((t) => t.orgId === payload.orgId).length;
+    if (teamLimit !== Infinity && orgTeamCount >= teamLimit) {
+      throw new Error(
+        `Your ${orgPlan} plan allows up to ${teamLimit} team${teamLimit === 1 ? "" : "s"} per organisation. ` +
+        `Upgrade your plan to create more.`
+      );
+    }
     const created = await createTeam(payload);
     setTeams((rows) => [...rows, created]);
     return created;
@@ -1863,6 +1892,13 @@ export function AppShell({ currentUser, onLogout }) {
                 priorityCatalog={getPriorityCatalog(effectiveUser.orgId, effectiveUser.teamId)}
               />
             )
+          )}
+          {view === "billing" && (
+            <BillingView
+              currentUser={effectiveUser}
+              currentOrg={currentOrg}
+              plan={plan}
+            />
           )}
           {view === "profile" && (
             <ProfileView

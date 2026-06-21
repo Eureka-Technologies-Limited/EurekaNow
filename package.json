@@ -44,5 +44,11 @@
   },
   "devDependencies": {
     "@tauri-apps/cli": "^2.11.2"
+  },
+  "jest": {
+    "testMatch": [
+      "<rootDir>/src/**/*.{test,spec}.{js,jsx}",
+      "<rootDir>/tests/unit/**/*.{test,spec}.{js,jsx}"
+    ]
   }
 }

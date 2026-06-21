@@ -223,9 +223,10 @@ export function UpgradeGate({ plan, requiredPlan = "Basic", featureName, childre
 export function PlanBadge({ plan, onClick }) {
   const normalized = normalizePlan(plan);
   const cfg = PLANS[normalized] || PLANS.Free;
+  const Tag = onClick ? "button" : "span";
 
   return (
-    <button
+    <Tag
       onClick={onClick}
       title={`${cfg.price} · ${cfg.tagline}`}
       style={{
@@ -239,6 +240,6 @@ export function PlanBadge({ plan, onClick }) {
     >
       <I name={normalized === "Pro" ? "star" : normalized === "Basic" ? "zap" : "user"} size={10} style={{ color: cfg.color }} />
       <span style={{ fontSize: 10, fontWeight: 700, color: cfg.color }}>{normalized}</span>
-    </button>
+    </Tag>
   );
 }

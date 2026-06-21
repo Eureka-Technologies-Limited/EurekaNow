@@ -921,17 +921,35 @@ export async function createMember(payload) {
   // Check if user already exists globally
   const existing = await getExistingUserByEmail(payload.email || "");
 
-  // In production: if user does not exist, they need to register first
-  if (!existing) {
-    throw new Error(`No account found for "${payload.email}". Ask them to create an account first before you can add them.`);
-  }
-
-  // If user exists and is already in the org, inform caller
-  if (existing.org_id === payload.orgId || existing.orgId === payload.orgId) {
+  // If user exists in THIS org, nothing to do
+  if (existing && (existing.org_id === payload.orgId || existing.orgId === payload.orgId)) {
     throw new Error("This user is already a member of this organization.");
   }
 
-  // User exists in a different org — create an invitation so they can accept
+  // Registration path: password provided + no existing account → create user directly
+  if (payload.password && !existing) {
+    const newUser = {
+      id: `usr_${uid()}`,
+      name: String(payload.name || payload.email.split("@")[0] || "User").trim(),
+      email: normalizeEmail(payload.email),
+      password: payload.password,
+      role: roles[0] || "End User",
+      roles,
+      org_id: payload.orgId,
+      team_id: payload.teamId || null,
+      title: String(payload.title || "").trim(),
+    };
+    const { data, error } = await supabase
+      .from(TABLES.users)
+      .insert([newUser])
+      .select()
+      .single();
+    if (error) throw new Error("Failed to create member: " + error.message);
+    return toUser(data);
+  }
+
+  // User doesn't have an account yet, or is in a different org —
+  // create an invite that will be waiting for them when they sign up.
   const inviteRow = {
     id: `inv_${uid()}`,
     org_id: payload.orgId,

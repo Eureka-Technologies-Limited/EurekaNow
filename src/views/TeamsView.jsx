@@ -6,7 +6,28 @@ import { I } from "../core/icons.jsx";
 import { PlansModal, PlanBadge } from "../ui/UpgradeGate.jsx";
 import { fetchOrgInvitationsForOrg, sendOrgInvitation, cancelOrgInvitation, fetchApiKeys, createApiKey, revokeApiKey } from "../core/api.js";
 
-const TEAM_ICONS = ["IT","ENG","OPS","APP","NET","SEC","DATA","QA","PM","UX","HR","FIN"];
+const TEAM_ICONS = [
+  { key: "IT",   emoji: "💻", label: "IT"   },
+  { key: "ENG",  emoji: "⚙️",  label: "Eng"  },
+  { key: "OPS",  emoji: "🏭", label: "Ops"  },
+  { key: "APP",  emoji: "📱", label: "App"  },
+  { key: "NET",  emoji: "🌐", label: "Net"  },
+  { key: "SEC",  emoji: "🔒", label: "Sec"  },
+  { key: "DATA", emoji: "📊", label: "Data" },
+  { key: "QA",   emoji: "✅", label: "QA"   },
+  { key: "PM",   emoji: "📋", label: "PM"   },
+  { key: "UX",   emoji: "🎨", label: "UX"   },
+  { key: "HR",   emoji: "👥", label: "HR"   },
+  { key: "FIN",  emoji: "💰", label: "Fin"  },
+  { key: "MKT",  emoji: "📣", label: "Mkt"  },
+  { key: "SALES",emoji: "🤝", label: "Sales"},
+  { key: "RD",   emoji: "🧪", label: "R&D"  },
+  { key: "LEG",  emoji: "⚖️",  label: "Legal"},
+];
+
+// Maps stored key → emoji (handles old data stored as text like "IT", "ENG")
+const ICON_EMOJI = Object.fromEntries(TEAM_ICONS.map((i) => [i.key, i.emoji]));
+const teamEmoji = (icon) => ICON_EMOJI[icon] || icon || "🏢";
 const FALLBACK_ROLES = ["Admin", "Agent", "End User"];
 
 const defaultPriorityRows = () => Object.entries(PRIORITIES).map(([name, cfg]) => ({
@@ -265,7 +286,7 @@ export function TeamsView({
                     <Card key={team.id} noPad style={compactView ? { padding: 6 } : undefined}>
                       <div style={{ padding: compactView ? "8px 10px" : "12px 16px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
                         <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                          <span style={{ fontSize: compactView ? 14 : 18 }}>{team.icon}</span>
+                          <span style={{ fontSize: compactView ? 16 : 22 }}>{teamEmoji(team.icon)}</span>
                           <div>
                             <div style={{ fontSize: compactView ? 12 : 14, fontWeight: 700, color: t.text }}>{team.name}</div>
                             {!compactView && lead && <div style={{ fontSize: 10, color: t.text3 }}>Lead: {lead.name}</div>}
@@ -1133,7 +1154,7 @@ function AddOrgForm({ onSave, onCancel }) {
 
 function AddTeamForm({ orgs, users, defaultOrgId, onSave, onCancel }) {
   const t = useTokens();
-  const [f, setF] = useState({ name: "", orgId: defaultOrgId || orgs[0]?.id, lead: "", icon: "IT" });
+  const [f, setF] = useState({ name: "", orgId: defaultOrgId || orgs[0]?.id, lead: "", icon: "IT" }); // "IT" key kept for DB compat
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
   const set = (k, v) => setF((p) => ({ ...p, [k]: v }));
@@ -1168,11 +1189,29 @@ function AddTeamForm({ orgs, users, defaultOrgId, onSave, onCancel }) {
       <div>
         <Label>Icon</Label>
         <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
-          {TEAM_ICONS.map((ic) => (
-            <button key={ic} onClick={() => set("icon", ic)} style={{ fontSize: 16, width: 34, height: 34, border: `2px solid ${f.icon === ic ? t.accent : t.border}`, borderRadius: 8, background: f.icon === ic ? t.accentBg : t.surface2, cursor: "pointer" }}>
-              {ic}
-            </button>
-          ))}
+          {TEAM_ICONS.map((ic) => {
+            const selected = f.icon === ic.key;
+            return (
+              <button
+                key={ic.key}
+                onClick={() => set("icon", ic.key)}
+                title={ic.label}
+                style={{
+                  display: "flex", flexDirection: "column", alignItems: "center", justifyContent: "center",
+                  gap: 2, width: 52, height: 52, padding: "4px 2px",
+                  border: `2px solid ${selected ? t.accent : t.border}`,
+                  borderRadius: 10,
+                  background: selected ? t.accentBg : t.surface2,
+                  cursor: "pointer",
+                  transition: "border-color .15s, background .15s",
+                  outline: "none",
+                }}
+              >
+                <span style={{ fontSize: 22, lineHeight: 1 }}>{ic.emoji}</span>
+                <span style={{ fontSize: 9, color: selected ? t.accentText : t.text3, fontWeight: 600, letterSpacing: "0.02em" }}>{ic.label}</span>
+              </button>
+            );
+          })}
         </div>
       </div>
       {error && <div style={{ fontSize: 12, color: "#dc2626" }}>{error}</div>}

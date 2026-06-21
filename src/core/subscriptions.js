@@ -18,6 +18,8 @@ export const PLANS = {
       kbArticles: 0,
       dashboardWidgets: 4,
       closingTemplates: 0,
+      teams: 1,
+      orgs: 1,
     },
     features: {
       allTicketTypes: false,   // only Incident + Service Request
@@ -45,11 +47,13 @@ export const PLANS = {
     color: "#3182ce",
     bgColor: "#3182ce22",
     limits: {
-      users: 10,
+      users: 25,
       activeTickets: 500,
       kbArticles: 50,
       dashboardWidgets: Infinity,
       closingTemplates: 10,
+      teams: 5,
+      orgs: 3,
     },
     features: {
       allTicketTypes: true,
@@ -87,6 +91,8 @@ export const PLANS = {
       kbArticles: Infinity,
       dashboardWidgets: Infinity,
       closingTemplates: Infinity,
+      teams: Infinity,
+      orgs: Infinity,
     },
     features: {
       allTicketTypes: true,
