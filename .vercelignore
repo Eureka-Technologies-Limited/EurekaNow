@@ -1,0 +1,17 @@
+node_modules
+src
+public
+build
+android
+ios
+src-tauri
+tests
+docs
+supabase
+*.mjs
+*.sh
+*.md
+*.ts
+package.json
+package-lock.json
+capacitor.config.ts

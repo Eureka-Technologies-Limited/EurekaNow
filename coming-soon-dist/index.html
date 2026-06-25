@@ -1,0 +1,455 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>EurekaNow — Coming Soon</title>
+  <meta name="description" content="EurekaNow is under development. Something great is coming." />
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --navy: #0b1a30;
+      --card: #1D3557;
+      --border: #37474F;
+      --orange: #F57A55;
+      --white: #FFFFFF;
+      --muted: #B0BEC5;
+      --faint: #90A4AE;
+    }
+
+    html, body {
+      width: 100%; height: 100%;
+      background: var(--navy);
+      font-family: 'DM Sans', Arial, sans-serif;
+      color: var(--white);
+      overflow: hidden;
+    }
+
+    canvas#bg {
+      position: fixed;
+      inset: 0;
+      z-index: 0;
+    }
+
+    .page {
+      position: relative;
+      z-index: 1;
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      padding: 2rem;
+      text-align: center;
+    }
+
+    /* ── Logo ── */
+    .logo-wrap {
+      position: relative;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      margin-bottom: 2rem;
+      opacity: 0;
+      animation: fadeUp 0.8s ease 0.2s forwards;
+    }
+
+    .orbit-ring {
+      position: absolute;
+      width: 80px; height: 80px;
+      border-radius: 50%;
+      border: 1.5px solid rgba(245,122,85,0.25);
+      animation: spin 8s linear infinite;
+    }
+
+    .orbit-ring::after {
+      content: '';
+      position: absolute;
+      top: -3px; left: 50%;
+      width: 6px; height: 6px;
+      background: var(--orange);
+      border-radius: 50%;
+      transform: translateX(-50%);
+    }
+
+    .orbit-ring-2 {
+      width: 110px; height: 110px;
+      border-color: rgba(245,122,85,0.12);
+      animation: spin 14s linear infinite reverse;
+    }
+
+    .orbit-ring-2::after {
+      width: 4px; height: 4px;
+      top: auto; bottom: -2px;
+      background: rgba(245,122,85,0.6);
+    }
+
+    .logo-box {
+      width: 52px; height: 52px;
+      background: var(--orange);
+      border-radius: 14px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 26px;
+      font-weight: 700;
+      color: var(--navy);
+      position: relative;
+      animation: pulse-glow 3s ease-in-out infinite;
+      z-index: 2;
+    }
+
+    .logo-wordmark {
+      margin-left: 1rem;
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: 24px;
+      font-weight: 700;
+      color: var(--white);
+      letter-spacing: -0.3px;
+      position: relative;
+      z-index: 2;
+    }
+
+    .logo-wordmark span { color: var(--orange); }
+
+    /* ── Main card ── */
+    .card {
+      background: rgba(29,53,87,0.6);
+      border: 1px solid rgba(55,71,79,0.8);
+      border-radius: 20px;
+      padding: 3rem 3.5rem;
+      max-width: 580px;
+      width: 100%;
+      backdrop-filter: blur(20px);
+      -webkit-backdrop-filter: blur(20px);
+      position: relative;
+      overflow: hidden;
+      opacity: 0;
+      animation: fadeUp 0.8s ease 0.5s forwards;
+    }
+
+    .card::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 0; right: 0;
+      height: 3px;
+      background: var(--orange);
+      border-radius: 20px 20px 0 0;
+    }
+
+    .eyebrow {
+      font-size: 10px;
+      font-weight: 600;
+      letter-spacing: 3px;
+      text-transform: uppercase;
+      color: var(--orange);
+      margin-bottom: 1rem;
+    }
+
+    h1 {
+      font-family: 'Playfair Display', Georgia, serif;
+      font-size: clamp(2rem, 5vw, 3rem);
+      font-weight: 700;
+      line-height: 1.15;
+      color: var(--white);
+      margin-bottom: 1.5rem;
+    }
+
+    h1 em {
+      font-style: italic;
+      color: var(--orange);
+    }
+
+    .typewriter-wrap {
+      font-size: 16px;
+      font-weight: 300;
+      color: var(--muted);
+      line-height: 1.7;
+      margin-bottom: 2.5rem;
+      min-height: 3.4em;
+    }
+
+    .cursor {
+      display: inline-block;
+      width: 2px;
+      height: 1em;
+      background: var(--orange);
+      vertical-align: text-bottom;
+      animation: blink 1s step-end infinite;
+    }
+
+    /* ── Dots progress ── */
+    .progress-dots {
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      margin-bottom: 2.5rem;
+    }
+
+    .dot {
+      width: 8px; height: 8px;
+      border-radius: 50%;
+      background: var(--border);
+      animation: dot-pulse 1.8s ease-in-out infinite;
+    }
+
+    .dot:nth-child(1) { animation-delay: 0s; }
+    .dot:nth-child(2) { animation-delay: 0.3s; }
+    .dot:nth-child(3) { animation-delay: 0.6s; }
+
+    /* ── Status tags ── */
+    .tags {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      justify-content: center;
+      margin-bottom: 2.5rem;
+    }
+
+    .tag {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 12px;
+      font-weight: 500;
+      padding: 6px 14px;
+      border-radius: 50px;
+      border: 1px solid var(--border);
+      color: var(--muted);
+      opacity: 0;
+      animation: fadeUp 0.5s ease forwards;
+    }
+
+    .tag:nth-child(1) { animation-delay: 1.2s; }
+    .tag:nth-child(2) { animation-delay: 1.4s; }
+    .tag:nth-child(3) { animation-delay: 1.6s; }
+
+    .tag .dot-indicator {
+      width: 6px; height: 6px;
+      border-radius: 50%;
+      background: var(--orange);
+      animation: pulse-glow 2s ease-in-out infinite;
+    }
+
+    /* ── Divider ── */
+    .divider {
+      height: 1px;
+      background: var(--border);
+      margin: 0 0 2rem;
+    }
+
+    /* ── Footer ── */
+    .foot {
+      font-size: 12px;
+      color: var(--faint);
+    }
+
+    .foot a {
+      color: var(--muted);
+      text-decoration: none;
+    }
+
+    .foot a:hover { color: var(--orange); }
+
+    /* ── Page footer ── */
+    .page-footer {
+      position: fixed;
+      bottom: 2rem;
+      left: 0; right: 0;
+      text-align: center;
+      font-size: 11px;
+      color: var(--faint);
+      letter-spacing: 0.5px;
+      z-index: 1;
+      opacity: 0;
+      animation: fadeUp 0.8s ease 1.8s forwards;
+    }
+
+    /* ── Keyframes ── */
+    @keyframes fadeUp {
+      from { opacity: 0; transform: translateY(20px); }
+      to   { opacity: 1; transform: translateY(0); }
+    }
+
+    @keyframes spin {
+      from { transform: rotate(0deg); }
+      to   { transform: rotate(360deg); }
+    }
+
+    @keyframes pulse-glow {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(245,122,85,0); }
+      50%       { box-shadow: 0 0 20px 6px rgba(245,122,85,0.25); }
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50%       { opacity: 0; }
+    }
+
+    @keyframes dot-pulse {
+      0%, 100% { background: var(--border); transform: scale(1); }
+      50%       { background: var(--orange); transform: scale(1.4); }
+    }
+
+    @media (max-width: 480px) {
+      .card { padding: 2rem 1.5rem; }
+      h1 { font-size: 2rem; }
+    }
+  </style>
+</head>
+<body>
+
+<canvas id="bg"></canvas>
+
+<div class="page">
+
+  <!-- Logo above card -->
+  <div class="logo-wrap">
+    <div class="orbit-ring"></div>
+    <div class="orbit-ring orbit-ring-2"></div>
+    <div class="logo-box">E</div>
+    <div class="logo-wordmark">Eureka<span>Now</span></div>
+  </div>
+
+  <!-- Main card -->
+  <div class="card">
+    <p class="eyebrow">Under development</p>
+    <h1>Something<br /><em>great is coming.</em></h1>
+
+    <div class="typewriter-wrap">
+      <span id="tw"></span><span class="cursor"></span>
+    </div>
+
+    <div class="progress-dots">
+      <div class="dot"></div>
+      <div class="dot"></div>
+      <div class="dot"></div>
+    </div>
+
+    <div class="tags">
+      <div class="tag"><div class="dot-indicator"></div>In development</div>
+      <div class="tag"><div class="dot-indicator"></div>Security first</div>
+      <div class="tag"><div class="dot-indicator"></div>Launching soon</div>
+    </div>
+
+    <div class="divider"></div>
+
+    <p class="foot">
+      Want early access? Contact us at
+      <a href="mailto:info@eureka-technologies.co.uk">info@eureka-technologies.co.uk</a>
+    </p>
+  </div>
+
+</div>
+
+<div class="page-footer">
+  © 2026 Eureka Technologies Limited &nbsp;·&nbsp; eurekanow.eureka-technologies.co.uk
+</div>
+
+<script>
+  // ── Particle canvas ────────────────────────────────────────────────────────
+  const canvas = document.getElementById('bg');
+  const ctx    = canvas.getContext('2d');
+
+  function resize() {
+    canvas.width  = window.innerWidth;
+    canvas.height = window.innerHeight;
+  }
+  resize();
+  window.addEventListener('resize', resize);
+
+  const PARTICLE_COUNT = 80;
+  const particles = Array.from({ length: PARTICLE_COUNT }, () => ({
+    x:    Math.random() * window.innerWidth,
+    y:    Math.random() * window.innerHeight,
+    r:    Math.random() * 1.8 + 0.4,
+    vx:   (Math.random() - 0.5) * 0.3,
+    vy:   (Math.random() - 0.5) * 0.3,
+    a:    Math.random() * 0.5 + 0.1,
+    hue:  Math.random() > 0.7 ? '#F57A55' : '#37474F',
+  }));
+
+  function drawParticles() {
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+    // Draw connections
+    for (let i = 0; i < particles.length; i++) {
+      for (let j = i + 1; j < particles.length; j++) {
+        const dx = particles[i].x - particles[j].x;
+        const dy = particles[i].y - particles[j].y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 120) {
+          ctx.beginPath();
+          ctx.strokeStyle = `rgba(55,71,79,${0.4 * (1 - dist / 120)})`;
+          ctx.lineWidth = 0.5;
+          ctx.moveTo(particles[i].x, particles[i].y);
+          ctx.lineTo(particles[j].x, particles[j].y);
+          ctx.stroke();
+        }
+      }
+    }
+
+    // Draw particles
+    particles.forEach(p => {
+      ctx.beginPath();
+      ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
+      ctx.fillStyle = p.hue === '#F57A55'
+        ? `rgba(245,122,85,${p.a})`
+        : `rgba(55,71,79,${p.a})`;
+      ctx.fill();
+
+      p.x += p.vx;
+      p.y += p.vy;
+
+      if (p.x < 0)             p.x = canvas.width;
+      if (p.x > canvas.width)  p.x = 0;
+      if (p.y < 0)             p.y = canvas.height;
+      if (p.y > canvas.height) p.y = 0;
+    });
+
+    requestAnimationFrame(drawParticles);
+  }
+  drawParticles();
+
+  // ── Typewriter ─────────────────────────────────────────────────────────────
+  const lines = [
+    'We\'re building something powerful for modern support teams.',
+    'EurekaNow is a service desk platform — designed right.',
+    'Secure, fast, and built for the way teams actually work.',
+  ];
+
+  const el = document.getElementById('tw');
+  let lineIndex = 0, charIndex = 0, deleting = false;
+  const SPEED = 42, PAUSE = 2200, DEL_SPEED = 22;
+
+  function type() {
+    const current = lines[lineIndex];
+    if (!deleting) {
+      el.textContent = current.slice(0, ++charIndex);
+      if (charIndex === current.length) {
+        deleting = true;
+        setTimeout(type, PAUSE);
+        return;
+      }
+      setTimeout(type, SPEED);
+    } else {
+      el.textContent = current.slice(0, --charIndex);
+      if (charIndex === 0) {
+        deleting = false;
+        lineIndex = (lineIndex + 1) % lines.length;
+      }
+      setTimeout(type, DEL_SPEED);
+    }
+  }
+
+  setTimeout(type, 1200);
+</script>
+
+</body>
+</html>
