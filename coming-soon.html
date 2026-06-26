@@ -7,24 +7,25 @@
   <meta name="description" content="EurekaNow is under development. Something great is coming." />
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;1,700&family=DM+Sans:wght@300;400;500;600&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Sora:wght@300;400;600;700;800&display=swap" rel="stylesheet" />
   <style>
     *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
 
     :root {
-      --navy: #0b1a30;
-      --card: #1D3557;
-      --border: #37474F;
-      --orange: #F57A55;
-      --white: #FFFFFF;
-      --muted: #B0BEC5;
-      --faint: #90A4AE;
+      --navy:     #0B1A30;
+      --card:     #0f2244;
+      --border:   rgba(34,211,238,0.15);
+      --cyan:     #22D3EE;
+      --cyan-dk:  #0E7490;
+      --white:    #FFFFFF;
+      --muted:    #94A3B8;
+      --faint:    #64748B;
     }
 
     html, body {
       width: 100%; height: 100%;
       background: var(--navy);
-      font-family: 'DM Sans', Arial, sans-serif;
+      font-family: 'Sora', system-ui, sans-serif;
       color: var(--white);
       overflow: hidden;
     }
@@ -62,7 +63,7 @@
       position: absolute;
       width: 80px; height: 80px;
       border-radius: 50%;
-      border: 1.5px solid rgba(245,122,85,0.25);
+      border: 1.5px solid rgba(34,211,238,0.25);
       animation: spin 8s linear infinite;
     }
 
@@ -71,21 +72,22 @@
       position: absolute;
       top: -3px; left: 50%;
       width: 6px; height: 6px;
-      background: var(--orange);
+      background: var(--cyan);
       border-radius: 50%;
       transform: translateX(-50%);
+      box-shadow: 0 0 8px var(--cyan);
     }
 
     .orbit-ring-2 {
       width: 110px; height: 110px;
-      border-color: rgba(245,122,85,0.12);
+      border-color: rgba(34,211,238,0.10);
       animation: spin 14s linear infinite reverse;
     }
 
     .orbit-ring-2::after {
       width: 4px; height: 4px;
       top: auto; bottom: -2px;
-      background: rgba(245,122,85,0.6);
+      background: rgba(34,211,238,0.6);
     }
 
     .logo-box {
@@ -107,39 +109,40 @@
 
     .logo-wordmark {
       margin-left: 1rem;
-      font-family: 'Playfair Display', Georgia, serif;
-      font-size: 24px;
-      font-weight: 700;
+      font-family: 'Sora', system-ui, sans-serif;
+      font-size: 22px;
+      font-weight: 800;
       color: var(--white);
-      letter-spacing: -0.3px;
+      letter-spacing: -0.5px;
       position: relative;
       z-index: 2;
     }
 
-    .logo-wordmark span { color: var(--orange); }
+    .logo-wordmark span { color: var(--cyan); }
 
     /* ── Main card ── */
     .card {
-      background: rgba(29,53,87,0.6);
-      border: 1px solid rgba(55,71,79,0.8);
+      background: rgba(15,34,68,0.75);
+      border: 1px solid rgba(34,211,238,0.18);
       border-radius: 20px;
       padding: 3rem 3.5rem;
       max-width: 580px;
       width: 100%;
-      backdrop-filter: blur(20px);
-      -webkit-backdrop-filter: blur(20px);
+      backdrop-filter: blur(24px);
+      -webkit-backdrop-filter: blur(24px);
       position: relative;
       overflow: hidden;
       opacity: 0;
       animation: fadeUp 0.8s ease 0.5s forwards;
+      box-shadow: 0 0 60px rgba(34,211,238,0.06), 0 24px 48px rgba(0,0,0,0.4);
     }
 
     .card::before {
       content: '';
       position: absolute;
       top: 0; left: 0; right: 0;
-      height: 3px;
-      background: var(--orange);
+      height: 2px;
+      background: linear-gradient(90deg, #22D3EE, #0E7490);
       border-radius: 20px 20px 0 0;
     }
 
@@ -148,29 +151,34 @@
       font-weight: 600;
       letter-spacing: 3px;
       text-transform: uppercase;
-      color: var(--orange);
+      color: var(--cyan);
       margin-bottom: 1rem;
+      opacity: 0.8;
     }
 
     h1 {
-      font-family: 'Playfair Display', Georgia, serif;
-      font-size: clamp(2rem, 5vw, 3rem);
-      font-weight: 700;
+      font-family: 'Sora', system-ui, sans-serif;
+      font-size: clamp(1.9rem, 5vw, 2.8rem);
+      font-weight: 800;
       line-height: 1.15;
+      letter-spacing: -0.5px;
       color: var(--white);
       margin-bottom: 1.5rem;
     }
 
     h1 em {
-      font-style: italic;
-      color: var(--orange);
+      font-style: normal;
+      background: linear-gradient(135deg, #22D3EE, #0E7490);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
     }
 
     .typewriter-wrap {
-      font-size: 16px;
+      font-size: 15px;
       font-weight: 300;
       color: var(--muted);
-      line-height: 1.7;
+      line-height: 1.75;
       margin-bottom: 2.5rem;
       min-height: 3.4em;
     }
@@ -179,7 +187,7 @@
       display: inline-block;
       width: 2px;
       height: 1em;
-      background: var(--orange);
+      background: var(--cyan);
       vertical-align: text-bottom;
       animation: blink 1s step-end infinite;
     }
@@ -234,7 +242,7 @@
     .tag .dot-indicator {
       width: 6px; height: 6px;
       border-radius: 50%;
-      background: var(--orange);
+      background: var(--cyan);
       animation: pulse-glow 2s ease-in-out infinite;
     }
 
@@ -256,7 +264,7 @@
       text-decoration: none;
     }
 
-    .foot a:hover { color: var(--orange); }
+    .foot a:hover { color: var(--cyan); }
 
     /* ── Page footer ── */
     .page-footer {
@@ -284,8 +292,8 @@
     }
 
     @keyframes pulse-glow {
-      0%, 100% { box-shadow: 0 0 0 0 rgba(245,122,85,0); }
-      50%       { box-shadow: 0 0 20px 6px rgba(245,122,85,0.25); }
+      0%, 100% { box-shadow: 0 0 0 0 rgba(34,211,238,0); }
+      50%       { box-shadow: 0 0 20px 6px rgba(34,211,238,0.25); }
     }
 
     @keyframes blink {
@@ -294,8 +302,8 @@
     }
 
     @keyframes dot-pulse {
-      0%, 100% { background: var(--border); transform: scale(1); }
-      50%       { background: var(--orange); transform: scale(1.4); }
+      0%, 100% { background: rgba(34,211,238,0.2); transform: scale(1); }
+      50%       { background: var(--cyan); transform: scale(1.4); }
     }
 
     @media (max-width: 480px) {
@@ -380,15 +388,15 @@
   resize();
   window.addEventListener('resize', resize);
 
-  const PARTICLE_COUNT = 80;
+  const PARTICLE_COUNT = 90;
   const particles = Array.from({ length: PARTICLE_COUNT }, () => ({
     x:    Math.random() * window.innerWidth,
     y:    Math.random() * window.innerHeight,
-    r:    Math.random() * 1.8 + 0.4,
-    vx:   (Math.random() - 0.5) * 0.3,
-    vy:   (Math.random() - 0.5) * 0.3,
-    a:    Math.random() * 0.5 + 0.1,
-    hue:  Math.random() > 0.7 ? '#F57A55' : '#37474F',
+    r:    Math.random() * 1.6 + 0.3,
+    vx:   (Math.random() - 0.5) * 0.25,
+    vy:   (Math.random() - 0.5) * 0.25,
+    a:    Math.random() * 0.45 + 0.08,
+    cyan: Math.random() > 0.65,
   }));
 
   function drawParticles() {
@@ -400,9 +408,12 @@
         const dx = particles[i].x - particles[j].x;
         const dy = particles[i].y - particles[j].y;
         const dist = Math.sqrt(dx * dx + dy * dy);
-        if (dist < 120) {
+        if (dist < 130) {
+          const alpha = 0.35 * (1 - dist / 130);
           ctx.beginPath();
-          ctx.strokeStyle = `rgba(55,71,79,${0.4 * (1 - dist / 120)})`;
+          ctx.strokeStyle = (particles[i].cyan || particles[j].cyan)
+            ? `rgba(34,211,238,${alpha * 0.5})`
+            : `rgba(14,116,144,${alpha * 0.3})`;
           ctx.lineWidth = 0.5;
           ctx.moveTo(particles[i].x, particles[i].y);
           ctx.lineTo(particles[j].x, particles[j].y);
@@ -415,9 +426,9 @@
     particles.forEach(p => {
       ctx.beginPath();
       ctx.arc(p.x, p.y, p.r, 0, Math.PI * 2);
-      ctx.fillStyle = p.hue === '#F57A55'
-        ? `rgba(245,122,85,${p.a})`
-        : `rgba(55,71,79,${p.a})`;
+      ctx.fillStyle = p.cyan
+        ? `rgba(34,211,238,${p.a})`
+        : `rgba(14,116,144,${p.a * 0.7})`;
       ctx.fill();
 
       p.x += p.vx;
