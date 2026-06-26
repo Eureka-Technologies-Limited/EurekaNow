@@ -3,6 +3,7 @@
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useMemo, useRef, useState } from "react";
+import enLogo from "../logo.svg";
 import { useTokens, useTheme, useBreakpoint } from "../core/hooks.js";
 import { VIEW_LABELS, VIEW_TO_TYPE, PRIORITIES, DEFAULT_URGENCIES, DEFAULT_TICKET_TYPES } from "../core/constants.js";
 import {
@@ -15,6 +16,8 @@ import {
   updateOrgPlan,
   createTeamRole,
   createTeam,
+  updateTeam,
+  deleteTeam,
   createTicket,
   createTicketComment,
   createClosingTemplate,
@@ -187,9 +190,7 @@ export function DesktopSidebar({ view, setView, open, onToggle, currentUser, tic
     }}>
       {/* Logo */}
       <div style={{ padding: open ? "14px 14px" : "14px 9px", display: "flex", alignItems: "center", gap: 9, borderBottom: `1px solid ${t.border}`, flexShrink: 0 }}>
-        <div style={{ width: 27, height: 27, borderRadius: 8, background: t.accent, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0 }}>
-          <span style={{ fontWeight: 900, fontSize: 13, color: "#0a0a09" }}>E</span>
-        </div>
+        <img src={enLogo} alt="EurekaNow" style={{ width: 27, height: 27, borderRadius: 8, flexShrink: 0, display: "block" }} />
         {open && <span style={{ fontWeight: 800, fontSize: 14, color: t.text, letterSpacing: "-0.3px", whiteSpace: "nowrap" }}>EurekaNow</span>}
       </div>
 
@@ -1314,6 +1315,17 @@ export function AppShell({ currentUser, onLogout }) {
     return created;
   };
 
+  const handleUpdateTeam = async (teamId, patch) => {
+    const updated = await updateTeam(teamId, patch);
+    setTeams((rows) => rows.map((t) => t.id === teamId ? updated : t));
+    return updated;
+  };
+
+  const handleDeleteTeam = async (teamId) => {
+    await deleteTeam(teamId);
+    setTeams((rows) => rows.filter((t) => t.id !== teamId));
+  };
+
   const handleSaveOrgSettings = async (payload) => {
     const saved = await upsertOrgSettings(payload);
     setOrgSettings((rows) => {
@@ -1845,6 +1857,8 @@ export function AppShell({ currentUser, onLogout }) {
               plan={plan}
               onCreateOrg={handleCreateOrg}
               onCreateTeam={handleCreateTeam}
+              onUpdateTeam={handleUpdateTeam}
+              onDeleteTeam={handleDeleteTeam}
               onCreateMember={handleCreateMember}
               onUpdateMemberRoles={handleUpdateMemberRoles}
               onSaveOrgSettings={handleSaveOrgSettings}

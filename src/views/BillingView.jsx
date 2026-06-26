@@ -1,10 +1,10 @@
 // ─────────────────────────────────────────────────────────────────────────────
-// BILLING VIEW — Admin only
+// BILLING VIEW — Account Owner only
 //
-// Shows the current plan, plan cards to upgrade/downgrade, and a full invoice
-// history pulled live from Stripe via Supabase Edge Functions.
+// Shows the current plan, plan cards to upgrade, invoice history, and bank
+// transfer contact info. Pulled live from Stripe via Supabase Edge Functions.
 //
-// Access: Only org Admins can see this page. Non-admins get a locked screen.
+// Access: Only the org OWNER (the user who created the org) can see this page.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { useEffect, useState, useCallback } from "react";
@@ -48,12 +48,23 @@ const PLANS = {
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
-function isAdmin(user) {
-  if (!user) return false;
+function isOwner(user, org) {
+  if (!user || !org) return false;
+  // Primary check: auth UUID matches the org's stored owner
+  if (user.authId && org.ownerAuthId) return user.authId === org.ownerAuthId;
+  // Fallback: role-based (for orgs created before owner_auth_id column existed)
   const roles = Array.isArray(user.roles) && user.roles.length
-    ? user.roles
-    : [user.role].filter(Boolean);
-  return roles.some((r) => String(r).toLowerCase() === "admin");
+    ? user.roles : [user.role].filter(Boolean);
+  return roles.some((r) => ["owner", "admin"].includes(String(r).toLowerCase()));
+}
+
+function nextCycleDate(planStartDate) {
+  if (!planStartDate) return null;
+  const start = new Date(planStartDate);
+  const now   = new Date();
+  const next  = new Date(now.getFullYear(), now.getMonth(), start.getDate());
+  if (next <= now) next.setMonth(next.getMonth() + 1);
+  return next.toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" });
 }
 
 function fmt(cents, currency = "gbp") {
@@ -70,28 +81,18 @@ function fmtDate(ts) {
   });
 }
 
-async function callEdge(fnName, body, user) {
-  // Prefer a Supabase Auth session (Google OAuth users).
-  // Email/password users have no Supabase Auth session, so fall back to the
-  // anon key + pass _userId in the body so the edge function can verify
-  // identity against the users table instead.
+async function callEdge(fnName, body) {
+  // All users now authenticate via Supabase Auth — JWT only.
   const { data: { session } } = await supabase.auth.getSession();
-  const anonKey = process.env.REACT_APP_SUPABASE_ANON_KEY;
-  const token   = session?.access_token || anonKey;
-
-  if (!token) throw new Error("Not authenticated");
-
-  const payload = session
-    ? body
-    : { ...body, _userId: user?.id }; // custom-auth path
+  if (!session?.access_token) throw new Error("Not authenticated. Please sign in again.");
 
   const res = await fetch(`${SUPABASE_URL}/functions/v1/${fnName}`, {
     method: "POST",
     headers: {
-      "Authorization": `Bearer ${token}`,
+      "Authorization": `Bearer ${session.access_token}`,
       "Content-Type": "application/json",
     },
-    body: JSON.stringify(payload),
+    body: JSON.stringify(body),
   });
 
   const json = await res.json();
@@ -237,9 +238,9 @@ function AccessDenied() {
       <div style={{ width: 64, height: 64, borderRadius: 16, background: t.redBg, display: "flex", alignItems: "center", justifyContent: "center", marginBottom: 20, color: t.red }}>
         <I name="lock" size={28} />
       </div>
-      <div style={{ fontSize: 18, fontWeight: 800, color: t.text, marginBottom: 8 }}>Admin Access Required</div>
-      <div style={{ fontSize: 13, color: t.text3, maxWidth: 360, lineHeight: 1.6 }}>
-        Billing information is only accessible to organization Admins. Contact your Admin if you need to make changes to the subscription.
+      <div style={{ fontSize: 18, fontWeight: 800, color: t.text, marginBottom: 8 }}>Owner Access Required</div>
+      <div style={{ fontSize: 13, color: t.text3, maxWidth: 380, lineHeight: 1.6 }}>
+        Billing and plan management is restricted to the account owner — the person who originally created this organisation. Contact them to make changes to the subscription.
       </div>
     </div>
   );
@@ -274,7 +275,7 @@ export function BillingView({ currentUser, currentOrg, plan = "Free" }) {
     setLoadingData(true);
     setError("");
     try {
-      const data = await callEdge("get-billing-data", { orgId: currentOrg.id }, currentUser);
+      const data = await callEdge("get-billing-data", { orgId: currentOrg.id });
       setBillingData(data);
     } catch (err) {
       // If org has no Stripe customer yet, that's fine — show empty state
@@ -289,7 +290,7 @@ export function BillingView({ currentUser, currentOrg, plan = "Free" }) {
   useEffect(() => { loadBillingData(); }, [loadBillingData]);
 
   // Admin gate
-  if (!isAdmin(currentUser)) return <AccessDenied />;
+  if (!isOwner(currentUser, currentOrg)) return <AccessDenied />;
 
   const handleSubscribe = async (priceId) => {
     if (!priceId || !currentOrg?.id) return;
@@ -301,7 +302,7 @@ export function BillingView({ currentUser, currentOrg, plan = "Free" }) {
         orgId: currentOrg.id,
         priceId,
         returnUrl,
-      }, currentUser);
+      });
       window.location.href = url;
     } catch (err) {
       setError(err.message || "Failed to start checkout.");
@@ -318,7 +319,7 @@ export function BillingView({ currentUser, currentOrg, plan = "Free" }) {
       const { url } = await callEdge("create-billing-portal-session", {
         orgId: currentOrg.id,
         returnUrl,
-      }, currentUser);
+      });
       window.location.href = url;
     } catch (err) {
       setError(err.message || "Failed to open billing portal.");
@@ -327,7 +328,9 @@ export function BillingView({ currentUser, currentOrg, plan = "Free" }) {
   };
 
   const sub      = billingData?.subscription;
-  const invoices = billingData?.invoices || [];
+  const invoices    = billingData?.invoices || [];
+  const planStartDate = billingData?.planStartDate || currentOrg?.planStartDate || null;
+  const nextCycle   = nextCycleDate(planStartDate);
   const isPaid   = plan !== "Free";
 
   // Subscription status helpers
@@ -380,7 +383,30 @@ export function BillingView({ currentUser, currentOrg, plan = "Free" }) {
         </div>
       )}
 
-      {/* Current subscription status */}
+      {/* Free tier billing cycle info */}
+      {!isPaid && nextCycle && (
+        <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: 16, padding: "20px 22px", display: "flex", gap: 32, flexWrap: "wrap" }}>
+          <div>
+            <div style={{ fontSize: 11, color: t.text3, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>Current Plan</div>
+            <div style={{ fontSize: 18, fontWeight: 900, color: t.text }}>Free</div>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, color: t.text3, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>Account Since</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: t.text }}>
+              {planStartDate ? new Date(planStartDate).toLocaleDateString("en-GB", { day: "numeric", month: "long", year: "numeric" }) : "—"}
+            </div>
+          </div>
+          <div>
+            <div style={{ fontSize: 11, color: t.text3, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.5px", marginBottom: 4 }}>Next Cycle</div>
+            <div style={{ fontSize: 15, fontWeight: 700, color: t.text }}>{nextCycle}</div>
+          </div>
+          <div style={{ display: "flex", alignItems: "center" }}>
+            <div style={{ padding: "5px 12px", borderRadius: 8, background: t.greenBg, color: t.greenText, fontSize: 12, fontWeight: 700 }}>Active · No charge</div>
+          </div>
+        </div>
+      )}
+
+      {/* Paid subscription status */}
       {isPaid && sub && (
         <div style={{ background: t.surface, border: `1px solid ${t.border}`, borderRadius: 16, padding: "20px 22px", display: "flex", gap: 32, flexWrap: "wrap" }}>
           <div>
@@ -429,6 +455,45 @@ export function BillingView({ currentUser, currentOrg, plan = "Free" }) {
             To change plans or cancel, click <strong style={{ color: t.text2 }}>Manage Billing</strong> above — you'll be taken to the Stripe customer portal.
           </p>
         )}
+      </section>
+
+      {/* Bank Transfer */}
+      <section style={{
+        background: t.surface,
+        border: `1px solid ${t.border}`,
+        borderLeft: `3px solid ${t.accent}`,
+        borderRadius: 14,
+        padding: "20px 24px",
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 18,
+        flexWrap: "wrap",
+      }}>
+        <div style={{
+          width: 38, height: 38, borderRadius: 10, flexShrink: 0,
+          background: `${t.accent}18`, display: "flex", alignItems: "center", justifyContent: "center",
+          color: t.accent, fontSize: 18,
+        }}>🏦</div>
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontSize: 14, fontWeight: 800, color: t.text, marginBottom: 4 }}>
+            Prefer to pay by bank transfer?
+          </div>
+          <div style={{ fontSize: 13, color: t.text3, lineHeight: 1.6, marginBottom: 14 }}>
+            If your organisation needs to pay via BACS, CHAPS, or bank transfer, we can set this up for you. We'll raise invoices automatically through Stripe and send them directly to your billing contact — no card required.
+          </div>
+          <a
+            href="mailto:billing@eureka-technologies.co.uk?subject=Bank Transfer - EurekaNow Subscription&body=Hi, I'd like to set up bank transfer billing for our EurekaNow account. Organisation: [your org name]"
+            style={{
+              display: "inline-flex", alignItems: "center", gap: 7,
+              padding: "9px 18px", borderRadius: 8,
+              background: t.accent, color: "#fff",
+              fontFamily: t.font, fontSize: 13, fontWeight: 700,
+              textDecoration: "none",
+            }}
+          >
+            Contact us to arrange
+          </a>
+        </div>
       </section>
 
       {/* Invoices */}

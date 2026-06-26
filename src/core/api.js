@@ -92,6 +92,7 @@ const toUser = (row) => {
   const roles = normalizeUserRoles(row.roles, row.role);
   return {
     id: row.id,
+    authId: row.auth_id || null,   // UUID from auth.users — used for owner checks
     name: row.name,
     email: row.email,
     role: roles[0] || "End User",
@@ -107,7 +108,9 @@ const toOrg = (row) => ({
   name: row.name,
   domain: row.domain || "",
   industry: row.industry || "Other",
-  plan: row.plan || "Starter",
+  plan: row.plan || "Free",
+  ownerAuthId: row.owner_auth_id || null,   // auth.users UUID of the org owner
+  planStartDate: row.plan_start_date || null, // billing cycle anchor date
 });
 
 const toTeam = (row) => ({
@@ -377,64 +380,129 @@ const getExistingUserByEmail = async (email) => {
 };
 
 export async function loginWithEmailPassword(email, password) {
-  const { data, error } = await supabase
-    .from(TABLES.users)
-    .select("*")
-    .ilike("email", email.trim())
-    .eq("password", password)
-    .limit(1)
-    .maybeSingle();
+  const normalizedEmail = email.trim().toLowerCase();
 
-  fail(error, "Unable to sign in.");
+  // ── Primary path: Supabase Auth (secure, bcrypt-hashed) ──────────────────
+  const { data: authData, error: authError } = await supabase.auth.signInWithPassword({
+    email: normalizedEmail,
+    password,
+  });
 
-  if (!data) {
-    throw new Error("Invalid email or password.");
+  if (!authError && authData?.session) {
+    return getUserFromSession(authData.session);
   }
 
-  return toUser(data);
+  // ── One-time migration path for legacy plaintext-password accounts ────────
+  // Checks the old users table for a matching plaintext record, migrates it
+  // to Supabase Auth, and immediately clears the plaintext password.
+  const { data: legacyUser } = await supabase
+    .from(TABLES.users)
+    .select("id, email, password")
+    .ilike("email", normalizedEmail)
+    .eq("password", password)
+    .maybeSingle();
+
+  if (legacyUser?.id) {
+    const { data: migratedAuth, error: migrateError } = await supabase.auth.signUp({
+      email: normalizedEmail,
+      password,
+      options: { emailRedirectTo: window.location.origin },
+    });
+
+    // Clear plaintext password regardless of outcome
+    await supabase.from(TABLES.users).update({ password: null }).eq("id", legacyUser.id);
+
+    if (migrateError) throw new Error("Unable to sign in. Please reset your password.");
+
+    if (!migratedAuth?.session) {
+      throw new Error(
+        "We've upgraded our security. Please check your email to confirm your account, then sign in again.",
+      );
+    }
+
+    return getUserFromSession(migratedAuth.session);
+  }
+
+  // ── Neither path worked ───────────────────────────────────────────────────
+  if (authError?.message?.includes("Email not confirmed")) {
+    throw new Error(
+      "Please confirm your email address first — check your inbox for a confirmation link.",
+    );
+  }
+  throw new Error("Invalid email or password.");
 }
 
 export async function registerWithEmailPassword(payload) {
-  const fullName = String(payload?.fullName || "").trim();
-  const email = normalizeEmail(payload?.email);
-  const password = String(payload?.password || "");
-  const organizationName = String(payload?.organizationName || "").trim() || `${fullName || email.split("@")[0] || "User"}'s Workspace`;
-  const teamName = String(payload?.teamName || "").trim();
-  const title = String(payload?.title || "").trim();
+  const fullName       = String(payload?.fullName || "").trim();
+  const email          = normalizeEmail(payload?.email);
+  const password       = String(payload?.password || "");
+  const orgName        = String(payload?.organizationName || "").trim()
+    || `${fullName || email.split("@")[0] || "User"}'s Workspace`;
+  const teamName       = String(payload?.teamName || "").trim();
+  const title          = String(payload?.title || "").trim();
 
-  if (!fullName) throw new Error("Full name is required.");
-  if (!email) throw new Error("Email address is required.");
+  if (!fullName)          throw new Error("Full name is required.");
+  if (!email)             throw new Error("Email address is required.");
   if (password.length < 8) throw new Error("Password must be at least 8 characters.");
 
+  // Prevent duplicate accounts
   const existingUser = await getExistingUserByEmail(email);
-  if (existingUser) {
-    throw new Error("An account with this email already exists.");
-  }
+  if (existingUser) throw new Error("An account with this email already exists.");
 
+  // ── 1. Create Supabase Auth user (passwords hashed by Supabase, never stored in app DB) ──
+  const { data: authData, error: authError } = await supabase.auth.signUp({
+    email,
+    password,
+    options: {
+      data: { full_name: fullName },
+      emailRedirectTo: window.location.origin,
+    },
+  });
+
+  if (authError) throw new Error(authError.message);
+  if (!authData.user) throw new Error("Failed to create account. Please try again.");
+
+  // ── 2. Create org, team, and user profile (no password stored) ──
   const organisation = await createOrganisation({
-    name: organizationName,
+    name: orgName,
     domain: email.split("@")[1] || "",
     industry: "Other",
-    plan: "Starter",
+    ownerAuthId: authData.user.id,  // marks this auth user as the org owner
   });
 
   const team = await createTeam({
     orgId: organisation.id,
     name: teamName || "General",
     lead: fullName,
-    icon: "Team",
+    icon: "🏢",
   });
 
-  return createMember({
-    name: fullName,
+  const newUser = {
+    id:      `usr_${uid()}`,
+    auth_id: authData.user.id,   // UUID link to auth.users — never store the password
+    name:    fullName,
     email,
-    password,
-    role: "Admin",
-    roles: ["Admin"],
-    orgId: organisation.id,
-    teamId: team?.id || null,
+    role:    "Owner",            // org creator is always Owner; only they can manage billing
+    roles:   ["Owner", "Admin"], // Owner inherits all Admin permissions
+    org_id:  organisation.id,
+    team_id: team?.id || null,
     title,
-  });
+  };
+
+  const { data: userRow, error: userError } = await supabase
+    .from(TABLES.users)
+    .insert([newUser])
+    .select()
+    .single();
+
+  if (userError) throw new Error("Failed to create user profile: " + userError.message);
+
+  // ── 3. If Supabase requires email confirmation, signal the caller ──
+  if (!authData.session) {
+    return { requiresEmailConfirmation: true, email };
+  }
+
+  return toUser(userRow);
 }
 
 export async function loginWithGoogle() {
@@ -849,7 +917,9 @@ export async function createOrganisation(payload) {
     name: payload.name,
     domain: payload.domain || "",
     industry: payload.industry || "Other",
-    plan: payload.plan || "Starter",
+    plan: "Free",                                       // always start Free
+    plan_start_date: new Date().toISOString(),
+    ...(payload.ownerAuthId ? { owner_auth_id: payload.ownerAuthId } : {}),
   };
 
   const { data, error } = await supabase
@@ -915,6 +985,31 @@ export async function createTeam(payload) {
   return toTeam(data);
 }
 
+export async function updateTeam(teamId, patch) {
+  const row = {};
+  if (patch.name !== undefined) row.name = patch.name;
+  if (patch.icon !== undefined) row.icon = patch.icon;
+  if (patch.lead !== undefined) row.lead = patch.lead;
+
+  const { data, error } = await supabase
+    .from(TABLES.teams)
+    .update(row)
+    .eq("id", teamId)
+    .select("*")
+    .single();
+
+  fail(error, "Failed to update team.");
+  return toTeam(data);
+}
+
+export async function deleteTeam(teamId) {
+  // Remove team members' team assignment first
+  await supabase.from(TABLES.users).update({ team_id: null }).eq("team_id", teamId);
+  // Delete the team record
+  const { error } = await supabase.from(TABLES.teams).delete().eq("id", teamId);
+  fail(error, "Failed to delete team.");
+}
+
 export async function createMember(payload) {
   const roles = normalizeUserRoles(payload.roles, payload.role);
 
@@ -926,18 +1021,32 @@ export async function createMember(payload) {
     throw new Error("This user is already a member of this organization.");
   }
 
-  // Registration path: password provided + no existing account → create user directly
+  // Registration path: password provided + no existing account
+  // → create via Supabase Auth admin (password hashed server-side, never stored in app DB)
   if (payload.password && !existing) {
+    const memberEmail = normalizeEmail(payload.email);
+    const memberName  = String(payload.name || memberEmail.split("@")[0] || "User").trim();
+
+    // Call the admin-create-user edge function (uses service role)
+    const { data: edgeResp, error: edgeErr } = await supabase.functions.invoke("admin-create-user", {
+      body: { email: memberEmail, password: payload.password },
+    });
+    if (edgeErr || edgeResp?.error) {
+      throw new Error(edgeResp?.error || edgeErr?.message || "Failed to create member account.");
+    }
+
+    const authId = edgeResp?.auth_id || null;
+
     const newUser = {
-      id: `usr_${uid()}`,
-      name: String(payload.name || payload.email.split("@")[0] || "User").trim(),
-      email: normalizeEmail(payload.email),
-      password: payload.password,
-      role: roles[0] || "End User",
+      id:      `usr_${uid()}`,
+      auth_id: authId,
+      name:    memberName,
+      email:   memberEmail,
+      role:    roles[0] || "End User",
       roles,
-      org_id: payload.orgId,
+      org_id:  payload.orgId,
       team_id: payload.teamId || null,
-      title: String(payload.title || "").trim(),
+      title:   String(payload.title || "").trim(),
     };
     const { data, error } = await supabase
       .from(TABLES.users)

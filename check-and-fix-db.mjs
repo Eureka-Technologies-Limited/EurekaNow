@@ -5,9 +5,8 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL     = "https://anhsumvnxmxosdjclfss.supabase.co";
-const SERVICE_ROLE_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFuaHN1bXZueG14b3NkamNsZnNzIiwicm9sZSI6InNlcnZpY2Vfcm9sZSIsImlhdCI6MTc2NTYyNDc3OCwiZXhwIjoyMDgxMjAwNzc4fQ.uhcUSgVqtPnhZYzjcofPyhPUEbweLHiCmLKUIdcLrNM";
-
+const SUPABASE_URL     = process.env.SUPABASE_URL;
+const SERVICE_ROLE_KEY = process.env.SERVICE_ROLE_KEY;
 const supabase = createClient(SUPABASE_URL, SERVICE_ROLE_KEY, {
   auth: { persistSession: false },
 });
@@ -51,7 +50,6 @@ async function run() {
     console.log(`  ${WRN} Column missing — need to run migration`);
     console.log("\n  ──────────────────────────────────────────────────────");
     console.log("  Run this SQL in your Supabase SQL Editor:");
-    console.log("  https://supabase.com/dashboard/project/anhsumvnxmxosdjclfss/sql/new");
     console.log("  ──────────────────────────────────────────────────────");
     console.log(`
   ALTER TABLE organizations ADD COLUMN IF NOT EXISTS stripe_customer_id TEXT;

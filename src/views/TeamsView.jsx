@@ -101,6 +101,8 @@ export function TeamsView({
   plan,
   onCreateOrg,
   onCreateTeam,
+  onUpdateTeam,
+  onDeleteTeam,
   onCreateMember,
   onUpdateMemberRoles,
   onSaveOrgSettings,
@@ -126,6 +128,9 @@ export function TeamsView({
   const [templateEditor, setTemplateEditor] = useState(null); // { orgId, teamId, template }
   const [addRoleTeamId, setAddRoleTeamId] = useState(null);
   const [plansOpen, setPlansOpen] = useState(false);
+  const [editTeamId, setEditTeamId] = useState(null);     // inline rename
+  const [editTeamName, setEditTeamName] = useState("");
+  const [deleteTeamId, setDeleteTeamId] = useState(null); // delete confirmation
 
   useEffect(() => {
     if (!orgs.length) {
@@ -285,12 +290,46 @@ export function TeamsView({
                   return (
                     <Card key={team.id} noPad style={compactView ? { padding: 6 } : undefined}>
                       <div style={{ padding: compactView ? "8px 10px" : "12px 16px", borderBottom: `1px solid ${t.border}`, display: "flex", alignItems: "center", justifyContent: "space-between", flexWrap: "wrap", gap: 8 }}>
-                        <div style={{ display: "flex", alignItems: "center", gap: 9 }}>
-                          <span style={{ fontSize: compactView ? 16 : 22 }}>{teamEmoji(team.icon)}</span>
-                          <div>
-                            <div style={{ fontSize: compactView ? 12 : 14, fontWeight: 700, color: t.text }}>{team.name}</div>
-                            {!compactView && lead && <div style={{ fontSize: 10, color: t.text3 }}>Lead: {lead.name}</div>}
-                          </div>
+                        <div style={{ display: "flex", alignItems: "center", gap: 9, flex: 1, minWidth: 0 }}>
+                          <span style={{ fontSize: compactView ? 16 : 22, flexShrink: 0 }}>{teamEmoji(team.icon)}</span>
+                          {editTeamId === team.id ? (
+                            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                              <input
+                                autoFocus
+                                value={editTeamName}
+                                onChange={(e) => setEditTeamName(e.target.value)}
+                                onKeyDown={async (e) => {
+                                  if (e.key === "Enter" && editTeamName.trim()) {
+                                    await onUpdateTeam?.(team.id, { name: editTeamName.trim() });
+                                    setEditTeamId(null);
+                                  }
+                                  if (e.key === "Escape") setEditTeamId(null);
+                                }}
+                                style={{ fontSize: 14, fontWeight: 700, padding: "3px 8px", border: `1px solid ${t.accent}`, borderRadius: 6, background: t.surface2, color: t.text, width: 180 }}
+                              />
+                              <Btn size="sm" variant="primary" onClick={async () => {
+                                if (editTeamName.trim()) {
+                                  await onUpdateTeam?.(team.id, { name: editTeamName.trim() });
+                                  setEditTeamId(null);
+                                }
+                              }}>Save</Btn>
+                              <Btn size="sm" variant="ghost" onClick={() => setEditTeamId(null)}>Cancel</Btn>
+                            </div>
+                          ) : (
+                            <div>
+                              <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+                                <div style={{ fontSize: compactView ? 12 : 14, fontWeight: 700, color: t.text }}>{team.name}</div>
+                                <button
+                                  title="Rename team"
+                                  onClick={() => { setEditTeamId(team.id); setEditTeamName(team.name); }}
+                                  style={{ background: "none", border: "none", cursor: "pointer", color: t.text3, padding: "0 2px", lineHeight: 1, fontSize: 12, opacity: 0.6 }}
+                                  onMouseEnter={(e) => e.currentTarget.style.opacity = "1"}
+                                  onMouseLeave={(e) => e.currentTarget.style.opacity = "0.6"}
+                                >✏️</button>
+                              </div>
+                              {!compactView && lead && <div style={{ fontSize: 10, color: t.text3 }}>Lead: {lead.name}</div>}
+                            </div>
+                          )}
                         </div>
                         <div style={{ display: "flex", alignItems: "center", gap: 7, flexWrap: "wrap" }}>
                           {openCount > 0 && <Badge label={`${openCount} open`} color={t.yellowText} bg={t.yellowBg} />}
@@ -302,6 +341,9 @@ export function TeamsView({
                           </Btn>
                           <Btn variant="secondary" size="sm" onClick={() => setAddMemberTeam(team.id)}>
                             <I name="plus" size={11} /> Member
+                          </Btn>
+                          <Btn variant="danger" size="sm" onClick={() => setDeleteTeamId(team.id)}>
+                            Delete
                           </Btn>
                         </div>
                       </div>
@@ -396,6 +438,21 @@ export function TeamsView({
             }}
             onCancel={() => setAddMemberTeam(null)}
           />
+        </Modal>
+      )}
+
+      {deleteTeamId && (
+        <Modal title="Delete Team" onClose={() => setDeleteTeamId(null)} width={420}>
+          <div style={{ fontSize: 14, color: t.text, marginBottom: 20, lineHeight: 1.6 }}>
+            Are you sure you want to delete <strong style={{ color: t.text }}>{teams.find((tm) => tm.id === deleteTeamId)?.name}</strong>? This cannot be undone. Members will be unassigned from the team.
+          </div>
+          <div style={{ display: "flex", gap: 8, justifyContent: "flex-end" }}>
+            <Btn variant="secondary" onClick={() => setDeleteTeamId(null)}>Cancel</Btn>
+            <Btn variant="danger" onClick={async () => {
+              await onDeleteTeam?.(deleteTeamId);
+              setDeleteTeamId(null);
+            }}>Delete Team</Btn>
+          </div>
         </Modal>
       )}
 
@@ -592,9 +649,9 @@ export function TeamsView({
       )}
 
       {settingsTeamId && selectedTeam && (
-        <Modal title={`Team Settings - ${selectedTeam.name}`} onClose={() => { setSettingsTeamId(null); setSettingsTab("sla"); }} width={820}>
-          <div style={{ display: "flex", gap: 12 }}>
-            <div style={{ width: 200 }}>
+        <Modal title={`Team Settings — ${selectedTeam.name}`} onClose={() => { setSettingsTeamId(null); setSettingsTab("sla"); }} width={820}>
+          <div style={{ display: "flex", gap: 12, minHeight: 480 }}>
+            <div style={{ width: 180, flexShrink: 0 }}>
               {[
                 { id: "sla", label: "SLA & Priority" },
                 { id: "templates", label: "Templates" },
@@ -612,7 +669,7 @@ export function TeamsView({
                 </Btn>
               ))}
             </div>
-            <div style={{ flex: 1 }}>
+            <div style={{ flex: 1, overflowY: "auto" }}>
               {settingsTab === "sla" && (
                 <SettingsForm
                   defaultPriorities={normalizePriorityRows(teamSettings.find((cfg) => cfg.teamId === settingsTeamId)?.priorities || orgSetting?.priorities)}

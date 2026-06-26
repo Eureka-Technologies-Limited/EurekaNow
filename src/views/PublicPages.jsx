@@ -6,6 +6,7 @@
 import { useEffect, useState } from "react";
 import { useTokens, useTheme, useBreakpoint } from "../core/hooks.js";
 import { loginWithGoogle } from "../core/api.js";
+import { supabase } from "../core/supabase.js";
 import { Btn, Card, Input, Label } from "../ui/primitives.jsx";
 import { I } from "../core/icons.jsx";
 
@@ -115,7 +116,7 @@ export function LandingPage({ onSignIn }) {
 // LOGIN PAGE
 // ═════════════════════════════════════════════════════════════════════════════
 
-export function LoginPage({ onLogin, onSignUp, onBack }) {
+export function LoginPage({ onLogin, onSignUp }) {
   const t = useTokens();
   const { dark, toggle } = useTheme();
   const { isMobile } = useBreakpoint();
@@ -180,9 +181,12 @@ export function LoginPage({ onLogin, onSignUp, onBack }) {
   return (
     <div style={{ fontFamily: t.font, background: t.bg, color: t.text, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
       <nav style={{ padding: isMobile ? "12px 16px" : "16px 40px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
-        <button onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, color: t.text2, fontFamily: t.font, fontSize: 13 }}>
-          <I name="back" size={13} /> Back
-        </button>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div style={{ width: 28, height: 28, borderRadius: 8, background: t.accent, display: "flex", alignItems: "center", justifyContent: "center" }}>
+            <span style={{ fontWeight: 900, fontSize: 14, color: "#0f0f0e" }}>E</span>
+          </div>
+          <span style={{ fontWeight: 800, fontSize: 15, letterSpacing: "-0.4px", color: t.text }}>EurekaNow</span>
+        </div>
         <button onClick={toggle} style={{ background: "none", border: "none", cursor: "pointer", color: t.text2 }}>
           <I name={dark ? "sun" : "moon"} size={14} />
         </button>
@@ -354,6 +358,107 @@ export function LoginPage({ onLogin, onSignUp, onBack }) {
               </div>
             </div>
           </Card>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+// EMAIL CONFIRMATION PAGE
+// Shown after sign-up when Supabase requires email verification.
+// ═════════════════════════════════════════════════════════════════════════════
+
+export function EmailConfirmationPage({ email, onBack }) {
+  const t = useTokens();
+  const { dark, toggle } = useTheme();
+  const [resent,   setResent]   = useState(false);
+  const [resending, setResending] = useState(false);
+  const [error,    setError]    = useState("");
+
+  const handleResend = async () => {
+    if (resending) return;
+    setResending(true);
+    setError("");
+    try {
+      const { error: resendError } = await supabase.auth.resend({
+        type: "signup",
+        email,
+        options: { emailRedirectTo: window.location.origin },
+      });
+      if (resendError) throw resendError;
+      setResent(true);
+    } catch (err) {
+      setError(err?.message || "Failed to resend. Please try again.");
+    } finally {
+      setResending(false);
+    }
+  };
+
+  return (
+    <div style={{ fontFamily: t.font, background: t.bg, color: t.text, minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+      <nav style={{ padding: "16px 40px", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <button onClick={onBack} style={{ background: "none", border: "none", cursor: "pointer", display: "flex", alignItems: "center", gap: 6, color: t.text2, fontFamily: t.font, fontSize: 13 }}>
+          <I name="back" size={13} /> Back to sign in
+        </button>
+        <button onClick={toggle} style={{ background: "none", border: "none", cursor: "pointer", color: t.text2 }}>
+          <I name={dark ? "sun" : "moon"} size={14} />
+        </button>
+      </nav>
+
+      <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", padding: 24 }}>
+        <div style={{ width: "100%", maxWidth: 420, textAlign: "center" }}>
+          <div style={{ width: 60, height: 60, borderRadius: 16, background: t.accentBg, display: "inline-flex", alignItems: "center", justifyContent: "center", marginBottom: 20 }}>
+            <I name="kb" size={24} style={{ color: t.accent }} />
+          </div>
+
+          <h1 style={{ fontSize: 22, fontWeight: 800, letterSpacing: "-0.5px", margin: "0 0 10px", color: t.text }}>
+            Check your inbox
+          </h1>
+          <p style={{ fontSize: 13, color: t.text2, lineHeight: 1.7, margin: "0 0 28px" }}>
+            We sent a confirmation link to <strong style={{ color: t.text }}>{email}</strong>.
+            Click it to activate your account and sign in.
+          </p>
+
+          <Card style={{ textAlign: "left", marginBottom: 16 }}>
+            <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+              {[
+                ["Check spam / junk", "If you don't see it in 2 minutes, check your spam folder."],
+                ["Link expires in 24h", "The confirmation link is valid for 24 hours."],
+                ["One click to activate", "After confirming, you'll be signed in automatically."],
+              ].map(([title, desc]) => (
+                <div key={title} style={{ display: "flex", gap: 10 }}>
+                  <div style={{ width: 20, height: 20, borderRadius: 6, background: t.accentBg, display: "flex", alignItems: "center", justifyContent: "center", flexShrink: 0, marginTop: 1 }}>
+                    <I name="check" size={11} style={{ color: t.accent }} />
+                  </div>
+                  <div>
+                    <div style={{ fontSize: 12, fontWeight: 700, color: t.text, marginBottom: 2 }}>{title}</div>
+                    <div style={{ fontSize: 11, color: t.text2 }}>{desc}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </Card>
+
+          {error && (
+            <div style={{ background: t.redBg, border: `1px solid ${t.red}44`, borderRadius: 8, padding: "8px 12px", fontSize: 12, color: t.redText, marginBottom: 12 }}>
+              {error}
+            </div>
+          )}
+
+          {resent ? (
+            <div style={{ background: t.greenBg, border: `1px solid ${t.green}44`, borderRadius: 8, padding: "10px 14px", fontSize: 12, color: t.greenText, marginBottom: 12 }}>
+              ✓ Confirmation email resent to {email}
+            </div>
+          ) : (
+            <button
+              onClick={handleResend}
+              disabled={resending}
+              style={{ background: "none", border: "none", cursor: resending ? "not-allowed" : "pointer", color: t.accent, fontSize: 12, fontFamily: t.font, opacity: resending ? 0.6 : 1 }}
+            >
+              {resending ? "Resending…" : "Didn't receive it? Resend confirmation email"}
+            </button>
+          )}
         </div>
       </div>
     </div>

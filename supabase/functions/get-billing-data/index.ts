@@ -1,15 +1,12 @@
 // ─────────────────────────────────────────────────────────────────────────────
 // Edge Function: get-billing-data
 //
-// Returns the org's current Stripe subscription and invoice history.
-// Returns { subscription: null, invoices: [] } gracefully if the org has no
-// Stripe customer yet (i.e. they're on the Free plan).
+// Returns Stripe subscription + invoice history for an org.
+// Also auto-creates a Stripe customer on first load so the org is ready to
+// upgrade without a separate setup step.
 //
-// POST body: { orgId: string }
-// Returns:   { subscription: Stripe.Subscription | null, invoices: Stripe.Invoice[] }
-//
-// Required Supabase secrets:
-//   STRIPE_SECRET_KEY  — sk_live_... or sk_test_...
+// Permission: org OWNER only (owner_auth_id on the organizations row).
+// Auth: Supabase Auth JWT required.
 // ─────────────────────────────────────────────────────────────────────────────
 
 import { serve } from "https://deno.land/std@0.177.0/http/server.ts";
@@ -22,15 +19,12 @@ const corsHeaders = {
 };
 
 serve(async (req) => {
-  if (req.method === "OPTIONS") {
-    return new Response("ok", { headers: corsHeaders });
-  }
+  if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
 
   try {
-    const { orgId, _userId } = await req.json();
+    const { orgId } = await req.json();
     if (!orgId) throw new Error("orgId is required");
 
-    // ── Verify identity ───────────────────────────────────────────────────────
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) throw new Error("Missing Authorization header");
 
@@ -39,38 +33,22 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!,
     );
 
+    // ── Verify JWT ────────────────────────────────────────────────────────────
     const token = authHeader.replace("Bearer ", "");
-    const { data: { user } } = await supabase.auth.getUser(token);
+    const { data: { user }, error: authError } = await supabase.auth.getUser(token);
+    if (authError || !user) throw new Error("Unauthorized");
 
-    if (!user) {
-      if (!_userId) throw new Error("Unauthorized");
-      const { data: dbUser } = await supabase
-        .from("users")
-        .select("id, role, roles")
-        .eq("id", _userId)
-        .eq("org_id", orgId)
-        .maybeSingle();
-      if (!dbUser) throw new Error("Unauthorized");
-      const roles = Array.isArray(dbUser.roles) ? dbUser.roles : [dbUser.role].filter(Boolean);
-      const adminOk = roles.some((r: string) => String(r).toLowerCase() === "admin");
-      if (!adminOk) throw new Error("Admin access required for billing");
-    }
-
-    // ── Fetch org ─────────────────────────────────────────────────────────────
+    // ── Fetch org + verify caller is the owner ─────────────────────────────
     const { data: org, error: orgError } = await supabase
       .from("organizations")
-      .select("id, stripe_customer_id")
+      .select("id, name, plan, stripe_customer_id, owner_auth_id, plan_start_date")
       .eq("id", orgId)
       .single();
 
     if (orgError || !org) throw new Error("Organization not found");
 
-    // No Stripe customer yet → return empty (Free plan, no invoices)
-    if (!org.stripe_customer_id) {
-      return new Response(
-        JSON.stringify({ subscription: null, invoices: [] }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+    if (org.owner_auth_id !== user.id) {
+      throw new Error("Only the account owner can access billing.");
     }
 
     const stripe = new Stripe(Deno.env.get("STRIPE_SECRET_KEY")!, {
@@ -78,26 +56,38 @@ serve(async (req) => {
       httpClient: Stripe.createFetchHttpClient(),
     });
 
-    // ── Fetch subscription ────────────────────────────────────────────────────
-    const subs = await stripe.subscriptions.list({
-      customer: org.stripe_customer_id,
-      status: "all",
-      limit: 1,
-      expand: ["data.latest_invoice"],
-    });
+    // ── Auto-create Stripe customer on first billing load ─────────────────
+    let customerId = org.stripe_customer_id;
+    if (!customerId) {
+      const customer = await stripe.customers.create({
+        name: org.name,
+        email: user.email,
+        metadata: { orgId: org.id },
+      });
+      customerId = customer.id;
+      await supabase
+        .from("organizations")
+        .update({ stripe_customer_id: customerId })
+        .eq("id", orgId);
+      console.log(`[get-billing-data] Created Stripe customer ${customerId} for org ${orgId}`);
+    }
 
-    const subscription = subs.data[0] || null;
-
-    // ── Fetch invoices ────────────────────────────────────────────────────────
-    const invoiceList = await stripe.invoices.list({
-      customer: org.stripe_customer_id,
-      limit: 24,
-    });
+    // ── Fetch Stripe data ──────────────────────────────────────────────────
+    const [subs, invoiceList] = await Promise.all([
+      stripe.subscriptions.list({
+        customer: customerId,
+        status: "all",
+        limit: 1,
+        expand: ["data.latest_invoice"],
+      }),
+      stripe.invoices.list({ customer: customerId, limit: 24 }),
+    ]);
 
     return new Response(
       JSON.stringify({
-        subscription,
+        subscription: subs.data[0] || null,
         invoices: invoiceList.data,
+        planStartDate: org.plan_start_date,
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );
