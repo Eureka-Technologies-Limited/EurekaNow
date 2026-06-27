@@ -30,6 +30,7 @@ const mergeOrgSetting = (orgSetting, changes) => ({
   approvalMode: orgSetting?.approvalMode || "all",
   ticketTypes: orgSetting?.ticketTypes || [],
   orgRoles: orgSetting?.orgRoles || [],
+  customTicketFields: orgSetting?.customTicketFields || [],
   ...changes,
 });
 
@@ -388,6 +389,7 @@ export function TeamsView({
                 { id: "orgroles", label: "Org Roles" },
                 { id: "categories", label: "Categories" },
                 { id: "ticket_types", label: "Ticket Types" },
+                { id: "custom_fields", label: "Custom Fields" },
                 { id: "templates", label: "Templates" },
                 { id: "pir", label: "PIR Fields" },
                 { id: "invitations", label: "Invitations" },
@@ -462,6 +464,19 @@ export function TeamsView({
                   defaultTypes={orgSetting?.ticketTypes?.length ? orgSetting.ticketTypes : DEFAULT_TICKET_TYPES}
                   onSave={async (ticketTypes) => {
                     await onSaveOrgSettings(mergeOrgSetting(orgSetting, { orgId: org.id, ticketTypes }));
+                    setSettingsOrgOpen(false);
+                    setSettingsTab("sla");
+                  }}
+                  onCancel={() => { setSettingsOrgOpen(false); setSettingsTab("sla"); }}
+                />
+              )}
+
+              {settingsTab === "custom_fields" && (
+                <CustomTicketFieldsForm
+                  defaultFields={orgSetting?.customTicketFields || []}
+                  ticketTypes={orgSetting?.ticketTypes?.length ? orgSetting.ticketTypes : DEFAULT_TICKET_TYPES}
+                  onSave={async (customTicketFields) => {
+                    await onSaveOrgSettings(mergeOrgSetting(orgSetting, { orgId: org.id, customTicketFields }));
                     setSettingsOrgOpen(false);
                     setSettingsTab("sla");
                   }}
@@ -1481,6 +1496,153 @@ function TicketTypesForm({ defaultTypes, onSave, onCancel }) {
       <div style={{ display: "flex", justifyContent: "flex-end", gap: 8 }}>
         <Btn variant="secondary" onClick={onCancel} disabled={saving}>Cancel</Btn>
         <Btn variant="primary" onClick={submit} disabled={saving}>{saving ? "Saving…" : "Save Types"}</Btn>
+      </div>
+    </div>
+  );
+}
+
+const CF_TYPES = ["text", "textarea", "select", "number", "date"];
+
+function CustomTicketFieldsForm({ defaultFields, ticketTypes, onSave, onCancel }) {
+  const t = useTokens();
+  const [fields, setFields] = useState(() => (defaultFields || []).map((f) => ({ ...f, options: Array.isArray(f.options) ? f.options.join(", ") : "" })));
+  const [saving, setSaving] = useState(false);
+  const [err, setErr] = useState("");
+
+  const addField = () => setFields((prev) => [...prev, { key: `field_${Date.now()}`, label: "", type: "text", required: false, placeholder: "", options: "", ticketTypes: [] }]);
+
+  const update = (idx, patch) => setFields((prev) => prev.map((f, i) => i === idx ? { ...f, ...patch } : f));
+
+  const remove = (idx) => setFields((prev) => prev.filter((_, i) => i !== idx));
+
+  const moveUp = (idx) => {
+    if (idx === 0) return;
+    setFields((prev) => { const a = [...prev]; [a[idx - 1], a[idx]] = [a[idx], a[idx - 1]]; return a; });
+  };
+
+  const submit = async () => {
+    for (const f of fields) {
+      if (!f.label.trim()) { setErr("Every field must have a label."); return; }
+    }
+    const keys = fields.map((f) => f.key);
+    if (new Set(keys).size !== keys.length) { setErr("Field keys must be unique — change a label or remove duplicates."); return; }
+    setSaving(true);
+    try {
+      const normalized = fields.map((f) => ({
+        key: f.label.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_"),
+        label: f.label.trim(),
+        type: f.type,
+        required: !!f.required,
+        placeholder: f.placeholder || "",
+        options: f.type === "select" ? f.options.split(",").map((o) => o.trim()).filter(Boolean) : [],
+        ticketTypes: Array.isArray(f.ticketTypes) ? f.ticketTypes : [],
+      }));
+      await onSave(normalized);
+    } catch (e) { setErr(e.message || "Failed to save."); } finally { setSaving(false); }
+  };
+
+  return (
+    <div>
+      <div style={{ fontSize: 13, fontWeight: 700, marginBottom: 4 }}>Custom Ticket Fields</div>
+      <div style={{ fontSize: 12, color: t.text3, marginBottom: 16, lineHeight: 1.6 }}>
+        Define extra fields that agents can fill in on tickets. Leave "Ticket types" empty to show on all types.
+      </div>
+
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {fields.map((f, idx) => (
+          <div key={f.key} style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 8, padding: 12 }}>
+            <div style={{ display: "flex", gap: 8, marginBottom: 8, flexWrap: "wrap" }}>
+              <Input
+                value={f.label}
+                onChange={(e) => update(idx, { label: e.target.value })}
+                placeholder="Field label"
+                style={{ flex: "2 1 140px", padding: "6px 8px", fontSize: 12 }}
+              />
+              <Sel value={f.type} onChange={(e) => update(idx, { type: e.target.value })} style={{ fontSize: 12, padding: "6px 8px" }}>
+                {CF_TYPES.map((tp) => <option key={tp} value={tp}>{tp}</option>)}
+              </Sel>
+              <label style={{ display: "flex", alignItems: "center", gap: 4, fontSize: 12, color: t.text2, cursor: "pointer", userSelect: "none" }}>
+                <input type="checkbox" checked={!!f.required} onChange={(e) => update(idx, { required: e.target.checked })} />
+                Required
+              </label>
+              <div style={{ display: "flex", gap: 4, marginLeft: "auto" }}>
+                {idx > 0 && (
+                  <Btn variant="ghost" size="sm" onClick={() => moveUp(idx)} title="Move up">
+                    <span style={{ display: "flex", transform: "rotate(180deg)" }}><I name="chev-down" size={12} /></span>
+                  </Btn>
+                )}
+                {idx < fields.length - 1 && (
+                  <Btn variant="ghost" size="sm" onClick={() => {
+                    setFields((prev) => { const a = [...prev]; [a[idx], a[idx + 1]] = [a[idx + 1], a[idx]]; return a; });
+                  }} title="Move down">
+                    <I name="chev-down" size={12} />
+                  </Btn>
+                )}
+                <Btn variant="danger" size="sm" onClick={() => remove(idx)}><I name="trash" size={11} /> Remove</Btn>
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+              <Input
+                value={f.placeholder}
+                onChange={(e) => update(idx, { placeholder: e.target.value })}
+                placeholder="Placeholder text (optional)"
+                style={{ flex: "2 1 140px", padding: "6px 8px", fontSize: 12 }}
+              />
+              {f.type === "select" && (
+                <Input
+                  value={f.options}
+                  onChange={(e) => update(idx, { options: e.target.value })}
+                  placeholder="Options: Yes, No, Maybe"
+                  style={{ flex: "2 1 140px", padding: "6px 8px", fontSize: 12 }}
+                />
+              )}
+            </div>
+            {ticketTypes.length > 0 && (
+              <div style={{ marginTop: 10 }}>
+                <div style={{ fontSize: 11, color: t.text3, marginBottom: 6 }}>Show on ticket types (empty = all):</div>
+                <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                  {ticketTypes.map((tt) => {
+                    const name = typeof tt === "object" ? tt.name : tt;
+                    const active = (f.ticketTypes || []).includes(name);
+                    return (
+                      <button
+                        key={name}
+                        type="button"
+                        onClick={() => update(idx, { ticketTypes: active ? (f.ticketTypes || []).filter((x) => x !== name) : [...(f.ticketTypes || []), name] })}
+                        style={{
+                          padding: "4px 10px",
+                          fontSize: 11,
+                          fontWeight: active ? 700 : 400,
+                          fontFamily: "inherit",
+                          borderRadius: 99,
+                          cursor: "pointer",
+                          border: `1px solid ${active ? t.accent : t.border}`,
+                          background: active ? t.accentBg : t.surface,
+                          color: active ? t.accentText : t.text3,
+                          transition: "all 0.12s",
+                          userSelect: "none",
+                        }}
+                      >
+                        {name}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+
+      <div style={{ display: "flex", gap: 8, marginTop: 12, paddingTop: fields.length > 0 ? 12 : 0, borderTop: fields.length > 0 ? `1px solid ${t.border}` : "none" }}>
+        <Btn variant="secondary" size="sm" onClick={addField}><I name="plus" size={12} /> Add Field</Btn>
+      </div>
+
+      {err && <div style={{ fontSize: 11, color: t.red, marginTop: 8 }}>{err}</div>}
+
+      <div style={{ display: "flex", gap: 8, marginTop: 14 }}>
+        <Btn variant="primary" disabled={saving} onClick={submit}>{saving ? "Saving…" : "Save Fields"}</Btn>
+        <Btn variant="secondary" onClick={onCancel}>Cancel</Btn>
       </div>
     </div>
   );

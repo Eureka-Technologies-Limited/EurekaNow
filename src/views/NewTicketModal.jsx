@@ -52,6 +52,7 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
   const [categoryOpen, setCategoryOpen] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
+  const [customFieldValues, setCustomFieldValues] = useState({});
 
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
@@ -104,6 +105,13 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
     };
   }, [form.orgId, form.teamId, orgSettings, teamSettings, fallbackCatalog, fallbackUrgencies]);
 
+  const orgCustomFields = useMemo(() => {
+    const orgCfg = orgSettings.find((row) => row.orgId === form.orgId);
+    return (orgCfg?.customTicketFields || []).filter(
+      (f) => !f.ticketTypes?.length || f.ticketTypes.includes(form.type)
+    );
+  }, [orgSettings, form.orgId, form.type]);
+
   const catalog = (resolvedSettings.priorityMap && Object.keys(resolvedSettings.priorityMap).length)
     ? resolvedSettings.priorityMap
     : fallbackCatalog;
@@ -140,6 +148,13 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
       : [];
 
     try {
+      for (const f of orgCustomFields) {
+        if (f.required && !String(customFieldValues[f.key] || "").trim()) {
+          setError(`"${f.label}" is required.`);
+          setSaving(false);
+          return;
+        }
+      }
       const dueDateMs = form.dueDate ? new Date(`${form.dueDate}T23:59:59`).getTime() : null;
       const activeType = ticketTypes.find((tt) => tt.name === form.type);
       await onCreate({
@@ -159,6 +174,7 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
         dueDate: dueDateMs,
         estimateHours: form.estimateHours === "" ? null : Number(form.estimateHours),
         spentHours: 0,
+        customFields: Object.keys(customFieldValues).length ? customFieldValues : undefined,
       });
       onClose();
     } catch (err) {
@@ -353,6 +369,44 @@ export function NewTicketModal({ users, teams, orgs, currentUser, onClose, onCre
           <Label>Tags (comma-separated)</Label>
           <Input value={form.tags} onChange={(e) => set("tags", e.target.value)} placeholder="vpn, auth, remote-work" />
         </div>
+
+        {/* Custom Fields */}
+        {orgCustomFields.length > 0 && (
+          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+            <Label>Custom Fields</Label>
+            {orgCustomFields.map((f) => (
+              <div key={f.key}>
+                <div style={{ fontSize: 11, fontWeight: 600, color: t.text3, marginBottom: 5 }}>
+                  {f.label}{f.required && <span style={{ color: t.red }}> *</span>}
+                </div>
+                {f.type === "textarea" ? (
+                  <textarea
+                    value={customFieldValues[f.key] || ""}
+                    onChange={(e) => setCustomFieldValues((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                    placeholder={f.placeholder || ""}
+                    rows={3}
+                    style={{ width: "100%", boxSizing: "border-box", padding: "7px 9px", fontSize: 12, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 6, color: t.text, fontFamily: "inherit", resize: "vertical" }}
+                  />
+                ) : f.type === "select" ? (
+                  <Sel
+                    value={customFieldValues[f.key] || ""}
+                    onChange={(e) => setCustomFieldValues((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                  >
+                    <option value="">— Select —</option>
+                    {(f.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
+                  </Sel>
+                ) : (
+                  <Input
+                    type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"}
+                    value={customFieldValues[f.key] || ""}
+                    onChange={(e) => setCustomFieldValues((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                    placeholder={f.placeholder || ""}
+                  />
+                )}
+              </div>
+            ))}
+          </div>
+        )}
 
         {/* Parent Incident */}
         <div>
