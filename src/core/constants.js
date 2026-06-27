@@ -88,10 +88,11 @@ export const PERMISSION_GROUPS = [
     id: "tickets",
     label: "Tickets",
     permissions: [
-      { key: "tickets.create", label: "Create tickets",        description: "Submit new incidents, requests, and changes" },
-      { key: "tickets.edit",   label: "Edit tickets",          description: "Update fields, status, and priority on any ticket" },
-      { key: "tickets.assign", label: "Assign tickets",        description: "Assign or reassign tickets to team members" },
-      { key: "tickets.close",  label: "Close & resolve",       description: "Mark tickets as resolved or closed" },
+      { key: "tickets.create",       label: "Create tickets",      description: "Submit new incidents, requests, and changes" },
+      { key: "tickets.edit",         label: "Edit tickets",        description: "Update fields, status, and priority on any ticket" },
+      { key: "tickets.assign",       label: "Assign tickets",      description: "Assign or reassign tickets to team members" },
+      { key: "tickets.close",        label: "Close & resolve",     description: "Mark tickets as resolved or closed" },
+      { key: "tickets.customFields", label: "Edit custom fields",  description: "Fill in org-defined custom fields on tickets" },
     ],
   },
   {
@@ -131,14 +132,14 @@ export const PERMISSION_GROUPS = [
 // Default permissions for each built-in role
 export const ROLE_PERMISSION_DEFAULTS = {
   "Admin": {
-    "tickets.create": true, "tickets.edit": true, "tickets.assign": true, "tickets.close": true,
+    "tickets.create": true, "tickets.edit": true, "tickets.assign": true, "tickets.close": true, "tickets.customFields": true,
     "catalog.request": true, "catalog.edit": true, "catalog.manage": true,
     "approvals.resolve": true,
     "kb.view": true, "kb.create": true,
     "members.invite": true, "reports.view": true,
   },
   "Agent": {
-    "tickets.create": true, "tickets.edit": true, "tickets.assign": true, "tickets.close": true,
+    "tickets.create": true, "tickets.edit": true, "tickets.assign": true, "tickets.close": true, "tickets.customFields": true,
     "catalog.request": true,
     "approvals.resolve": true,
     "kb.view": true, "kb.create": true,

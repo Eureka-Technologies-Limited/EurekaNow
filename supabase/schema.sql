@@ -143,6 +143,7 @@ alter table org_settings add column if not exists
 alter table org_settings add column if not exists approval_mode text not null default 'all';
 alter table org_settings add column if not exists ticket_types jsonb not null default '[]'::jsonb;
 alter table org_settings add column if not exists org_roles jsonb not null default '[]'::jsonb;
+alter table org_settings add column if not exists custom_ticket_fields jsonb not null default '[]'::jsonb;
 -- Custom request field definitions per catalog item.
 alter table service_catalog_items add column if not exists request_fields jsonb not null default '[]'::jsonb;
 

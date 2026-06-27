@@ -37,11 +37,17 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
   });
   const [reviewSaving, setReviewSaving] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [draft, setDraft] = useState(null);
   const [approvalComments, setApprovalComments] = useState({});
   const [approvalSaving, setApprovalSaving] = useState({});
   const [nextApproverId, setNextApproverId] = useState("");
   const [addingApprover, setAddingApprover] = useState(false);
   const [addApproverError, setAddApproverError] = useState("");
+  const [cfEdit, setCfEdit] = useState(false);
+  const [cfDraft, setCfDraft] = useState({});
+
+  const [cfSaving, setCfSaving] = useState(false);
+  const [cfErr, setCfErr] = useState("");
 
   const now = Date.now();
   const isOverdue = !!tk.dueDate && tk.dueDate < now && !["Resolved", "Closed"].includes(tk.status);
@@ -90,6 +96,9 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
     if (tab === "pir" && !showPIR) setTab("activity");
   }, [tk.status, tk.type]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // Reset sidebar draft whenever a different ticket is opened
+  useEffect(() => { setDraft(null); }, [tk.id]); // eslint-disable-line react-hooks/exhaustive-deps
+
   useEffect(() => {
     const customData = (review?.customData || {});
     setReviewForm({
@@ -110,6 +119,55 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
     setShowCloseTemplate(false);
   };
 
+  // Sidebar draft helpers — changes don't save until saveChanges() is called
+  const isDirty = draft !== null;
+  const setField = (k, v) => setDraft((prev) => {
+    const base = prev ?? {
+      status: tk.status,
+      priority: tk.priority,
+      urgency: tk.urgency || "",
+      assignee: tk.assignee || "",
+      dueDate: tk.dueDate || null,
+      estimateHours: tk.estimateHours ?? "",
+      spentHours: tk.spentHours ?? 0,
+    };
+    return { ...base, [k]: v };
+  });
+
+  const saveChanges = async () => {
+    if (!draft || saving) return;
+    const fields = {};
+    if (draft.status !== tk.status) fields.status = draft.status;
+    if (draft.priority !== tk.priority) fields.priority = draft.priority;
+    if (draft.urgency !== (tk.urgency || "")) fields.urgency = draft.urgency;
+    if (draft.assignee !== (tk.assignee || "")) fields.assignee = draft.assignee;
+    if (draft.dueDate !== (tk.dueDate || null)) fields.dueDate = draft.dueDate;
+    if (String(draft.estimateHours ?? "") !== String(tk.estimateHours ?? "")) fields.estimateHours = draft.estimateHours;
+    if (String(draft.spentHours ?? 0) !== String(tk.spentHours ?? 0)) fields.spentHours = draft.spentHours;
+    if (!Object.keys(fields).length) { setDraft(null); return; }
+    setSaving(true);
+    const previous = tk;
+    const savedDraft = draft;
+    setTk((prev) => ({ ...prev, ...fields }));
+    setDraft(null);
+    try {
+      const saved = await onPatch(tk.id, fields);
+      if (saved) setTk(saved);
+      if (fields.status) {
+        const children = allTickets.filter((c) => c.parentId === tk.id);
+        if (children.length > 0) {
+          await Promise.all(children.map((c) => onPatch?.(c.id, { status: fields.status })));
+        }
+      }
+    } catch {
+      setTk(previous);
+      setDraft(savedDraft);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  // Immediate update — used for operations like parent linking that should save right away
   const update = async (fields) => {
     if (saving) return;
     const previous = tk;
@@ -119,15 +177,6 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
     try {
       const saved = await onPatch(tk.id, fields);
       if (saved) setTk(saved);
-
-      // If status changed on a parent ticket, propagate to its children
-      if (fields.status) {
-        const newStatus = fields.status;
-        const children = allTickets.filter((t) => t.parentId === tk.id);
-        if (children.length > 0) {
-          await Promise.all(children.map((c) => onPatch?.(c.id, { status: newStatus })));
-        }
-      }
     } catch {
       setTk(previous);
     } finally {
@@ -180,6 +229,11 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
     ? currentUser.roles
     : [currentUser?.role].filter(Boolean);
   const orgSetting = orgSettings.find((s) => s.orgId === tk.orgId);
+  const canEditCustomFields = canDo(currentUser, orgSetting, "tickets.customFields") || canDo(currentUser, orgSetting, "tickets.edit");
+  // Fields that apply to this ticket type (empty ticketTypes = all types)
+  const orgCustomFields = (orgSetting?.customTicketFields || []).filter(
+    (f) => !f.ticketTypes?.length || f.ticketTypes.includes(tk.type)
+  );
   const ticketApprovals = (approvals || []).filter((a) => a.ticketId === tk.id);
   const pendingApproverIds = new Set(
     ticketApprovals
@@ -306,15 +360,15 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 }}>
               <div>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 4 }}>Status</div>
-                <select value={tk.status} onChange={(e) => update({ status: e.target.value })} disabled={saving}
-                  style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 9, padding: "7px 10px", fontSize: 12, color: t.text, outline: "none", fontFamily: t.font, width: "100%" }}>
+                <select value={draft?.status ?? tk.status} onChange={(e) => setField("status", e.target.value)} disabled={saving}
+                  style={{ background: t.surface2, border: `1px solid ${isDirty ? t.accent : t.border}`, borderRadius: 9, padding: "7px 10px", fontSize: 12, color: t.text, outline: "none", fontFamily: t.font, width: "100%" }}>
                   {STATUSES.map((s) => <option key={s}>{s}</option>)}
                 </select>
               </div>
               <div>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 4 }}>Priority</div>
-                <select value={tk.priority} onChange={(e) => update({ priority: e.target.value })} disabled={saving}
-                  style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 9, padding: "7px 10px", fontSize: 12, color: t.text, outline: "none", fontFamily: t.font, width: "100%" }}>
+                <select value={draft?.priority ?? tk.priority} onChange={(e) => setField("priority", e.target.value)} disabled={saving}
+                  style={{ background: t.surface2, border: `1px solid ${isDirty ? t.accent : t.border}`, borderRadius: 9, padding: "7px 10px", fontSize: 12, color: t.text, outline: "none", fontFamily: t.font, width: "100%" }}>
                   {Object.keys(catalog).map((p) => <option key={p}>{p}</option>)}
                 </select>
               </div>
@@ -322,15 +376,15 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
             <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 10, marginBottom: 10 }}>
               <div>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 4 }}>Urgency</div>
-                <select value={tk.urgency || urgencyOptions[0]} onChange={(e) => update({ urgency: e.target.value })} disabled={saving}
-                  style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 9, padding: "7px 10px", fontSize: 12, color: t.text, outline: "none", fontFamily: t.font, width: "100%" }}>
+                <select value={draft?.urgency ?? (tk.urgency || urgencyOptions[0])} onChange={(e) => setField("urgency", e.target.value)} disabled={saving}
+                  style={{ background: t.surface2, border: `1px solid ${isDirty ? t.accent : t.border}`, borderRadius: 9, padding: "7px 10px", fontSize: 12, color: t.text, outline: "none", fontFamily: t.font, width: "100%" }}>
                   {urgencyOptions.map((u) => <option key={u}>{u}</option>)}
                 </select>
               </div>
               <div>
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 4 }}>Assign To</div>
-                <select value={tk.assignee || ""} onChange={(e) => update({ assignee: e.target.value })} disabled={saving}
-                  style={{ background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 9, padding: "7px 10px", fontSize: 12, color: t.text, outline: "none", fontFamily: t.font, width: "100%" }}>
+                <select value={draft?.assignee ?? (tk.assignee || "")} onChange={(e) => setField("assignee", e.target.value)} disabled={saving}
+                  style={{ background: t.surface2, border: `1px solid ${isDirty ? t.accent : t.border}`, borderRadius: 9, padding: "7px 10px", fontSize: 12, color: t.text, outline: "none", fontFamily: t.font, width: "100%" }}>
                   <option value="">Unassigned</option>
                   {agents.map((u) => <option key={u.id} value={u.id}>{u.name} ({roleLabel(u)})</option>)}
                 </select>
@@ -341,9 +395,9 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                 <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 4 }}>Due Date</div>
                 <Input
                   type="date"
-                  value={formatDateInput(tk.dueDate)}
-                  onChange={(e) => update({ dueDate: e.target.value ? new Date(`${e.target.value}T23:59:59`).getTime() : null })}
-                  style={{ padding: "7px 10px", fontSize: 12 }}
+                  value={formatDateInput(draft?.dueDate ?? tk.dueDate)}
+                  onChange={(e) => setField("dueDate", e.target.value ? new Date(`${e.target.value}T23:59:59`).getTime() : null)}
+                  style={{ padding: "7px 10px", fontSize: 12, borderColor: isDirty ? t.accent : undefined }}
                 />
               </div>
               <div>
@@ -351,21 +405,31 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                 <div style={{ display: "grid", gridTemplateColumns: isMobile ? "1fr" : "1fr 1fr", gap: 8 }}>
                   <Input
                     type="number"
-                    value={tk.estimateHours ?? ""}
-                    onChange={(e) => update({ estimateHours: e.target.value === "" ? null : Number(e.target.value) })}
+                    value={draft?.estimateHours ?? (tk.estimateHours ?? "")}
+                    onChange={(e) => setField("estimateHours", e.target.value === "" ? null : Number(e.target.value))}
                     placeholder="Estimate"
-                    style={{ padding: "7px 10px", fontSize: 12 }}
+                    style={{ padding: "7px 10px", fontSize: 12, borderColor: isDirty ? t.accent : undefined }}
                   />
                   <Input
                     type="number"
-                    value={tk.spentHours ?? 0}
-                    onChange={(e) => update({ spentHours: e.target.value === "" ? 0 : Number(e.target.value) })}
+                    value={draft?.spentHours ?? (tk.spentHours ?? 0)}
+                    onChange={(e) => setField("spentHours", e.target.value === "" ? 0 : Number(e.target.value))}
                     placeholder="Spent"
-                    style={{ padding: "7px 10px", fontSize: 12 }}
+                    style={{ padding: "7px 10px", fontSize: 12, borderColor: isDirty ? t.accent : undefined }}
                   />
                 </div>
               </div>
             </div>
+            {isDirty && (
+              <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
+                <Btn variant="primary" size="sm" onClick={saveChanges} disabled={saving}>
+                  {saving ? "Saving…" : "Save changes"}
+                </Btn>
+                <Btn variant="secondary" size="sm" onClick={() => setDraft(null)} disabled={saving}>
+                  Discard
+                </Btn>
+              </div>
+            )}
             <div style={{ marginBottom: 8 }}>
               <div style={{ fontSize: 9, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 4 }}>
                 {(() => {
@@ -413,9 +477,11 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
             {tab === "activity" && (
               <div>
                 {(() => {
-                  // Structured custom fields (new catalog requests) take priority over plain description
+                  // Structured custom fields (new catalog requests) take priority over plain description.
+                  // Exclude keys that are org-defined custom fields — those show in the Custom Fields section below.
                   const cf = tk.customFields || {};
-                  const cfKeys = Object.keys(cf).filter((k) => cf[k]);
+                  const orgFieldKeys = new Set(orgCustomFields.map((f) => f.key));
+                  const cfKeys = Object.keys(cf).filter((k) => cf[k] && !orgFieldKeys.has(k));
                   if (cfKeys.length > 0) {
                     const fieldOrder = ["shortDescription", "justification", ...cfKeys.filter((k) => k !== "shortDescription" && k !== "justification")];
                     const fieldLabel = { shortDescription: "Short description", justification: "Justification" };
@@ -463,6 +529,102 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                   <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${t.border}` }}>
                     <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 6 }}>Requested for</div>
                     <div style={{ fontSize: 13, color: t.text2 }}>{(users.find((u) => u.id === tk.requestedFor) || {}).name || tk.requestedFor}</div>
+                  </div>
+                )}
+
+                {/* ── Custom fields (org-defined only) ───────────────────────── */}
+                {orgCustomFields.length > 0 && (
+                  <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${t.border}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3 }}>Custom Fields</div>
+                      {canEditCustomFields && !cfEdit && (
+                        <Btn variant="secondary" size="sm" onClick={() => { setCfDraft({ ...(tk.customFields || {}) }); setCfEdit(true); }}>
+                          <I name="edit" size={11} /> Edit
+                        </Btn>
+                      )}
+                    </div>
+
+                    {!cfEdit ? (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+                        {orgCustomFields.map((f) => {
+                          const val = tk.customFields?.[f.key];
+                          return (
+                            <div key={f.key}>
+                              <div style={{ fontSize: 11, fontWeight: 600, color: t.text3, marginBottom: 3 }}>
+                                {f.label}{f.required && <span style={{ color: t.red }}> *</span>}
+                              </div>
+                              <div style={{ fontSize: 13, color: val ? t.text2 : t.text3, fontStyle: val ? "normal" : "italic" }}>
+                                {val || "Not set"}
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                        {orgCustomFields.map((f) => (
+                          <div key={f.key}>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: t.text3, marginBottom: 5 }}>
+                              {f.label}{f.required && <span style={{ color: t.red }}> *</span>}
+                            </div>
+                            {f.type === "textarea" ? (
+                              <textarea
+                                value={cfDraft[f.key] || ""}
+                                onChange={(e) => setCfDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                                placeholder={f.placeholder || ""}
+                                rows={3}
+                                style={{ width: "100%", boxSizing: "border-box", padding: "7px 9px", fontSize: 12, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 6, color: t.text, fontFamily: "inherit", resize: "vertical" }}
+                              />
+                            ) : f.type === "select" ? (
+                              <select
+                                value={cfDraft[f.key] || ""}
+                                onChange={(e) => setCfDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                                style={{ width: "100%", padding: "7px 9px", fontSize: 12, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 6, color: t.text, fontFamily: "inherit" }}
+                              >
+                                <option value="">— Select —</option>
+                                {(f.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
+                              </select>
+                            ) : (
+                              <input
+                                type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"}
+                                value={cfDraft[f.key] || ""}
+                                onChange={(e) => setCfDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                                placeholder={f.placeholder || ""}
+                                style={{ width: "100%", boxSizing: "border-box", padding: "7px 9px", fontSize: 12, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 6, color: t.text }}
+                              />
+                            )}
+                          </div>
+                        ))}
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <Btn
+                            variant="primary"
+                            size="sm"
+                            disabled={cfSaving}
+                            onClick={async () => {
+                              setCfSaving(true);
+                              setCfErr("");
+                              try {
+                                const merged = { ...(tk.customFields || {}) };
+                                for (const f of orgCustomFields) {
+                                  merged[f.key] = cfDraft[f.key] ?? "";
+                                }
+                                await onPatch(tk.id, { customFields: merged });
+                                setTk((prev) => ({ ...prev, customFields: merged }));
+                                setCfEdit(false);
+                              } catch (e) {
+                                setCfErr(e?.message || "Failed to save custom fields.");
+                              } finally { setCfSaving(false); }
+                            }}
+                          >
+                            {cfSaving ? "Saving…" : "Save"}
+                          </Btn>
+                          <Btn variant="secondary" size="sm" onClick={() => { setCfEdit(false); setCfErr(""); }}>
+                            Cancel
+                          </Btn>
+                        </div>
+                        {cfErr && <div style={{ fontSize: 11, color: t.red, marginTop: 6 }}>{cfErr}</div>}
+                      </div>
+                    )}
                   </div>
                 )}
 

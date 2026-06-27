@@ -183,6 +183,7 @@ const toOrgSettings = (row) => {
     approvalMode: row?.approval_mode || "all",
     ticketTypes: Array.isArray(row?.ticket_types) && row.ticket_types.length ? row.ticket_types : [],
     orgRoles: Array.isArray(row?.org_roles) ? row.org_roles : [],
+    customTicketFields: Array.isArray(row?.custom_ticket_fields) ? row.custom_ticket_fields : [],
     updatedAt: Number(row?.updated_at || 0),
   };
 };
@@ -744,6 +745,9 @@ export async function updateTicketFields(ticketId, fields) {
   if ("dueDate" in fields) patch.due_date = fields.dueDate || null;
   if ("estimateHours" in fields) patch.estimate_hours = fields.estimateHours == null || fields.estimateHours === "" ? null : Number(fields.estimateHours);
   if ("spentHours" in fields) patch.spent_hours = fields.spentHours == null || fields.spentHours === "" ? 0 : Number(fields.spentHours);
+  if ("customFields" in fields && fields.customFields && typeof fields.customFields === "object" && !Array.isArray(fields.customFields)) {
+    patch.custom_fields = fields.customFields;
+  }
 
   if (!Object.keys(patch).length) {
     const { data, error } = await supabase
@@ -1344,6 +1348,7 @@ export async function upsertOrgSettings(payload) {
     approval_mode: payload.approvalMode || "all",
     ticket_types: Array.isArray(payload.ticketTypes) ? payload.ticketTypes : [],
     org_roles: Array.isArray(payload.orgRoles) ? payload.orgRoles : [],
+    custom_ticket_fields: Array.isArray(payload.customTicketFields) ? payload.customTicketFields : [],
     updated_at: Date.now(),
   };
 
