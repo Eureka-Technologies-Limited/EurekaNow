@@ -45,7 +45,7 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
   const [addApproverError, setAddApproverError] = useState("");
   const [cfEdit, setCfEdit] = useState(false);
   const [cfDraft, setCfDraft] = useState({});
-  const [cfAdHoc, setCfAdHoc] = useState([]);
+
   const [cfSaving, setCfSaving] = useState(false);
   const [cfErr, setCfErr] = useState("");
 
@@ -532,47 +532,20 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                   </div>
                 )}
 
-                {/* ── Custom fields ───────────────────────────── */}
-                <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${t.border}` }}>
-                  <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
-                    <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3 }}>Custom Fields</div>
-                    {canEditCustomFields && !cfEdit && (
-                      <Btn
-                        variant="secondary"
-                        size="sm"
-                        onClick={() => {
-                          const orgKeySet = new Set(orgCustomFields.map((f) => f.key));
-                          setCfDraft({ ...(tk.customFields || {}) });
-                          setCfAdHoc(
-                            Object.entries(tk.customFields || {})
-                              .filter(([k]) => !orgKeySet.has(k) && k)
-                              .map(([key, value]) => ({ key, value: String(value || "") }))
-                          );
-                          setCfEdit(true);
-                        }}
-                      >
-                        <I name="edit" size={11} /> Edit
-                      </Btn>
-                    )}
-                  </div>
+                {/* ── Custom fields (org-defined only) ───────────────────────── */}
+                {orgCustomFields.length > 0 && (
+                  <div style={{ marginBottom: 16, paddingBottom: 16, borderBottom: `1px solid ${t.border}` }}>
+                    <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 12 }}>
+                      <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3 }}>Custom Fields</div>
+                      {canEditCustomFields && !cfEdit && (
+                        <Btn variant="secondary" size="sm" onClick={() => { setCfDraft({ ...(tk.customFields || {}) }); setCfEdit(true); }}>
+                          <I name="edit" size={11} /> Edit
+                        </Btn>
+                      )}
+                    </div>
 
-                  {!cfEdit ? (() => {
-                    const orgKeys = new Set(orgCustomFields.map((f) => f.key));
-                    const adHocEntries = Object.entries(tk.customFields || {}).filter(([k, v]) => !orgKeys.has(k) && k && v != null && v !== "");
-                    const hasAnything = orgCustomFields.length > 0 || adHocEntries.length > 0;
-                    if (!hasAnything) return (
-                      <div style={{ fontSize: 12, color: t.text3, fontStyle: "italic" }}>
-                        No custom fields.{canEditCustomFields ? " Click Edit to add." : ""}
-                      </div>
-                    );
-                    return (
+                    {!cfEdit ? (
                       <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                        {adHocEntries.map(([k, v]) => (
-                          <div key={k}>
-                            <div style={{ fontSize: 11, fontWeight: 600, color: t.text3, marginBottom: 3 }}>{k}</div>
-                            <div style={{ fontSize: 13, color: t.text2 }}>{String(v)}</div>
-                          </div>
-                        ))}
                         {orgCustomFields.map((f) => {
                           const val = tk.customFields?.[f.key];
                           return (
@@ -587,101 +560,73 @@ export function TicketDetailPanel({ ticket, users, currentUser, onClose, onPatch
                           );
                         })}
                       </div>
-                    );
-                  })() : (
-                    <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
-                      {orgCustomFields.map((f) => (
-                        <div key={f.key}>
-                          <div style={{ fontSize: 11, fontWeight: 600, color: t.text3, marginBottom: 5 }}>
-                            {f.label}{f.required && <span style={{ color: t.red }}> *</span>}
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: 12 }}>
+                        {orgCustomFields.map((f) => (
+                          <div key={f.key}>
+                            <div style={{ fontSize: 11, fontWeight: 600, color: t.text3, marginBottom: 5 }}>
+                              {f.label}{f.required && <span style={{ color: t.red }}> *</span>}
+                            </div>
+                            {f.type === "textarea" ? (
+                              <textarea
+                                value={cfDraft[f.key] || ""}
+                                onChange={(e) => setCfDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                                placeholder={f.placeholder || ""}
+                                rows={3}
+                                style={{ width: "100%", boxSizing: "border-box", padding: "7px 9px", fontSize: 12, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 6, color: t.text, fontFamily: "inherit", resize: "vertical" }}
+                              />
+                            ) : f.type === "select" ? (
+                              <select
+                                value={cfDraft[f.key] || ""}
+                                onChange={(e) => setCfDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                                style={{ width: "100%", padding: "7px 9px", fontSize: 12, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 6, color: t.text, fontFamily: "inherit" }}
+                              >
+                                <option value="">— Select —</option>
+                                {(f.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
+                              </select>
+                            ) : (
+                              <input
+                                type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"}
+                                value={cfDraft[f.key] || ""}
+                                onChange={(e) => setCfDraft((d) => ({ ...d, [f.key]: e.target.value }))}
+                                placeholder={f.placeholder || ""}
+                                style={{ width: "100%", boxSizing: "border-box", padding: "7px 9px", fontSize: 12, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 6, color: t.text }}
+                              />
+                            )}
                           </div>
-                          {f.type === "textarea" ? (
-                            <textarea
-                              value={cfDraft[f.key] || ""}
-                              onChange={(e) => setCfDraft((d) => ({ ...d, [f.key]: e.target.value }))}
-                              placeholder={f.placeholder || ""}
-                              rows={3}
-                              style={{ width: "100%", boxSizing: "border-box", padding: "7px 9px", fontSize: 12, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 6, color: t.text, fontFamily: "inherit", resize: "vertical" }}
-                            />
-                          ) : f.type === "select" ? (
-                            <select
-                              value={cfDraft[f.key] || ""}
-                              onChange={(e) => setCfDraft((d) => ({ ...d, [f.key]: e.target.value }))}
-                              style={{ width: "100%", padding: "7px 9px", fontSize: 12, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 6, color: t.text, fontFamily: "inherit" }}
-                            >
-                              <option value="">— Select —</option>
-                              {(f.options || []).map((o) => <option key={o} value={o}>{o}</option>)}
-                            </select>
-                          ) : (
-                            <input
-                              type={f.type === "number" ? "number" : f.type === "date" ? "date" : "text"}
-                              value={cfDraft[f.key] || ""}
-                              onChange={(e) => setCfDraft((d) => ({ ...d, [f.key]: e.target.value }))}
-                              placeholder={f.placeholder || ""}
-                              style={{ width: "100%", boxSizing: "border-box", padding: "7px 9px", fontSize: 12, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 6, color: t.text }}
-                            />
-                          )}
-                        </div>
-                      ))}
-                      {cfAdHoc.map((row, i) => (
-                        <div key={i} style={{ display: "flex", gap: 6, alignItems: "flex-start" }}>
-                          <div style={{ flex: 1, display: "flex", flexDirection: "column", gap: 4 }}>
-                            <input
-                              placeholder="Field name"
-                              value={row.key}
-                              onChange={(e) => setCfAdHoc((p) => p.map((r, j) => j === i ? { ...r, key: e.target.value } : r))}
-                              style={{ width: "100%", boxSizing: "border-box", padding: "6px 9px", fontSize: 12, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 6, color: t.text }}
-                            />
-                            <input
-                              placeholder="Value"
-                              value={row.value}
-                              onChange={(e) => setCfAdHoc((p) => p.map((r, j) => j === i ? { ...r, value: e.target.value } : r))}
-                              style={{ width: "100%", boxSizing: "border-box", padding: "6px 9px", fontSize: 12, background: t.surface2, border: `1px solid ${t.border}`, borderRadius: 6, color: t.text }}
-                            />
-                          </div>
-                          <Btn variant="ghost" size="sm" onClick={() => setCfAdHoc((p) => p.filter((_, j) => j !== i))} style={{ marginTop: 2 }}>
-                            <I name="x" size={12} />
+                        ))}
+                        <div style={{ display: "flex", gap: 8 }}>
+                          <Btn
+                            variant="primary"
+                            size="sm"
+                            disabled={cfSaving}
+                            onClick={async () => {
+                              setCfSaving(true);
+                              setCfErr("");
+                              try {
+                                const merged = { ...(tk.customFields || {}) };
+                                for (const f of orgCustomFields) {
+                                  merged[f.key] = cfDraft[f.key] ?? "";
+                                }
+                                await onPatch(tk.id, { customFields: merged });
+                                setTk((prev) => ({ ...prev, customFields: merged }));
+                                setCfEdit(false);
+                              } catch (e) {
+                                setCfErr(e?.message || "Failed to save custom fields.");
+                              } finally { setCfSaving(false); }
+                            }}
+                          >
+                            {cfSaving ? "Saving…" : "Save"}
+                          </Btn>
+                          <Btn variant="secondary" size="sm" onClick={() => { setCfEdit(false); setCfErr(""); }}>
+                            Cancel
                           </Btn>
                         </div>
-                      ))}
-                      <Btn variant="ghost" size="sm" onClick={() => setCfAdHoc((p) => [...p, { key: "", value: "" }])}>
-                        <I name="plus" size={11} /> Add field
-                      </Btn>
-                      <div style={{ display: "flex", gap: 8 }}>
-                        <Btn
-                          variant="primary"
-                          size="sm"
-                          disabled={cfSaving}
-                          onClick={async () => {
-                            setCfSaving(true);
-                            setCfErr("");
-                            try {
-                              const result = {};
-                              for (const f of orgCustomFields) {
-                                if (cfDraft[f.key] !== undefined && cfDraft[f.key] !== "") result[f.key] = cfDraft[f.key];
-                              }
-                              for (const row of cfAdHoc) {
-                                const k = row.key.trim();
-                                if (k) result[k] = row.value;
-                              }
-                              await onPatch(tk.id, { customFields: result });
-                              setTk((prev) => ({ ...prev, customFields: result }));
-                              setCfEdit(false);
-                            } catch (e) {
-                              setCfErr(e?.message || "Failed to save custom fields.");
-                            } finally { setCfSaving(false); }
-                          }}
-                        >
-                          {cfSaving ? "Saving…" : "Save"}
-                        </Btn>
-                        <Btn variant="secondary" size="sm" onClick={() => { setCfEdit(false); setCfAdHoc([]); setCfErr(""); }}>
-                          Cancel
-                        </Btn>
+                        {cfErr && <div style={{ fontSize: 11, color: t.red, marginTop: 6 }}>{cfErr}</div>}
                       </div>
-                      {cfErr && <div style={{ fontSize: 11, color: t.red, marginTop: 6 }}>{cfErr}</div>}
-                    </div>
-                  )}
-                </div>
+                    )}
+                  </div>
+                )}
 
                 <div style={{ fontSize: 10, fontWeight: 700, letterSpacing: "0.1em", textTransform: "uppercase", color: t.text3, marginBottom: 12 }}>
                   Comments ({tk.comments.length})
